@@ -1,0 +1,96 @@
+= Vert.x Web Object Storage Client
+
+A convenient Vert.x web client that is compatible with
+https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API protocol]
+
+WARNING: The client in active development!
+
+== Introduction
+
+The object storage systems have their own web interface protocol in order to
+interact with its data such as https://docs.aws.amazon.com/s3/[S3],
+https://docs.openstack.org/swift/latest/[SWIFT] and others we may encounter.
+
+**The API design of the client is meant to be generic such as `ObjectStorageClient`
+and `ObjectStorageClientOptions` in order to accommodate new web
+protocols in the future with its own naming conventions**
+
+=== S3 Web Protocol Example
+In order to configure the client for S3 web interface simply do the following:
+```java
+// Set S3 protocol options
+var s3Options = new S3Options()
+  .setSignatureVersion(S3SignatureVersion.V4)
+  .setAccessKey("access-key")
+  .setSecretKey("secret-key")
+  .setRegion("region");
+```
+NOTE: The client supports S3 request signature version 4 only.
+```java
+// Set the client options
+var clientOptions = new ObjectStorageClientOptions()
+  .setS3Options(s3Options)
+  .setDefaultHost("localhost")
+  .setDefaultPort(443)
+  .setSsl(true);
+
+// Create the client
+var client = ObjectStorageClient.create(vertx, clientOptions);
+```
+Now, Let's create a new `bucket`.
+```java
+client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
+  if(r.succeeded()) {
+    System.out.println("Bucket created");
+  } else {
+    System.out.println("Bucket failed");
+  }
+});
+```
+We need to set the `object` request options such as
+the content type (MIME type) and access control list (ACL) for a text file.
+```java
+ObjectOptions objectOptions = new ObjectOptions()
+  .contentType("text/plain")
+  .storageClass(StorageClass.STANDARD)
+  .acl(Acl.PUBLIC_READ);
+```
+`Object` can be any data we want so let's read an existing text file content.
+```java
+Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
+```
+Let's create the `Object` inside the recent created `Bucket` with any name we want.
+```java
+client.put(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
+  if(r.succeeded()) {
+    System.out.println("Object created");
+  } else {
+    System.out.println("Object failed");
+  }
+});
+```
+Finally, let's get the recent created `Object` and print its content.
+```java
+client.get(new ObjectOptions(), "/my-bucket/my-file.txt").onComplete(r -> {
+  if(r.succeeded()) {
+    System.out.println(r.result().bodyAsString());.
+  } else {
+    System.out.println("Failed!");
+  }
+});
+```
+NOTE: Currently, S3 web protocol is only supported.
+
+== Building
+
+To launch the tests:
+```
+mvn clean test
+```
+
+To package:
+```
+mvn clean package -DskipTests
+```
+
+
