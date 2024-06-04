@@ -1,4 +1,4 @@
-package io.github.emadalblueshi.objectstorage.util;
+package io.github.emadalblueshi.objectstorage.client.util;
 
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;

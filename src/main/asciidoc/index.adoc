@@ -1,0 +1,80 @@
+= Vert.x Web Object Storage Client
+
+A convenient Vert.x web client that is compatible with
+https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API protocol]
+
+WARNING: The client in active development!
+
+== Introduction
+
+The object storage systems have their own web interface protocol in order to
+interact with its data such as https://docs.aws.amazon.com/s3/[S3],
+https://docs.openstack.org/swift/latest/[SWIFT] and others we may encounter.
+
+**The API design of the client is meant to be generic such as `ObjectStorageClient`
+and `ObjectStorageClientOptions` in order to accommodate new web
+protocols in the future with its own naming conventions**
+
+=== S3 Web Protocol Example
+In order to configure the client for S3 web interface simply do the following:
+```java
+// Set S3 protocol options
+{@link examples.Examples#example1}
+
+```
+NOTE: The client supports S3 request signature version 4 only.
+```java
+
+// Set the client options
+{@link examples.Examples#example2}
+
+```
+Now, Let's create a new `bucket`.
+```java
+
+{@link examples.Examples#example3}
+
+```
+We need to set the `object` request options such as
+the content type (MIME type) and access control list (ACL) for a text file.
+```java
+
+{@link examples.Examples#example4}
+
+```
+`Object` can be any data we want so let's read an existing text file content.
+```java
+
+{@link examples.Examples#example5}
+
+```
+Let's create the `Object` inside the recent created `Bucket` with any name we want.
+```java
+
+{@link examples.Examples#example6}
+
+```
+Finally, let's get the recent created `Object` and print its content.
+```java
+
+{@link examples.Examples#example7}
+
+```
+NOTE: Currently, S3 web protocol is only supported.
+
+== Building
+
+To launch the tests:
+```
+mvn clean test
+```
+
+To package:
+```
+mvn clean package -DskipTests
+```
+
+To package with docs
+```
+mvn clean package -DskipTests -Ddoc.skip=false
+```

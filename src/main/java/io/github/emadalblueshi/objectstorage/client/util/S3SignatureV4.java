@@ -1,4 +1,4 @@
-package io.github.emadalblueshi.objectstorage.util;
+package io.github.emadalblueshi.objectstorage.client.util;
 
 import java.nio.charset.StandardCharsets;
 import java.time.ZoneOffset;
@@ -14,7 +14,7 @@ import java.util.stream.Stream;
 import io.netty.handler.codec.http.QueryStringEncoder;
 import io.vertx.core.MultiMap;
 
-import static io.github.emadalblueshi.objectstorage.util.Hash.*;
+import static io.github.emadalblueshi.objectstorage.client.util.Hash.*;
 import static io.vertx.core.http.HttpHeaders.*;
 
 public class S3SignatureV4 {

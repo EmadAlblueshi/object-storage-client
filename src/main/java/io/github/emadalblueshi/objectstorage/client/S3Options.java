@@ -1,9 +1,15 @@
 package io.github.emadalblueshi.objectstorage.client;
 
+import io.vertx.codegen.annotations.DataObject;
+import io.vertx.codegen.json.annotations.JsonGen;
+import io.vertx.core.json.JsonObject;
+
 /**
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
+@DataObject
+@JsonGen(publicConverter = false)
 public class S3Options {
 
   public static final S3SignatureVersion DEFAULT_REQUEST_SIGNATURE_VERSION = S3SignatureVersion.V4;
@@ -12,11 +18,23 @@ public class S3Options {
   public static final String DEFAULT_REGION = "default";
   public static final String DEFAULT_SERVICE = "s3";
 
-  private S3SignatureVersion signatureVersion = DEFAULT_REQUEST_SIGNATURE_VERSION;
-  private String accessKey = DEFAULT_ACCESS_KEY;
-  private String secretKey = DEFAULT_SECRET_KEY;
-  private String region = DEFAULT_REGION;
-  private String service = DEFAULT_SERVICE;
+  private S3SignatureVersion signatureVersion;
+  private String accessKey;
+  private String secretKey;
+  private String region;
+  private String service;
+
+  public S3Options() {
+    signatureVersion = DEFAULT_REQUEST_SIGNATURE_VERSION;
+    accessKey = DEFAULT_ACCESS_KEY;
+    secretKey = DEFAULT_SECRET_KEY;
+    region = DEFAULT_REGION;
+    service = DEFAULT_SERVICE;
+  }
+
+  public S3Options(JsonObject json) {
+    S3OptionsConverter.fromJson(json, this);
+  }
 
   public S3Options setAccessKey(String accessKey) {
     this.accessKey = accessKey;
