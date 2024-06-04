@@ -1,6 +1,9 @@
 package io.github.emadalblueshi.objectstorage.client;
 
+import io.vertx.codegen.annotations.DataObject;
+import io.vertx.codegen.json.annotations.JsonGen;
 import io.vertx.core.MultiMap;
+import io.vertx.core.json.JsonObject;
 
 /**
  *

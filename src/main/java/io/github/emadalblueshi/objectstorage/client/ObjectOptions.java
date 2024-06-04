@@ -1,7 +1,6 @@
 package io.github.emadalblueshi.objectstorage.client;
 
 import io.vertx.core.MultiMap;
-
 import static io.vertx.core.http.HttpHeaders.*;
 
 /**

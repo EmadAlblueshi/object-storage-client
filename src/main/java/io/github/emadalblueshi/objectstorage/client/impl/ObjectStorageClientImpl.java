@@ -1,5 +1,7 @@
 package io.github.emadalblueshi.objectstorage.client.impl;
 
+import static io.github.emadalblueshi.objectstorage.client.util.S3SignatureV4.sign;
+
 import java.util.function.Function;
 
 import io.github.emadalblueshi.objectstorage.client.*;
@@ -12,8 +14,6 @@ import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.codec.BodyCodec;
-
-import static io.github.emadalblueshi.objectstorage.util.S3SignatureV4.sign;
 
 /**
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>

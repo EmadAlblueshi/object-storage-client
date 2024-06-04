@@ -1,6 +1,5 @@
 package io.github.emadalblueshi.objectstorage.client;
 
-import io.netty.handler.codec.http.QueryStringEncoder;
 import io.vertx.core.MultiMap;
 
 /**
@@ -63,45 +62,6 @@ public class ObjectStorageRequestOptions {
 
   public MultiMap queryParams() {
     return queryParams;
-  }
-
-  @Override
-  public int hashCode() {
-    final int prime = 31;
-    int result = 1;
-    result = prime * result + ((headers == null) ? 0 : headers.hashCode());
-    result = prime * result + ((queryParams == null) ? 0 : queryParams.hashCode());
-    return result;
-  }
-
-  @Override
-  public boolean equals(Object obj) {
-    if (this == obj)
-      return true;
-    if (obj == null)
-      return false;
-    if (getClass() != obj.getClass())
-      return false;
-    ObjectStorageRequestOptions other = (ObjectStorageRequestOptions) obj;
-    if (headers == null) {
-      if (other.headers != null)
-        return false;
-    } else if (!headers.equals(other.headers))
-      return false;
-    if (queryParams == null) {
-      if (other.queryParams != null)
-        return false;
-    } else if (!queryParams.equals(other.queryParams))
-      return false;
-    return true;
-  }
-
-  @Override
-  public String toString() {
-    QueryStringEncoder queryStringEncoder = new QueryStringEncoder("");
-    queryParams.entries().forEach(e -> queryStringEncoder.addParam(e.getKey(), e.getValue()));
-    return queryStringEncoder.toString().replace("?", "");
-
   }
 
 }

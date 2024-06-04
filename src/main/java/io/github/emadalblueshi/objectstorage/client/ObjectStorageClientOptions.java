@@ -4,9 +4,12 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import io.vertx.codegen.annotations.DataObject;
+import io.vertx.codegen.json.annotations.JsonGen;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.Http2Settings;
 import io.vertx.core.http.HttpVersion;
+import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.JdkSSLEngineOptions;
 import io.vertx.core.net.JksOptions;
 import io.vertx.core.net.KeyCertOptions;
@@ -25,9 +28,20 @@ import io.vertx.uritemplate.ExpandOptions;
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
+@DataObject
+@JsonGen(publicConverter = false)
 public class ObjectStorageClientOptions extends WebClientOptions {
 
   private S3Options s3Options;
+
+  public ObjectStorageClientOptions() {
+    super();
+  }
+
+  public ObjectStorageClientOptions(JsonObject json) {
+    super(json);
+    ObjectStorageClientOptionsConverter.fromJson(json, this);
+  }
 
   public ObjectStorageClientOptions setS3Options(S3Options s3Options) {
     this.s3Options = s3Options;
