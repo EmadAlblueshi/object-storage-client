@@ -9,6 +9,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import io.netty.handler.codec.http.QueryStringEncoder;
 import io.vertx.core.MultiMap;
@@ -34,12 +35,6 @@ public class S3SignatureV4 {
     headers.set("x-amz-content-sha256", contentSha256);
     headers.set("x-amz-date", date);
 
-    List<String> canonicalRequestLines = new ArrayList<>();
-    canonicalRequestLines.add(method);
-    canonicalRequestLines.add(path);
-    canonicalRequestLines.add(query);
-    List<String> hashedHeaders = new ArrayList<>();
-
     List<String> headerSortedKeys = headers
         .entries()
         .stream()
@@ -48,16 +43,17 @@ public class S3SignatureV4 {
         .sorted(Comparator.naturalOrder())
         .collect(Collectors.toList());
 
-    for (String key : headerSortedKeys) {
+    List<String> hashedHeaders = new ArrayList<>();
+    List<String> canonicalRequestLines = Stream.of(method, path, query).collect(Collectors.toList());
+
+    headerSortedKeys.forEach(key -> {
       hashedHeaders.add(key);
       canonicalRequestLines.add(key + ":" + headers.get(key).trim());
-    }
+    });
 
     String signedHeaders = hashedHeaders.stream().collect(Collectors.joining(";"));
 
-    canonicalRequestLines.add(null); // after headers
-    canonicalRequestLines.add(signedHeaders);
-    canonicalRequestLines.add(contentSha256);
+    canonicalRequestLines.addAll(Stream.of(null, signedHeaders, contentSha256).collect(Collectors.toList()));
 
     String canonicalRequestBody = canonicalRequestLines
         .stream()
@@ -66,23 +62,20 @@ public class S3SignatureV4 {
 
     String canonicalRequestHash = hex(sha256(canonicalRequestBody.getBytes(StandardCharsets.UTF_8)));
 
-    List<String> stringToSignLines = new ArrayList<>();
-    stringToSignLines.add("AWS4-HMAC-SHA256");
-    stringToSignLines.add(date);
-    String credentialScope = isoDate + "/" + region + "/" + service + "/aws4_request";
-    stringToSignLines.add(credentialScope);
-    stringToSignLines.add(canonicalRequestHash);
+    String credentialScope = String.format("%s/%s/%s/aws4_request", isoDate, region, service);
 
-    String stringToSign = stringToSignLines.stream().collect(Collectors.joining("\n"));
+    String stringToSign = Stream.of("AWS4-HMAC-SHA256", date, credentialScope, canonicalRequestHash)
+        .collect(Collectors.joining("\n"));
 
     byte[] dateKey = hmacSHA256(("AWS4" + secretKey).getBytes(StandardCharsets.UTF_8), isoDate);
     byte[] dateRegionkey = hmacSHA256(dateKey, region);
     byte[] dateRegionServiceKey = hmacSHA256(dateRegionkey, service);
     byte[] signingKey = hmacSHA256(dateRegionServiceKey, "aws4_request");
+
     String signature = hex(hmacSHA256(signingKey, stringToSign));
 
-    String authorization = "AWS4-HMAC-SHA256 Credential=" + accessKey + "/" + credentialScope
-        + ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
+    String authorization = String.format("AWS4-HMAC-SHA256 Credential=%s/%s,SignedHeaders=%s,Signature=%s", accessKey,
+        credentialScope, signedHeaders, signature);
 
     headers.set("authorization", authorization);
 
