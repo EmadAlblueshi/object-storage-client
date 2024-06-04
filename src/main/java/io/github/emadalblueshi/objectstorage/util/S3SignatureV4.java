@@ -15,8 +15,16 @@ import io.netty.handler.codec.http.QueryStringEncoder;
 import io.vertx.core.MultiMap;
 
 import static io.github.emadalblueshi.objectstorage.util.Hash.*;
+import static io.vertx.core.http.HttpHeaders.*;
 
 public class S3SignatureV4 {
+
+  private static final String AWS4 = "AWS4";
+  private static final String AWS4_HMAC_SHA256 = "AWS4-HMAC-SHA256";
+  private static final String AWS4_REQUEST = "aws4_request";
+  private static final String X_AMZ_CONTENT_SHA256 = "x-amz-content-sha256";
+  private static final String X_AMZ_DATE = "x-amz-date";
+  private static final String DATE_TIME_FORMAT = "yyyyMMdd'T'HHmmss'Z'";
 
   public static void sign(String host,
       String method, MultiMap headers, String path, MultiMap queryParams,
@@ -27,13 +35,13 @@ public class S3SignatureV4 {
     queryParams.entries().forEach(e -> queryStringEncoder.addParam(e.getKey(), e.getValue()));
     String query = queryStringEncoder.toString().replace("?", "");
 
-    String date = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").format(ZonedDateTime.now(ZoneOffset.UTC));
+    String date = DateTimeFormatter.ofPattern(DATE_TIME_FORMAT).format(ZonedDateTime.now(ZoneOffset.UTC));
     String contentSha256 = hex(sha256(body));
     String isoDate = date.substring(0, 8);
 
-    headers.set("host", host);
-    headers.set("x-amz-content-sha256", contentSha256);
-    headers.set("x-amz-date", date);
+    headers.set(HOST, host);
+    headers.set(X_AMZ_CONTENT_SHA256, contentSha256);
+    headers.set(X_AMZ_DATE, date);
 
     List<String> headerSortedKeys = headers
         .entries()
@@ -55,29 +63,29 @@ public class S3SignatureV4 {
 
     canonicalRequestLines.addAll(Stream.of(null, signedHeaders, contentSha256).collect(Collectors.toList()));
 
-    String canonicalRequestBody = canonicalRequestLines
+    String canonicalRequest = canonicalRequestLines
         .stream()
         .map(line -> line == null ? "" : line)
         .collect(Collectors.joining("\n"));
 
-    String canonicalRequestHash = hex(sha256(canonicalRequestBody.getBytes(StandardCharsets.UTF_8)));
+    String canonicalRequestHashedPayload = hex(sha256(canonicalRequest.getBytes(StandardCharsets.UTF_8)));
 
-    String credentialScope = String.format("%s/%s/%s/aws4_request", isoDate, region, service);
+    String credentialScope = String.format("%s/%s/%s/%s", isoDate, region, service, AWS4_REQUEST);
 
-    String stringToSign = Stream.of("AWS4-HMAC-SHA256", date, credentialScope, canonicalRequestHash)
+    String stringToSign = Stream.of(AWS4_HMAC_SHA256, date, credentialScope, canonicalRequestHashedPayload)
         .collect(Collectors.joining("\n"));
 
-    byte[] dateKey = hmacSHA256(("AWS4" + secretKey).getBytes(StandardCharsets.UTF_8), isoDate);
+    byte[] dateKey = hmacSHA256((String.format("%s%s", AWS4, secretKey)).getBytes(StandardCharsets.UTF_8), isoDate);
     byte[] dateRegionkey = hmacSHA256(dateKey, region);
     byte[] dateRegionServiceKey = hmacSHA256(dateRegionkey, service);
-    byte[] signingKey = hmacSHA256(dateRegionServiceKey, "aws4_request");
+    byte[] signingKey = hmacSHA256(dateRegionServiceKey, AWS4_REQUEST);
 
     String signature = hex(hmacSHA256(signingKey, stringToSign));
 
-    String authorization = String.format("AWS4-HMAC-SHA256 Credential=%s/%s,SignedHeaders=%s,Signature=%s", accessKey,
-        credentialScope, signedHeaders, signature);
+    String authorization = String.format("%s Credential=%s/%s,SignedHeaders=%s,Signature=%s",
+        AWS4_HMAC_SHA256, accessKey, credentialScope, signedHeaders, signature);
 
-    headers.set("authorization", authorization);
+    headers.set(AUTHORIZATION, authorization);
 
   }
 
