@@ -1,5 +1,6 @@
+= Vert.x Web Object Storage Client
+
 image:https://github.com/EmadAlblueshi/vertx-web-object-storage-client/actions/workflows/maven.yml/badge.svg?branch=master["Build Status", link="https://github.com/EmadAlblueshi/vertx-web-object-storage-client/actions/workflows/maven.yml"]
-= Vert.x Web Object Storage Client 
 
 A convenient Vert.x web client that is compatible with
 https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API protocol]
