@@ -13,8 +13,8 @@ import io.vertx.core.MultiMap;
 
 public class ObjectStorageRequestOptions {
 
-  protected final MultiMap headers;
-  protected final MultiMap queryParams;
+  private final MultiMap headers;
+  private final MultiMap queryParams;
 
   public ObjectStorageRequestOptions() {
     headers = MultiMap.caseInsensitiveMultiMap();
@@ -36,6 +36,11 @@ public class ObjectStorageRequestOptions {
     return this;
   }
 
+  public ObjectStorageRequestOptions putHeader(CharSequence name, String value) {
+    headers.set(name, value);
+    return this;
+  }
+
   public ObjectStorageRequestOptions putHeader(String name, String value) {
     headers.set(name, value);
     return this;
@@ -43,6 +48,11 @@ public class ObjectStorageRequestOptions {
 
   public ObjectStorageRequestOptions putHeaders(MultiMap headers) {
     headers.addAll(headers);
+    return this;
+  }
+
+  public ObjectStorageRequestOptions addQueryParam(CharSequence name, String value) {
+    queryParams.set(name, value);
     return this;
   }
 

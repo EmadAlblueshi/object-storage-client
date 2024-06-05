@@ -21,72 +21,72 @@ public class BucketOptions extends ObjectStorageRequestOptions {
   }
 
   public BucketOptions bucketObjectLockEnabled(String value) {
-    headers.set("x-amz-bucket-object-lock-enabled", value);
+    super.putHeader("x-amz-bucket-object-lock-enabled", value);
     return this;
   }
 
   public BucketOptions maxKeys(int value) {
-    queryParams.set("max-keys", String.valueOf(value));
+    super.addQueryParam("max-keys", String.valueOf(value));
     return this;
   }
 
   public BucketOptions prefix(String value) {
-    queryParams.set("prefix", value);
+    super.addQueryParam("prefix", value);
     return this;
   }
 
   public BucketOptions delimiter(String value) {
-    queryParams.set("delimiter", value);
+    super.addQueryParam("delimiter", value);
     return this;
   }
 
   public BucketOptions marker(String value) {
-    queryParams.set("marker", value);
+    super.addQueryParam("marker", value);
     return this;
   }
 
   public BucketOptions allowUnordered(boolean value) {
-    queryParams.set("allow-unordered", String.valueOf(value));
+    super.addQueryParam("allow-unordered", String.valueOf(value));
     return this;
   }
 
   public BucketOptions location() {
-    queryParams.set("location", "");
+    super.addQueryParam("location", "");
     return this;
   }
 
   public BucketOptions keyMarker(String value) {
-    queryParams.set("key-marker", value);
+    super.addQueryParam("key-marker", value);
     return this;
   }
 
   public BucketOptions maxUploads(int value) {
-    queryParams.set("max-uploads", String.valueOf(value));
+    super.addQueryParam("max-uploads", String.valueOf(value));
     return this;
   }
 
   public BucketOptions uploadIdMarker(String value) {
-    queryParams.set("upload-id-marker", value);
+    super.addQueryParam("upload-id-marker", value);
     return this;
   }
 
   public BucketOptions versioning() {
-    queryParams.set("versioning", "");
+    super.addQueryParam("versioning", "");
     return this;
   }
 
   public BucketOptions objectLock() {
-    queryParams.set("object-lock", "");
+    super.addQueryParam("object-lock", "");
     return this;
   }
 
   public BucketOptions notification() {
-    queryParams.set("notification", "");
+    super.addQueryParam("notification", "");
     return this;
   }
 
   public BucketOptions notification(String id) {
-    queryParams.set("notification", id);
+    super.addQueryParam("notification", id);
     return this;
   }
 
