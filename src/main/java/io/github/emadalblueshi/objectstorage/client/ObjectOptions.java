@@ -22,48 +22,48 @@ public class ObjectOptions extends ObjectStorageRequestOptions {
   }
 
   public ObjectOptions contentType(String contentType) {
-    headers.set(CONTENT_TYPE, contentType);
+    super.putHeader(CONTENT_TYPE, contentType);
     return this;
   }
 
   // A string of base64 encoded MD-5 hash of the message.
   public ObjectOptions contentMD5(String contentMD5) {
-    headers.set("content-md5", contentMD5);
+    super.putHeader("content-md5", contentMD5);
     return this;
   }
 
   public ObjectOptions storageClass(StorageClass storageClass) {
-    headers.set("x-amz-storage-class", storageClass.toString());
+    super.putHeader("x-amz-storage-class", storageClass.toString());
     return this;
   }
 
   // The source bucket name + object name. {bucket}/{object}
   public ObjectOptions copySource(String copySource) {
-    headers.set("x-amz-copy-source", copySource);
+    super.putHeader("x-amz-copy-source", copySource);
     return this;
   }
 
   // Copies only if modified since the timestamp. (optional)
   public ObjectOptions copyIfModifiedSince(String timestamp) {
-    headers.set("x-amz-copy-if-modified-since", timestamp);
+    super.putHeader("x-amz-copy-if-modified-since", timestamp);
     return this;
   }
 
   // Copies only if unmodified since the timestamp. (optional)
   public ObjectOptions copyIfUnmodifiedSince(String timestamp) {
-    headers.set("x-amz-copy-if-unmodified-since", timestamp);
+    super.putHeader("x-amz-copy-if-unmodified-since", timestamp);
     return this;
   }
 
   // Copies only if object ETag matches ETag.(optional)
   public ObjectOptions copyIfMatch(String entityTag) {
-    headers.set("x-amz-copy-if-match", entityTag);
+    super.putHeader("x-amz-copy-if-match", entityTag);
     return this;
   }
 
   // Copies only if object ETag doesn’t match.
   public ObjectOptions copyIfNoneMatch(String entityTag) {
-    headers.set("x-amz-copy-if-none-match", entityTag);
+    super.putHeader("x-amz-copy-if-none-match", entityTag);
     return this;
   }
 
@@ -71,66 +71,66 @@ public class ObjectOptions extends ObjectStorageRequestOptions {
   // bytes=beginbyte-endbyte
   // bytes=0-100
   public ObjectOptions range(int begin, int end) {
-    headers.set("range", begin + "-" + end);
+    super.putHeader("range", begin + "-" + end);
     return this;
   }
 
   // Gets only if modified since the timestamp.
   public ObjectOptions ifModifiedSince(String timestamp) {
-    headers.set("if-modified-since", timestamp);
+    super.putHeader("if-modified-since", timestamp);
     return this;
   }
 
   // Gets only if not modified since the timestamp.
   public ObjectOptions ifUnmodifiedSince(String timestamp) {
-    headers.set("if-modified-since", timestamp);
+    super.putHeader("if-modified-since", timestamp);
     return this;
   }
 
   // Gets only if object ETag matches ETag.
   public ObjectOptions ifMatch(String entityTag) {
-    headers.set("if-match", entityTag);
+    super.putHeader("if-match", entityTag);
     return this;
   }
 
   // Gets only if object ETag matches ETag.
   public ObjectOptions ifNoneMatch(String entityTag) {
-    headers.set("if-none-match", entityTag);
+    super.putHeader("if-none-match", entityTag);
     return this;
   }
 
   public ObjectOptions partNumber(String no) {
-    queryParams.set("partNumber", no);
+    super.addQueryParam("partNumber", no);
     return this;
   }
 
   public ObjectOptions uploadId(String id) {
-    queryParams.set("uploadId", id);
+    super.addQueryParam("uploadId", id);
     return this;
   }
 
   public ObjectOptions append() {
-    queryParams.set("append", "");
+    super.addQueryParam("append", "");
     return this;
   }
 
   public ObjectOptions position(String value) {
-    queryParams.set("position", value);
+    super.addQueryParam("position", value);
     return this;
   }
 
   public ObjectOptions retention() {
-    queryParams.set("retention", "");
+    super.addQueryParam("retention", "");
     return this;
   }
 
   public ObjectOptions versionId(String id) {
-    queryParams.set("versionId", id);
+    super.addQueryParam("versionId", id);
     return this;
   }
 
   public ObjectOptions legalHold() {
-    queryParams.set("legal-hold", "");
+    super.addQueryParam("legal-hold", "");
     return this;
   }
 

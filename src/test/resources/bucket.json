@@ -1,0 +1,19 @@
+{
+    "name": "demo-bucket",
+    "versioning": {
+        "enabled": true,
+        "excludePrefixes": [],
+        "excludeFolders": false
+    },
+    "locking": true,
+    "quota": {
+        "enabled": true,
+        "quota_type": "hard",
+        "amount": 1099511627776
+    },
+    "retention": {
+        "mode": "compliance",
+        "unit": "days",
+        "validity": 180
+    }
+}

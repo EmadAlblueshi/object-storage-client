@@ -1,0 +1,17 @@
+= POST
+/api/v1/policies
+
+= POST
+/api/v1/users
+
+= POST
+/api/v1/buckets
+
+= POST
+/api/v1/service-account-credentials
+
+= POST
+/api/v1/groups
+
+= PUT
+/api/v1/set-policy-multi

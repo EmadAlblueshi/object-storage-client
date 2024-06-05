@@ -8,7 +8,8 @@ import org.testcontainers.utility.DockerImageName;
 /**
  * The test container is published in docker hub and its faster for testing.
  * <p>
- * see <a href="https://hub.docker.com/r/emadalblueshi/lite-ceph-s3-gw">Docker Hub</a> and
+ * see <a href="https://hub.docker.com/r/emadalblueshi/lite-ceph-s3-gw">Docker
+ * Hub</a> and
  * <a href="https://github.com/EmadAlblueshi/lite-ceph-s3-gw">Github</a>
  * <p>
  *
@@ -69,6 +70,7 @@ public class CephRadosGatwayContainer extends GenericContainer<CephRadosGatwayCo
     return bucketName;
   }
 
+  @Override
   public void configure() {
     addExposedPorts(new int[] { PORT_HTTP, PORT_HTTPS });
     addEnv("ACCESS_KEY", accessKey != null ? accessKey : (accessKey = ACCESS_KEY));

@@ -1,0 +1,8 @@
+{
+  "accessKey": "emad",
+  "secretKey": "emadpassword",
+  "groups": [],
+  "policies": [
+    "consoleAdmin"
+  ]
+}
