@@ -2,12 +2,6 @@
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <parent>
-    <groupId>io.vertx</groupId>
-    <artifactId>vertx-ext-parent</artifactId>
-    <version>38</version>
-  </parent>
-
   <groupId>io.github.emadalblueshi</groupId>
   <artifactId>vertx-web-object-storage-client</artifactId>
   <version>0.0.1-SNAPSHOT</version>
@@ -24,13 +18,20 @@
     <exec-maven-plugin.version>3.2.0</exec-maven-plugin.version>
     <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
     <maven-failsafe-plugin.version>3.2.5</maven-failsafe-plugin.version>
+    <maven-jar-plugin.version>3.4.1</maven-jar-plugin.version>
+    <maven-source-plugin.version>3.3.1</maven-source-plugin.version>
+    <maven-javadoc-plugin.version>3.7.0</maven-javadoc-plugin.version>
+    <maven-clean-plugin.version>3.3.2</maven-clean-plugin.version>
+    <maven-processor-plugin.version>5.1</maven-processor-plugin.version>
+    <build-helper-maven-plugin.version>3.6.0</build-helper-maven-plugin.version>
+    <asciidoctor-maven-plugin>2.2.6</asciidoctor-maven-plugin>
     <logback-classic.version>1.5.6</logback-classic.version>
     <junit-jupiter.version>5.10.2</junit-jupiter.version>
     <testcontainers.version>1.19.8</testcontainers.version>
     <vertx.version>4.5.8</vertx.version>
+    <generated.dir>${project.basedir}/src/main/generated</generated.dir>
     <asciidoc.dir>${project.basedir}/src/main/asciidoc</asciidoc.dir>
     <jar.manifest>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</jar.manifest>
-    <doc.skip>true</doc.skip>
   </properties>
 
   <dependencyManagement>
@@ -106,9 +107,134 @@
     </resources>
     <plugins>
       <plugin>
+        <groupId>org.bsc.maven</groupId>
+        <artifactId>maven-processor-plugin</artifactId>
+        <version>${maven-processor-plugin.version}</version>
+        <executions>
+          <execution>
+            <id>generate-sources</id>
+            <goals>
+              <goal>process</goal>
+            </goals>
+            <phase>generate-sources</phase>
+            <configuration>
+              <systemProperties>
+                <java.util.logging.SimpleFormatter.format>%4$s: %3$s - %5$s %6$s%n</java.util.logging.SimpleFormatter.format>
+              </systemProperties>
+              <processors>
+                <processor>io.vertx.codegen.CodeGenProcessor</processor>
+                <processor>io.vertx.docgen.JavaDocGenProcessor</processor>
+              </processors>
+              <optionMap>
+                <codegen.output>${project.basedir}/src/main</codegen.output>
+                <!-- Data object converters are placed in src/main/generated -->
+                <codegen.output.data_object_converters>generated</codegen.output.data_object_converters>
+                <docgen.source>${asciidoc.dir}/*.adoc</docgen.source>
+                <docgen.output>${project.build.directory}/asciidoc/java</docgen.output>
+                <maven.groupId>${project.groupId}</maven.groupId>
+                <maven.artifactId>${project.artifactId}</maven.artifactId>
+                <maven.version>${project.version}</maven.version>
+              </optionMap>
+              <defaultOutputDirectory>${project.build.directory}/generated-sources/codegen</defaultOutputDirectory>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>    
+      <plugin>
+        <artifactId>maven-clean-plugin</artifactId>
+        <version>${maven-clean-plugin.version}</version>
+        <executions>
+          <execution>
+            <id>default-clean</id>
+            <configuration>
+              <filesets>
+                <fileset>
+                  <directory>${generated.dir}</directory>
+                </fileset>
+              </filesets>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>    
+      <plugin>
         <artifactId>maven-resources-plugin</artifactId>
         <version>${maven-resources-plugin.version}</version>
       </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>${maven-source-plugin.version}</version>
+        <configuration>
+          <excludes>
+            <exclude>examples/**</exclude>
+          </excludes>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals>
+              <goal>jar-no-fork</goal>
+              <goal>test-jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.asciidoctor</groupId>
+        <artifactId>asciidoctor-maven-plugin</artifactId>
+        <version>${asciidoctor-maven-plugin}</version>
+        <configuration>
+          <sourceDirectory>${asciidoc.dir}</sourceDirectory>
+          <outputDirectory>${project.build.directory}/docs/${project.artifactId}</outputDirectory>
+          <preserveDirectories>true</preserveDirectories>
+          <relativeBaseDir>true</relativeBaseDir>
+          <backend>html</backend>
+          <doctype>book</doctype>         
+        </configuration>        
+      </plugin>      
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>${maven-javadoc-plugin.version}</version>
+        <configuration>
+          <excludePackageNames>examples</excludePackageNames>
+          <sourceFileExcludes>
+            <sourceFileExclude>**/package-info.java</sourceFileExclude>
+            <sourceFileExclude>**/impl/**</sourceFileExclude>
+          </sourceFileExcludes>
+          <sourceFileIncludes>
+            <sourceFileInclude>io/github/emadalblueshi/**/*.java</sourceFileInclude>
+          </sourceFileIncludes>                    
+          <doclint>none</doclint>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>build-helper-maven-plugin</artifactId>
+        <version>${build-helper-maven-plugin.version}</version>
+        <executions>
+          <execution>
+            <id>add-source</id>
+            <phase>generate-sources</phase>
+            <goals>
+              <goal>add-source</goal>
+            </goals>
+            <configuration>
+              <sources>
+                <source>${generated.dir}</source>
+              </sources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>                                              
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
