@@ -19,9 +19,9 @@ To package:
 mvn clean package -DskipTests
 ```
 
-To package with docs
+To package with site
 ```
-mvn clean package -DskipTests -Ddoc.skip=false
+mvn clean package -DskipTests site
 ```
 
 
