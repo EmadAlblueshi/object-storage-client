@@ -5,10 +5,11 @@ on:
   push:
     branches: [ "master" ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "master" ] 
     
 jobs:
   Test:
+    name: Run tests
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -20,3 +21,33 @@ jobs:
         cache: maven
     - name: Build with Maven
       run: mvn verify -B
+  Deploy:
+    name: Deploy Snapshot to OSSRH
+    needs: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 11
+        uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          server-id: s01.oss.sonatype.org
+          server-username: SONATYPE_NEXUS_USERNAME
+          server-password: SONATYPE_NEXUS_PASSWORD
+          gpg-private-key: MAVEN_GPG_PRIVATE_KEY
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      - name: Get project version
+        run: echo "PROJECT_VERSION=$(mvn org.apache.maven.plugins:maven-help-plugin:evaluate -Dexpression=project.version -B | grep -v '\[')" >> $GITHUB_ENV                    
+      - name: Maven deploy
+        if: ${{ endsWith(env.PROJECT_VERSION, '-SNAPSHOT') }}
+        run: mvn deploy -DskipTests -B
+        env:
+          SONATYPE_NEXUS_USERNAME: ${{ secrets.SONATYPE_NEXUS_USERNAME }}
+          SONATYPE_NEXUS_PASSWORD: ${{ secrets.SONATYPE_NEXUS_PASSWORD }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+    
+
+      
+
