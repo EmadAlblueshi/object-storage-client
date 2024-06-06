@@ -13,6 +13,8 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <nexus-staging-maven-plugin.version>1.7.0</nexus-staging-maven-plugin.version>
+    <maven-gpg-plugin.version>3.2.4</maven-gpg-plugin.version>
     <maven-resources-plugin.version>3.3.1</maven-resources-plugin.version>
     <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
     <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
@@ -70,7 +72,7 @@
       <groupId>io.vertx</groupId>
       <artifactId>vertx-docgen</artifactId>
       <scope>provided</scope>
-    </dependency>    
+    </dependency>
     <dependency>
       <groupId>ch.qos.logback</groupId>
       <artifactId>logback-classic</artifactId>
@@ -139,7 +141,7 @@
             </configuration>
           </execution>
         </executions>
-      </plugin>    
+      </plugin>
       <plugin>
         <artifactId>maven-clean-plugin</artifactId>
         <version>${maven-clean-plugin.version}</version>
@@ -155,7 +157,7 @@
             </configuration>
           </execution>
         </executions>
-      </plugin>    
+      </plugin>
       <plugin>
         <artifactId>maven-resources-plugin</artifactId>
         <version>${maven-resources-plugin.version}</version>
@@ -169,7 +171,7 @@
             <exclude>examples/**</exclude>
           </excludes>
         </configuration>
-      </plugin>      
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-source-plugin</artifactId>
@@ -199,7 +201,7 @@
           <preserveDirectories>true</preserveDirectories>
           <relativeBaseDir>true</relativeBaseDir>
           <backend>html</backend>
-          <doctype>book</doctype>         
+          <doctype>book</doctype>
         </configuration>
         <executions>
           <execution>
@@ -221,8 +223,8 @@
               </resources>
             </configuration>
           </execution>
-        </executions>                
-      </plugin>      
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-javadoc-plugin</artifactId>
@@ -235,7 +237,7 @@
           </sourceFileExcludes>
           <sourceFileIncludes>
             <sourceFileInclude>io/github/emadalblueshi/**/*.java</sourceFileInclude>
-          </sourceFileIncludes>                    
+          </sourceFileIncludes>
           <doclint>none</doclint>
         </configuration>
         <executions>
@@ -244,7 +246,7 @@
             <goals>
               <goal>jar</goal>
             </goals>
-          </execution>        
+          </execution>
           <execution>
             <id>gen-javadoc</id>
             <phase>site</phase>
@@ -252,7 +254,7 @@
               <goal>javadoc</goal>
             </goals>
           </execution>
-        </executions>        
+        </executions>
       </plugin>
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
@@ -272,7 +274,7 @@
             </configuration>
           </execution>
         </executions>
-      </plugin>                                              
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -297,9 +299,29 @@
               <goal>verify</goal>
             </goals>
           </execution>
-        </executions>         
+        </executions>
       </plugin>
-    </plugins>    
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-gpg-plugin</artifactId>
+        <version>${maven-gpg-plugin.version}</version>
+        <executions>
+          <execution>
+            <id>sign-artifacts</id>
+              <phase>verify</phase>
+              <goals>
+                <goal>sign</goal>
+              </goals>
+              <configuration>
+                <gpgArguments>
+                  <arg>--pinentry-mode</arg>
+                  <arg>loopback</arg>
+                </gpgArguments>
+              </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
   </build>
 
   <reporting>
@@ -316,7 +338,25 @@
         </reportSets>
       </plugin>
     </plugins>
-  </reporting>  
+  </reporting>
+
+  <scm>
+    <connection>scm:git:https://github.com/EmadAlblueshi/vertx-web-object-storage-client.git</connection>
+    <developerConnection>scm:git:https://github.com/EmadAlblueshi/vertx-web-object-storage-client.git</developerConnection>
+    <url>https://github.com/EmadAlblueshi/vertx-web-object-storage-client</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <distributionManagement>
+    <repository>
+      <id>ossrh</id>
+      <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+    </repository>
+    <snapshotRepository>
+      <id>ossrh</id>
+      <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
+    </snapshotRepository>
+  </distributionManagement>
 
   <licenses>
     <license>
