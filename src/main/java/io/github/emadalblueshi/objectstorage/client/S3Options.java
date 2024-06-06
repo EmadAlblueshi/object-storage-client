@@ -25,11 +25,19 @@ public class S3Options {
   private String service;
 
   public S3Options() {
-    signatureVersion = DEFAULT_REQUEST_SIGNATURE_VERSION;
-    accessKey = DEFAULT_ACCESS_KEY;
-    secretKey = DEFAULT_SECRET_KEY;
-    region = DEFAULT_REGION;
-    service = DEFAULT_SERVICE;
+    setSignatureVersion(DEFAULT_REQUEST_SIGNATURE_VERSION);
+    setAccessKey(DEFAULT_ACCESS_KEY);
+    setSecretKey(DEFAULT_SECRET_KEY);
+    setRegion(DEFAULT_REGION);
+    setService(DEFAULT_SERVICE);
+  }
+
+  public S3Options(S3Options other) {
+    setSignatureVersion(other.getSignatureVersion());
+    setAccessKey(other.getAccessKey());
+    setSecretKey(other.getSecretKey());
+    setRegion(other.getRegion());
+    setService(other.getService());
   }
 
   public S3Options(JsonObject json) {
