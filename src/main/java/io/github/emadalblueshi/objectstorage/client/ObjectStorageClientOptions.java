@@ -38,6 +38,11 @@ public class ObjectStorageClientOptions extends WebClientOptions {
     super();
   }
 
+  public ObjectStorageClientOptions(ObjectStorageClientOptions other) {
+    super(other);
+    setS3Options(other.getS3Options());
+  }
+
   public ObjectStorageClientOptions(JsonObject json) {
     super(json);
     ObjectStorageClientOptionsConverter.fromJson(json, this);
