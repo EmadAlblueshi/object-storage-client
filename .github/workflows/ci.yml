@@ -21,11 +21,11 @@ jobs:
         gpg-private-key: MAVEN_GPG_PRIVATE_KEY
         gpg-passphrase: MAVEN_GPG_PASSPHRASE     
         cache: maven
-    - name: Build with Maven
-      run: mvn verify -B
       env:
         MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-        MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}      
+        MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}    
+    - name: Build with Maven
+      run: mvn verify -B    
   Deploy:
     name: Deploy Snapshot to OSSRH
     needs: Test
