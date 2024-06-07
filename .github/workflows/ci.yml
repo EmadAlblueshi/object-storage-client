@@ -18,14 +18,13 @@ jobs:
       with:
         java-version: '11'
         distribution: 'temurin'
-        # gpg-private-key: MAVEN_GPG_PRIVATE_KEY
-        # gpg-passphrase: MAVEN_GPG_PASSPHRASE     
+        gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+        gpg-passphrase: MAVEN_GPG_PASSPHRASE     
         cache: maven
-      # env:
-      #   MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-      #   MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}    
+      env:
+        MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}    
     - name: Build with Maven
-      run: mvn clean test -B    
+      run: mvn verify -B    
   Deploy:
     name: Deploy Snapshot to OSSRH
     needs: Test
@@ -40,17 +39,16 @@ jobs:
           server-id: central
           server-username: SONATYPE_NEXUS_USERNAME
           server-password: SONATYPE_NEXUS_PASSWORD
-          gpg-private-key: MAVEN_GPG_PRIVATE_KEY
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE          
       - name: Get project version
         run: echo "PROJECT_VERSION=$(mvn org.apache.maven.plugins:maven-help-plugin:evaluate -Dexpression=project.version -B | grep -v '\[')" >> $GITHUB_ENV                    
       - name: Maven deploy
         if: ${{ endsWith(env.PROJECT_VERSION, '-DEV') }}
-        run: mvn clean deploy -DskipTests -B
+        run: mvn deploy -DskipTests -B
         env:
           SONATYPE_NEXUS_USERNAME: ${{ secrets.SONATYPE_NEXUS_USERNAME }}
           SONATYPE_NEXUS_PASSWORD: ${{ secrets.SONATYPE_NEXUS_PASSWORD }}
-          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
     
 
