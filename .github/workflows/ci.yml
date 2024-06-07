@@ -32,17 +32,21 @@ jobs:
         with:
           java-version: '11'
           distribution: 'temurin'
-          server-id: s01.oss.sonatype.org
+          server-id: central
           server-username: SONATYPE_NEXUS_USERNAME
           server-password: SONATYPE_NEXUS_PASSWORD
+          gpg-private-key: MAVEN_GPG_PRIVATE_KEY
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE          
       - name: Get project version
         run: echo "PROJECT_VERSION=$(mvn org.apache.maven.plugins:maven-help-plugin:evaluate -Dexpression=project.version -B | grep -v '\[')" >> $GITHUB_ENV                    
       - name: Maven deploy
-        if: ${{ endsWith(env.PROJECT_VERSION, '-SNAPSHOT') }}
+        if: ${{ endsWith(env.PROJECT_VERSION, '-DEV') }}
         run: mvn deploy -DskipTests -B
         env:
           SONATYPE_NEXUS_USERNAME: ${{ secrets.SONATYPE_NEXUS_USERNAME }}
           SONATYPE_NEXUS_PASSWORD: ${{ secrets.SONATYPE_NEXUS_PASSWORD }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
     
 
       
