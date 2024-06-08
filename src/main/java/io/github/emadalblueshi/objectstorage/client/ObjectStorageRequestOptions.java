@@ -4,8 +4,7 @@ import io.vertx.core.MultiMap;
 
 /**
  *
- * The object storage request options has common options between Object and
- * Bucket.
+ * The object storage request options.
  * <p>
  *
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
@@ -19,21 +18,6 @@ public class ObjectStorageRequestOptions {
   public ObjectStorageRequestOptions() {
     headers = MultiMap.caseInsensitiveMultiMap();
     queryParams = MultiMap.caseInsensitiveMultiMap();
-  }
-
-  public ObjectStorageRequestOptions acl(Acl acl) {
-    headers.set("x-amz-acl", acl.toString());
-    return this;
-  }
-
-  public ObjectStorageRequestOptions acl() {
-    queryParams.set("acl", "");
-    return this;
-  }
-
-  public ObjectStorageRequestOptions uploads() {
-    queryParams.set("uploads", "");
-    return this;
   }
 
   public ObjectStorageRequestOptions putHeader(CharSequence name, String value) {

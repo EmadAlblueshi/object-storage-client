@@ -1,4 +1,4 @@
-package io.github.emadalblueshi.objectstorage.client;
+package io.github.emadalblueshi.objectstorage.client.s3;
 
 import io.vertx.codegen.annotations.CacheReturn;
 import io.vertx.codegen.annotations.Nullable;

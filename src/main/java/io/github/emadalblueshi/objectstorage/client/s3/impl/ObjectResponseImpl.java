@@ -1,9 +1,8 @@
-package io.github.emadalblueshi.objectstorage.client.impl;
+package io.github.emadalblueshi.objectstorage.client.s3.impl;
 
 import java.util.List;
 
-import io.github.emadalblueshi.objectstorage.client.ObjectResponse;
-
+import io.github.emadalblueshi.objectstorage.client.s3.ObjectResponse;
 import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpVersion;
@@ -11,10 +10,6 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.ext.web.client.impl.HttpResponseImpl;
 
 /**
- * Simply add the most common used headers returned
- * from the object storage server in order to reduce API verbosity.
- * <p>
- *
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 

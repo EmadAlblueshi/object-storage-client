@@ -1,4 +1,4 @@
-package io.github.emadalblueshi.objectstorage.client;
+package io.github.emadalblueshi.objectstorage.client.s3;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -10,6 +10,9 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.extension.ExtendWith;
+
+import io.github.emadalblueshi.objectstorage.client.ObjectStorageClient;
+import io.github.emadalblueshi.objectstorage.client.ObjectStorageClientOptions;
 import io.github.emadalblueshi.objectstorage.container.MinIOS3Container;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -26,10 +29,10 @@ import io.vertx.junit5.VertxTestContext;
 
 @ExtendWith(VertxExtension.class)
 @TestMethodOrder(OrderAnnotation.class)
-public class ObjectStorageClientTest {
+public class S3ClientTest {
 
   protected static MinIOS3Container container = new MinIOS3Container();
-  protected static ObjectStorageClient client;
+  protected static S3Client client;
   protected static String HOST;
   protected static Integer PORT_S3_API;
   protected static Integer PORT_WEB_UI;
@@ -58,7 +61,7 @@ public class ObjectStorageClientTest {
         .setDefaultHost(HOST)
         .setDefaultPort(PORT_S3_API);
 
-    client = ObjectStorageClient.create(vertx, options);
+    client = ObjectStorageClient.s3Create(vertx, options);
 
     var wOptions = new CachingWebClientOptions()
         .setEnableVaryCaching(true)

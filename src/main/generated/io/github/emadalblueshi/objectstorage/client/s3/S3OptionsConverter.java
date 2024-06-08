@@ -1,4 +1,4 @@
-package io.github.emadalblueshi.objectstorage.client;
+package io.github.emadalblueshi.objectstorage.client.s3;
 
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.JsonArray;
@@ -8,8 +8,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 
 /**
- * Converter and mapper for {@link io.github.emadalblueshi.objectstorage.client.S3Options}.
- * NOTE: This class has been automatically generated from the {@link io.github.emadalblueshi.objectstorage.client.S3Options} original class using Vert.x codegen.
+ * Converter and mapper for {@link io.github.emadalblueshi.objectstorage.client.s3.S3Options}.
+ * NOTE: This class has been automatically generated from the {@link io.github.emadalblueshi.objectstorage.client.s3.S3Options} original class using Vert.x codegen.
  */
 public class S3OptionsConverter {
 
@@ -42,7 +42,7 @@ public class S3OptionsConverter {
           break;
         case "signatureVersion":
           if (member.getValue() instanceof String) {
-            obj.setSignatureVersion(io.github.emadalblueshi.objectstorage.client.S3SignatureVersion.valueOf((String)member.getValue()));
+            obj.setSignatureVersion(io.github.emadalblueshi.objectstorage.client.s3.S3SignatureVersion.valueOf((String)member.getValue()));
           }
           break;
       }

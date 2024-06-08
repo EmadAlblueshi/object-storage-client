@@ -1,27 +1,55 @@
-= Vert.x Web Object Storage Client
+= Object Storage Client
 
-image:https://github.com/EmadAlblueshi/vertx-web-object-storage-client/actions/workflows/ci.yml/badge.svg?branch=master["Build Status", link="https://github.com/EmadAlblueshi/vertx-web-object-storage-client/actions/workflows/ci.yml"]
+image:https://github.com/EmadAlblueshi/object-storage-client/actions/workflows/ci.yml/badge.svg?branch=master["Build Status", link="https://github.com/EmadAlblueshi/object-storage-client/actions?query=workflow%3ACI"]
 
-A convenient Vert.x web client that is compatible with
+A convenient S3 client based on Vert.x that is compatible with
 https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API protocol]
 
 WARNING: The client in active development!
 
+== Example
+[source,java]
+----
+// Create S3 options
+var s3Options = new S3Options()
+    .setSignatureVersion(S3SignatureVersion.V4)
+    .setAccessKey("access-key")
+    .setSecretKey("secret-key")
+    .setRegion("region");
+
+// Create S3 client options
+var clientOptions = new ObjectStorageClientOptions()
+    .setS3Options(s3Options)
+    .setDefaultHost("localhost");
+
+// Create S3 client
+var client = ObjectStorageClient.s3Create(vertx, clientOptions);
+
+// Create new bucket
+client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
+    if (r.succeeded()) {
+    System.out.println("Bucket created");
+    } else {
+    System.out.println("Bucket failed");
+    }
+});
+----
+
 == Building
 
 To launch the tests:
-```
+----
 mvn clean test
-```
+----
 
 To package:
-```
+----
 mvn clean package -DskipTests
-```
+----
 
 To package with site
-```
+----
 mvn clean package -DskipTests site
-```
+----
 
 

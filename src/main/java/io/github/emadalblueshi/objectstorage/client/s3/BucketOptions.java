@@ -1,20 +1,12 @@
-package io.github.emadalblueshi.objectstorage.client;
+package io.github.emadalblueshi.objectstorage.client.s3;
 
 import io.vertx.core.MultiMap;
 
 /**
- *
- * The Bucket request options has all required and optional headers with query
- * params.
- * this will reduce potential verbosity for Bucket operations.
- * <p>
- * see <a href="https://docs.ceph.com/en/reef/radosgw/s3/bucketops/">Bucket
- * Operations</a>
- *
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
-public class BucketOptions extends ObjectStorageRequestOptions {
+public class BucketOptions extends S3RequestOptions {
 
   public BucketOptions() {
     super();
