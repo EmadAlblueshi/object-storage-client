@@ -28,9 +28,9 @@ var client = ObjectStorageClient.s3Create(vertx, clientOptions);
 // Create new bucket
 client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
     if (r.succeeded()) {
-    System.out.println("Bucket created");
+      System.out.println("Bucket created");
     } else {
-    System.out.println("Bucket failed");
+      System.out.println("Bucket failed");
     }
 });
 
@@ -46,9 +46,9 @@ var fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
 // Create new object    
 client.put(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
     if (r.succeeded()) {
-    System.out.println("Object created");
+      System.out.println("Object created");
     } else {
-    System.out.println("Object failed");
+      System.out.println("Object failed");
     }
 });    
 ----
