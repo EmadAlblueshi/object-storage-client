@@ -271,6 +271,7 @@
           </sourceFileIncludes>
           <doclint>none</doclint>
           <source>8</source>
+          <reportOutputDirectory>${project.build.directory}/docs</reportOutputDirectory>
         </configuration>
         <executions>
           <execution>
