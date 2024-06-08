@@ -4,17 +4,16 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>io.github.emadalblueshi</groupId>
-  <artifactId>vertx-web-object-storage-client</artifactId>
-  <version>0.0.1-DEV</version>
+  <artifactId>object-storage-client</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-  <name>Vert.x Web Object Storage Client</name>
-  <description>Object storage web client for Vert.x applications.</description>
-  <url>https://github.com/EmadAlblueshi/vertx-web-object-storage-client</url>
+  <name>Object Storage Client</name>
+  <description>Object storage client based on Vert.x</description>
+  <url>https://github.com/EmadAlblueshi/object-storage-client</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <central-publishing-maven-plugin.version>0.4.0</central-publishing-maven-plugin.version>
     <maven-gpg-plugin.version>3.2.4</maven-gpg-plugin.version>
     <maven-resources-plugin.version>3.3.1</maven-resources-plugin.version>
     <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
@@ -168,11 +167,35 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
         <version>${maven-jar-plugin.version}</version>
-        <configuration>
-          <excludes>
-            <exclude>examples/**</exclude>
-          </excludes>
-        </configuration>
+        <executions>
+          <execution>
+            <id>default-jar</id>
+            <configuration>
+              <archive>
+                <manifest>
+                  <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                  <addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
+                </manifest>
+                <index>true</index>
+                <manifestFile>${jar.manifest}</manifestFile>
+                <manifestEntries>
+                  <Maven-Group-Id>${project.groupId}</Maven-Group-Id>
+                  <Maven-Artifact-Id>${project.artifactId}</Maven-Artifact-Id>
+                  <Maven-Version>${project.version}</Maven-Version>
+                </manifestEntries>
+              </archive>
+              <excludes>
+                <exclude>examples/**</exclude>
+              </excludes>
+            </configuration>
+          </execution>
+          <execution>
+            <id>attach-test-jar</id>
+            <goals>
+              <goal>test-jar</goal>
+            </goals>
+          </execution>          
+        </executions>        
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -198,6 +221,12 @@
         <artifactId>asciidoctor-maven-plugin</artifactId>
         <version>${asciidoctor-maven-plugin}</version>
         <configuration>
+          <attributes>
+            <group-id>${project.groupId}</group-id>
+            <artifact-id>${project.artifactId}</artifact-id>
+            <version>${project.version}</version>
+            <source-highlighter>coderay</source-highlighter>
+          </attributes>
           <sourceDirectory>${asciidoc.dir}</sourceDirectory>
           <outputDirectory>${project.build.directory}/docs/${project.artifactId}</outputDirectory>
           <preserveDirectories>true</preserveDirectories>
@@ -302,18 +331,7 @@
             </goals>
           </execution>
         </executions>
-      </plugin>
-      <plugin>
-        <groupId>org.sonatype.central</groupId>
-        <artifactId>central-publishing-maven-plugin</artifactId>
-        <version>${central-publishing-maven-plugin.version}</version>
-        <extensions>true</extensions>
-        <configuration>
-          <publishingServerId>central</publishingServerId>
-          <tokenAuth>true</tokenAuth>
-          <autoPublish>true</autoPublish>
-        </configuration>
-      </plugin>          
+      </plugin>         
     </plugins>
   </build>
 
@@ -364,11 +382,22 @@
   </profiles>
 
   <scm>
-    <connection>scm:git:git@github.com:EmadAlblueshi/vertx-web-object-storage-client.git</connection>
-    <developerConnection>scm:git:git@github.com:EmadAlblueshi/vertx-web-object-storage-client.git</developerConnection>
-    <url>https://github.com/EmadAlblueshi/vertx-web-object-storage-client</url>
+    <connection>scm:git:git@github.com:EmadAlblueshi/object-storage-client.git</connection>
+    <developerConnection>scm:git:git@github.com:EmadAlblueshi/object-storage-client.git</developerConnection>
+    <url>https://github.com/EmadAlblueshi/object-storage-client</url>
     <tag>HEAD</tag>
   </scm>
+
+  <distributionManagement>
+    <repository>
+      <id>ossrh</id>
+      <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+    </repository>
+    <snapshotRepository>
+      <id>ossrh</id>
+      <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
+    </snapshotRepository>
+  </distributionManagement> 
 
   <licenses>
     <license>

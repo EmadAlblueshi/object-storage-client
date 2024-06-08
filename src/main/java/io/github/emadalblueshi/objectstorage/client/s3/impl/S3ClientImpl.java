@@ -1,10 +1,16 @@
-package io.github.emadalblueshi.objectstorage.client.impl;
+package io.github.emadalblueshi.objectstorage.client.s3.impl;
 
-import static io.github.emadalblueshi.objectstorage.client.util.S3SignatureV4.sign;
+import static io.github.emadalblueshi.objectstorage.client.s3.impl.S3SignatureV4.sign;
 
+import java.util.Objects;
 import java.util.function.Function;
 
 import io.github.emadalblueshi.objectstorage.client.*;
+import io.github.emadalblueshi.objectstorage.client.s3.BucketOptions;
+import io.github.emadalblueshi.objectstorage.client.s3.ObjectOptions;
+import io.github.emadalblueshi.objectstorage.client.s3.ObjectResponse;
+import io.github.emadalblueshi.objectstorage.client.s3.S3Client;
+import io.github.emadalblueshi.objectstorage.client.s3.S3Options;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
@@ -19,10 +25,10 @@ import io.vertx.ext.web.codec.BodyCodec;
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
-public class ObjectStorageClientImpl implements ObjectStorageClient {
+public class S3ClientImpl implements S3Client {
 
   private final ObjectStorageClientOptions options;
-  private final WebClient client;
+  private final WebClient webClient;
   private final Buffer EMPTY = Buffer.buffer("");
 
   private <T> Function<HttpResponse<T>, ObjectResponse<T>> objectResponse() {
@@ -37,9 +43,12 @@ public class ObjectStorageClientImpl implements ObjectStorageClient {
         httpResponse.followedRedirects());
   }
 
-  public ObjectStorageClientImpl(Vertx vertx, ObjectStorageClientOptions objectStorageClientOptions) {
+  public S3ClientImpl(Vertx vertx, ObjectStorageClientOptions objectStorageClientOptions) {
+    Objects.requireNonNull(vertx);
+    Objects.requireNonNull(objectStorageClientOptions);
+    Objects.requireNonNull(objectStorageClientOptions.getS3Options());
     options = objectStorageClientOptions;
-    client = WebClient.create(vertx, objectStorageClientOptions);
+    webClient = WebClient.create(vertx, objectStorageClientOptions);
   }
 
   @Override
@@ -99,7 +108,7 @@ public class ObjectStorageClientImpl implements ObjectStorageClient {
 
   @Override
   public void close() {
-    client.close();
+    webClient.close();
   }
 
   private HttpRequest<Buffer> request(
@@ -122,7 +131,7 @@ public class ObjectStorageClientImpl implements ObjectStorageClient {
         s3Options.getSecretKey(),
         s3Options.getRegion(),
         s3Options.getService());
-    HttpRequest<Buffer> httpRequest = client.request(httpMethod, path);
+    HttpRequest<Buffer> httpRequest = webClient.request(httpMethod, path);
     httpRequest.headers().addAll(headers);
     httpRequest.queryParams().addAll(queryParams);
     return httpRequest;

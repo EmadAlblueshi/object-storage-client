@@ -1,19 +1,20 @@
 package examples;
 
-import io.github.emadalblueshi.objectstorage.client.Acl;
-import io.github.emadalblueshi.objectstorage.client.BucketOptions;
-import io.github.emadalblueshi.objectstorage.client.ObjectOptions;
 import io.github.emadalblueshi.objectstorage.client.ObjectStorageClient;
 import io.github.emadalblueshi.objectstorage.client.ObjectStorageClientOptions;
-import io.github.emadalblueshi.objectstorage.client.S3Options;
-import io.github.emadalblueshi.objectstorage.client.S3SignatureVersion;
-import io.github.emadalblueshi.objectstorage.client.StorageClass;
+import io.github.emadalblueshi.objectstorage.client.s3.Acl;
+import io.github.emadalblueshi.objectstorage.client.s3.BucketOptions;
+import io.github.emadalblueshi.objectstorage.client.s3.ObjectOptions;
+import io.github.emadalblueshi.objectstorage.client.s3.S3Client;
+import io.github.emadalblueshi.objectstorage.client.s3.S3Options;
+import io.github.emadalblueshi.objectstorage.client.s3.S3SignatureVersion;
+import io.github.emadalblueshi.objectstorage.client.s3.StorageClass;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 
+@SuppressWarnings("unused")
 public class Examples {
 
-  @SuppressWarnings("unused")
   void example1() {
     var s3Options = new S3Options()
         .setSignatureVersion(S3SignatureVersion.V4)
@@ -22,7 +23,6 @@ public class Examples {
         .setRegion("region");
   }
 
-  @SuppressWarnings("unused")
   void example2(S3Options s3Options, Vertx vertx) {
     var clientOptions = new ObjectStorageClientOptions()
         .setS3Options(s3Options)
@@ -30,10 +30,10 @@ public class Examples {
         .setDefaultPort(443)
         .setSsl(true);
     // Create the client
-    var client = ObjectStorageClient.create(vertx, clientOptions);
+    var client = ObjectStorageClient.s3Create(vertx, clientOptions);
   }
 
-  void example3(ObjectStorageClient client) {
+  void example3(S3Client client) {
     client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
       if (r.succeeded()) {
         System.out.println("Bucket created");
@@ -43,7 +43,6 @@ public class Examples {
     });
   }
 
-  @SuppressWarnings("unused")
   void example4() {
     ObjectOptions objectOptions = new ObjectOptions()
         .contentType("text/plain")
@@ -51,12 +50,11 @@ public class Examples {
         .acl(Acl.PUBLIC_READ);
   }
 
-  @SuppressWarnings("unused")
   void example5(Vertx vertx) {
     Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
   }
 
-  void example6(ObjectStorageClient client, ObjectOptions objectOptions, Buffer fileBuffer) {
+  void example6(S3Client client, ObjectOptions objectOptions, Buffer fileBuffer) {
     client.put(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
       if (r.succeeded()) {
         System.out.println("Object created");
@@ -66,7 +64,7 @@ public class Examples {
     });
   }
 
-  void example7(ObjectStorageClient client) {
+  void example7(S3Client client) {
     client.get(new ObjectOptions(), "/my-bucket/my-file.txt").onComplete(r -> {
       if (r.succeeded()) {
         System.out.println(r.result().bodyAsString());

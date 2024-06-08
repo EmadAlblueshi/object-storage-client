@@ -1,21 +1,14 @@
-package io.github.emadalblueshi.objectstorage.client;
+package io.github.emadalblueshi.objectstorage.client.s3;
 
 import io.vertx.core.MultiMap;
 import static io.vertx.core.http.HttpHeaders.*;
 
 /**
  *
- * The Object request options has all required and optional headers with query
- * params.
- * this will reduce potential verbosity for Object operations.
- * <p>
- * see <a href="https://docs.ceph.com/en/reef/radosgw/s3/objectops/">Object
- * Operations</a>
- *
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
-public class ObjectOptions extends ObjectStorageRequestOptions {
+public class ObjectOptions extends S3RequestOptions {
 
   public ObjectOptions() {
     super();
