@@ -270,6 +270,7 @@
             <sourceFileInclude>io/github/emadalblueshi/**/*.java</sourceFileInclude>
           </sourceFileIncludes>
           <doclint>none</doclint>
+          <source>8</source>
         </configuration>
         <executions>
           <execution>
