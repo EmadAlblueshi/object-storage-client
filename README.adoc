@@ -33,6 +33,24 @@ client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
     System.out.println("Bucket failed");
     }
 });
+
+// Create object request options
+var objectOptions = new ObjectOptions()
+    .contentType("text/plain")
+    .storageClass(StorageClass.STANDARD)
+    .acl(Acl.PUBLIC_READ);
+
+// Read text file example
+var fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
+
+// Create new object    
+client.put(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
+    if (r.succeeded()) {
+    System.out.println("Object created");
+    } else {
+    System.out.println("Object failed");
+    }
+});    
 ----
 
 == Building
