@@ -194,8 +194,8 @@
             <goals>
               <goal>test-jar</goal>
             </goals>
-          </execution>          
-        </executions>        
+          </execution>
+        </executions>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -225,7 +225,9 @@
             <group-id>${project.groupId}</group-id>
             <artifact-id>${project.artifactId}</artifact-id>
             <version>${project.version}</version>
-            <source-highlighter>coderay</source-highlighter>
+            <source-highlighter>rouge</source-highlighter>
+            <toc>center</toc>
+            <icons>font</icons>
           </attributes>
           <sourceDirectory>${asciidoc.dir}</sourceDirectory>
           <outputDirectory>${project.build.directory}/docs/${project.artifactId}</outputDirectory>
@@ -333,7 +335,7 @@
             </goals>
           </execution>
         </executions>
-      </plugin>         
+      </plugin>
     </plugins>
   </build>
 
@@ -399,7 +401,7 @@
       <id>ossrh</id>
       <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
     </snapshotRepository>
-  </distributionManagement> 
+  </distributionManagement>
 
   <licenses>
     <license>
