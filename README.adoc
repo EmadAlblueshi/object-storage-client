@@ -1,11 +1,12 @@
 = Object Storage Client
+:icons: font
 
 image:https://github.com/EmadAlblueshi/object-storage-client/actions/workflows/ci.yml/badge.svg?branch=master["Build Status", link="https://github.com/EmadAlblueshi/object-storage-client/actions?query=workflow%3ACI"]
 
 A convenient S3 client based on Vert.x that is compatible with
 https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API protocol]
 
-WARNING: The client in active development!
+WARNING: The module in active development, this means the API can change between versions. 
 
 == Example
 [source,java]

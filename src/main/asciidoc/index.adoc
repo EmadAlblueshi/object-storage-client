@@ -1,20 +1,23 @@
 = Object Storage Client
-:toc: left
 
-A convenient object storage client based on Vert.x that is compatible with
-https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API protocol]
+A convenient object storage client based on Vert.x
 
-WARNING: The client in active development!
+WARNING: The module in active development, this means the API can change between versions.
 
-== Introduction
+== Distributed Object Storage
 
-The object storage systems have their own web interface protocol in order to
+The distributed object storage systems have their own web API in order to
 interact with its resources such as https://docs.aws.amazon.com/s3/[S3],
 https://docs.openstack.org/swift/latest/[SWIFT] and others we may encounter.
 
-**The API design of the client is meant to be generic such as `ObjectStorageClient`
-and `ObjectStorageClientOptions` in order to accommodate new web
-protocols in the future with its own naming conventions**
+Additionally, there are broad range of distributed object storage 
+systems implement compatible https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API] 
+to be as best as possible. For example but not limited to 
+https://min.io/docs/minio/linux/reference/s3-api-compatibility.html[MinIO], 
+https://docs.ceph.com/en/latest/radosgw/s3/[Ceph], https://docs.openstack.org/swift/latest/s3_compat.html[OpenStack] 
+and https://garagehq.deuxfleurs.fr/documentation/reference-manual/s3-compatibility/[Garage].
+
+**The client is based on Vert.x ecosystem and meant to be compatible with S3 as much as possible.**
 
 === S3 Client
 In order to configure the client for S3 client simply do the following:
