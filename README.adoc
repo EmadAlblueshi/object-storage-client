@@ -11,28 +11,30 @@ WARNING: The module in active development, this means the API can change between
 == Example
 [source,java]
 ----
-// Create S3 options
-var s3Options = new S3Options()
-    .setSignatureVersion(S3SignatureVersion.V4)
+// Create auth options
+var authOptions = new S3AuthOptions()
+    .setSignatureVersion(SignatureVersion.V4)
     .setAccessKey("access-key")
-    .setSecretKey("secret-key")
-    .setRegion("region");
+    .setSecretKey("secret-key");
 
-// Create S3 client options
-var clientOptions = new ObjectStorageClientOptions()
-    .setS3Options(s3Options)
-    .setDefaultHost("localhost");
+// Create client options
+var clientOptions = new S3ClientOptions()
+    .setAuthOptions(authOptions)
+    .setRegion("region")
+    .setHost("s3.example.com")
+    .setPort(443)
+    .setSsl(true);
 
-// Create S3 client
-var client = ObjectStorageClient.s3Create(vertx, clientOptions);
+// Create the client
+var client = S3Client.create(vertx, clientOptions);
 
 // Create new bucket
 client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
-    if (r.succeeded()) {
-      System.out.println("Bucket created");
-    } else {
-      System.out.println("Bucket failed");
-    }
+  if (r.succeeded()) {
+    System.out.println("Bucket created");
+  } else {
+    System.out.println("Bucket failed");
+  }
 });
 
 // Create object request options
@@ -41,17 +43,17 @@ var objectOptions = new ObjectOptions()
     .storageClass(StorageClass.STANDARD)
     .acl(Acl.PUBLIC_READ);
 
-// Read text file example
-var fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
+// Read an existing text file
+Buffer fileBuffer = vertx.fileSystem().readFileBlocking("example.txt");
 
-// Create new object    
-client.put(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
-    if (r.succeeded()) {
-      System.out.println("Object created");
-    } else {
-      System.out.println("Object failed");
-    }
-});    
+// Create new object
+client.put(objectOptions, "/my-bucket/my-object.txt", fileBuffer).onComplete(r -> {
+  if (r.succeeded()) {
+    System.out.println("Object created");
+  } else {
+    System.out.println("Object failed");
+  }
+});   
 ----
 
 == Building

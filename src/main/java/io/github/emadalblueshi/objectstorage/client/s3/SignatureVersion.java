@@ -7,6 +7,6 @@ import io.vertx.codegen.annotations.VertxGen;
  */
 
 @VertxGen
-public enum S3SignatureVersion {
+public enum SignatureVersion {
   V4,
 }

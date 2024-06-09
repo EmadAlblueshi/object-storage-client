@@ -5,12 +5,7 @@ import static io.github.emadalblueshi.objectstorage.client.s3.impl.S3SignatureV4
 import java.util.Objects;
 import java.util.function.Function;
 
-import io.github.emadalblueshi.objectstorage.client.*;
-import io.github.emadalblueshi.objectstorage.client.s3.BucketOptions;
-import io.github.emadalblueshi.objectstorage.client.s3.ObjectOptions;
-import io.github.emadalblueshi.objectstorage.client.s3.ObjectResponse;
-import io.github.emadalblueshi.objectstorage.client.s3.S3Client;
-import io.github.emadalblueshi.objectstorage.client.s3.S3Options;
+import io.github.emadalblueshi.objectstorage.client.s3.*;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
@@ -27,7 +22,7 @@ import io.vertx.ext.web.codec.BodyCodec;
 
 public class S3ClientImpl implements S3Client {
 
-  private final ObjectStorageClientOptions options;
+  private final S3ClientOptions options;
   private final WebClient webClient;
   private final Buffer EMPTY = Buffer.buffer("");
 
@@ -43,12 +38,12 @@ public class S3ClientImpl implements S3Client {
         httpResponse.followedRedirects());
   }
 
-  public S3ClientImpl(Vertx vertx, ObjectStorageClientOptions objectStorageClientOptions) {
+  public S3ClientImpl(Vertx vertx, S3ClientOptions s3clientOptions) {
     Objects.requireNonNull(vertx);
-    Objects.requireNonNull(objectStorageClientOptions);
-    Objects.requireNonNull(objectStorageClientOptions.getS3Options());
-    options = objectStorageClientOptions;
-    webClient = WebClient.create(vertx, objectStorageClientOptions);
+    Objects.requireNonNull(s3clientOptions);
+    Objects.requireNonNull(s3clientOptions.getAuthOptions());
+    options = s3clientOptions;
+    webClient = WebClient.create(vertx, s3clientOptions);
   }
 
   @Override
@@ -115,9 +110,9 @@ public class S3ClientImpl implements S3Client {
       HttpMethod httpMethod,
       String path,
       Buffer object,
-      ObjectStorageRequestOptions requestOptions) {
+      S3RequestOptions requestOptions) {
 
-    S3Options s3Options = options.getS3Options();
+    S3AuthOptions authCredentials = options.getAuthOptions();
     MultiMap headers = requestOptions.headers();
     MultiMap queryParams = requestOptions.queryParams();
     sign(
@@ -127,10 +122,10 @@ public class S3ClientImpl implements S3Client {
         path,
         queryParams,
         object.getBytes(),
-        s3Options.getAccessKey(),
-        s3Options.getSecretKey(),
-        s3Options.getRegion(),
-        s3Options.getService());
+        authCredentials.getAccessKey(),
+        authCredentials.getSecretKey(),
+        options.getRegion(),
+        options.getService());
     HttpRequest<Buffer> httpRequest = webClient.request(httpMethod, path);
     httpRequest.headers().addAll(headers);
     httpRequest.queryParams().addAll(queryParams);
@@ -141,7 +136,7 @@ public class S3ClientImpl implements S3Client {
   private HttpRequest<Buffer> request(
       HttpMethod httpMethod,
       String path,
-      ObjectStorageRequestOptions requestOptions) {
+      S3RequestOptions requestOptions) {
     return request(httpMethod, path, EMPTY, requestOptions);
 
   }

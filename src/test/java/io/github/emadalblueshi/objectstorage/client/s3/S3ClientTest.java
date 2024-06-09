@@ -11,8 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import io.github.emadalblueshi.objectstorage.client.ObjectStorageClient;
-import io.github.emadalblueshi.objectstorage.client.ObjectStorageClientOptions;
 import io.github.emadalblueshi.objectstorage.container.MinIOS3Container;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -50,18 +48,19 @@ public class S3ClientTest {
     ACCESS_KEY = container.getAccessKey();
     SECRET_KEY = container.getSecretKey();
 
-    var s3Options = new S3Options()
-        .setSignatureVersion(S3SignatureVersion.V4)
+    var s3Auth = new S3AuthOptions()
+        .setSignatureVersion(SignatureVersion.V4)
         .setAccessKey(ACCESS_KEY)
-        .setSecretKey(SECRET_KEY)
-        .setRegion("default");
+        .setSecretKey(SECRET_KEY);
 
-    var options = new ObjectStorageClientOptions()
-        .setS3Options(s3Options)
-        .setDefaultHost(HOST)
-        .setDefaultPort(PORT_S3_API);
+    var options = new S3ClientOptions()
+        .setAuthOptions(s3Auth)
+        .setRegion("default")
+        .setService("s3")
+        .setHost(HOST)
+        .setPort(PORT_S3_API);
 
-    client = ObjectStorageClient.s3Create(vertx, options);
+    client = S3Client.create(vertx, options);
 
     var wOptions = new CachingWebClientOptions()
         .setEnableVaryCaching(true)

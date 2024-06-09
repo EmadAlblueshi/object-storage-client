@@ -20,11 +20,6 @@ public class ObjectStorageClientOptionsConverter {
    static void fromJson(Iterable<java.util.Map.Entry<String, Object>> json, ObjectStorageClientOptions obj) {
     for (java.util.Map.Entry<String, Object> member : json) {
       switch (member.getKey()) {
-        case "s3Options":
-          if (member.getValue() instanceof JsonObject) {
-            obj.setS3Options(new io.github.emadalblueshi.objectstorage.client.s3.S3Options((io.vertx.core.json.JsonObject)member.getValue()));
-          }
-          break;
       }
     }
   }
