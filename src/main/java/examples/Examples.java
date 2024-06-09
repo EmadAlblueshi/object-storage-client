@@ -1,14 +1,6 @@
 package examples;
 
-import io.github.emadalblueshi.objectstorage.client.ObjectStorageClient;
-import io.github.emadalblueshi.objectstorage.client.ObjectStorageClientOptions;
-import io.github.emadalblueshi.objectstorage.client.s3.Acl;
-import io.github.emadalblueshi.objectstorage.client.s3.BucketOptions;
-import io.github.emadalblueshi.objectstorage.client.s3.ObjectOptions;
-import io.github.emadalblueshi.objectstorage.client.s3.S3Client;
-import io.github.emadalblueshi.objectstorage.client.s3.S3Options;
-import io.github.emadalblueshi.objectstorage.client.s3.S3SignatureVersion;
-import io.github.emadalblueshi.objectstorage.client.s3.StorageClass;
+import io.github.emadalblueshi.objectstorage.client.s3.*;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 
@@ -16,21 +8,22 @@ import io.vertx.core.buffer.Buffer;
 public class Examples {
 
   void example1() {
-    var s3Options = new S3Options()
-        .setSignatureVersion(S3SignatureVersion.V4)
+    var authOptions = new S3AuthOptions()
+        .setSignatureVersion(SignatureVersion.V4)
         .setAccessKey("access-key")
-        .setSecretKey("secret-key")
-        .setRegion("region");
+        .setSecretKey("secret-key");
   }
 
-  void example2(S3Options s3Options, Vertx vertx) {
-    var clientOptions = new ObjectStorageClientOptions()
-        .setS3Options(s3Options)
-        .setDefaultHost("localhost")
-        .setDefaultPort(443)
+  void example2(S3AuthOptions authOptions, Vertx vertx) {
+    var clientOptions = new S3ClientOptions()
+        .setAuthOptions(authOptions)
+        .setRegion("region")
+        .setHost("s3.example.com")
+        .setPort(443)
         .setSsl(true);
+
     // Create the client
-    var client = ObjectStorageClient.s3Create(vertx, clientOptions);
+    var client = S3Client.create(vertx, clientOptions);
   }
 
   void example3(S3Client client) {
@@ -72,6 +65,54 @@ public class Examples {
         System.out.println("Failed!");
       }
     });
+  }
+
+  void all(Vertx vertx) {
+
+    // Create auth options
+    var authOptions = new S3AuthOptions()
+        .setSignatureVersion(SignatureVersion.V4)
+        .setAccessKey("access-key")
+        .setSecretKey("secret-key");
+
+    // Create client options
+    var clientOptions = new S3ClientOptions()
+        .setAuthOptions(authOptions)
+        .setRegion("region")
+        .setHost("s3.example.com")
+        .setPort(443)
+        .setSsl(true);
+
+    // Create the client
+    var client = S3Client.create(vertx, clientOptions);
+
+    // Create new bucket
+    client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
+      if (r.succeeded()) {
+        System.out.println("Bucket created");
+      } else {
+        System.out.println("Bucket failed");
+      }
+    });
+
+    // Create object request options
+    var objectOptions = new ObjectOptions()
+        .contentType("text/plain")
+        .storageClass(StorageClass.STANDARD)
+        .acl(Acl.PUBLIC_READ);
+
+    // Read existing text file
+    Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
+
+    // Create new object
+    client.put(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
+      if (r.succeeded()) {
+        System.out.println("Object created");
+      } else {
+        System.out.println("Object failed");
+      }
+    });
+
   }
 
 }
