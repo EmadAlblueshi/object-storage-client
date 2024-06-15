@@ -1,6 +1,6 @@
 package io.github.emadalblueshi.objectstorage.client.s3;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 
 /**
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
@@ -8,7 +8,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class PolicyStatus {
 
-  @JsonProperty("IsPublic")
+  @JacksonXmlProperty(localName = "IsPublic")
   private boolean isPublic;
 
   public PolicyStatus() {
