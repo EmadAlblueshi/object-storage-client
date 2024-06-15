@@ -27,7 +27,7 @@ public class Examples {
   }
 
   void example3(S3Client client) {
-    client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
+    client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
       if (r.succeeded()) {
         System.out.println("Bucket created");
       } else {
@@ -87,7 +87,7 @@ public class Examples {
     var client = S3Client.create(vertx, clientOptions);
 
     // Create new bucket
-    client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
+    client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
       if (r.succeeded()) {
         System.out.println("Bucket created");
       } else {

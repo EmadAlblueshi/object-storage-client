@@ -10,15 +10,19 @@ import org.testcontainers.utility.DockerImageName;
  */
 
 public class MinIOS3Container extends GenericContainer<MinIOS3Container> {
-  private static final DockerImageName IMAGE_NAME = DockerImageName.parse("minio/minio");
-  private static final String IMAGE_TAG = "RELEASE.2024-06-04T19-20-08Z";
+  private static final DockerImageName IMAGE_NAME = DockerImageName.parse("quay.io/minio/minio");
+  private static final String IMAGE_TAG = "RELEASE.2024-06-11T03-13-30Z";
   private static final int PORT_S3_API = 9000;
   private static final int PORT_WEB_UI = 9001;
   private static final String ACCESS_KEY = "minioadmin";
   private static final String SECRET_KEY = "minioadmin";
+  private static final String REGION_NAME = "Kuwait West";
+  private static final String REGION = "kw-west-1";
 
   private String accessKey;
   private String secretKey;
+  private String regionName;
+  private String region;
 
   public MinIOS3Container() {
     this(IMAGE_NAME.withTag(IMAGE_TAG));
@@ -43,6 +47,16 @@ public class MinIOS3Container extends GenericContainer<MinIOS3Container> {
     return this;
   }
 
+  public MinIOS3Container withRegionName(String regionName) {
+    this.regionName = regionName;
+    return this;
+  }
+
+  public MinIOS3Container withRegion(String region) {
+    this.region = region;
+    return this;
+  }
+
   public String getAccessKey() {
     return accessKey;
   }
@@ -51,12 +65,22 @@ public class MinIOS3Container extends GenericContainer<MinIOS3Container> {
     return secretKey;
   }
 
+  public String getRegion() {
+    return region;
+  }
+
+  public String getRegionName() {
+    return regionName;
+  }
+
   @Override
   public void configure() {
     setCommand("server /data --console-address :9001");
     addExposedPorts(new int[] { PORT_S3_API, PORT_WEB_UI });
     addEnv("MINIO_ROOT_USER", accessKey != null ? accessKey : (accessKey = ACCESS_KEY));
     addEnv("MINIO_ROOT_PASSWORD", secretKey != null ? secretKey : (secretKey = SECRET_KEY));
+    addEnv("MINIO_REGION_NAME", regionName != null ? regionName : (regionName = REGION_NAME));
+    addEnv("MINIO_REGION", region != null ? region : (region = REGION));
     setWaitStrategy(Wait.forListeningPorts(PORT_WEB_UI, PORT_S3_API)
         .withStartupTimeout(Duration.ofMinutes(2L)));
     // setWaitStrategy(Wait.forLogMessage("- The standard parity is set to 0. This

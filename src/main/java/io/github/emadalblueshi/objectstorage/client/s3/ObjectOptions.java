@@ -14,117 +14,101 @@ public class ObjectOptions extends S3RequestOptions {
     super();
   }
 
+  public ObjectOptions expectedBucketOwner(String value) {
+    return (ObjectOptions) super.expectedBucketOwner(value);
+  }
+
   public ObjectOptions contentType(String contentType) {
-    super.putHeader(CONTENT_TYPE, contentType);
-    return this;
+    return (ObjectOptions) super.putHeader(CONTENT_TYPE, contentType);
   }
 
   // A string of base64 encoded MD-5 hash of the message.
   public ObjectOptions contentMD5(String contentMD5) {
-    super.putHeader("content-md5", contentMD5);
-    return this;
+    return (ObjectOptions) super.putHeader("content-md5", contentMD5);
   }
 
   public ObjectOptions storageClass(StorageClass storageClass) {
-    super.putHeader("x-amz-storage-class", storageClass.toString());
-    return this;
+    return (ObjectOptions) super.putHeader("x-amz-storage-class", storageClass.toString());
   }
 
   // The source bucket name + object name. {bucket}/{object}
   public ObjectOptions copySource(String copySource) {
-    super.putHeader("x-amz-copy-source", copySource);
-    return this;
+    return (ObjectOptions) super.putHeader("x-amz-copy-source", copySource);
   }
 
   // Copies only if modified since the timestamp. (optional)
   public ObjectOptions copyIfModifiedSince(String timestamp) {
-    super.putHeader("x-amz-copy-if-modified-since", timestamp);
-    return this;
+    return (ObjectOptions) super.putHeader("x-amz-copy-if-modified-since", timestamp);
   }
 
   // Copies only if unmodified since the timestamp. (optional)
   public ObjectOptions copyIfUnmodifiedSince(String timestamp) {
-    super.putHeader("x-amz-copy-if-unmodified-since", timestamp);
-    return this;
+    return (ObjectOptions) super.putHeader("x-amz-copy-if-unmodified-since", timestamp);
   }
 
   // Copies only if object ETag matches ETag.(optional)
   public ObjectOptions copyIfMatch(String entityTag) {
-    super.putHeader("x-amz-copy-if-match", entityTag);
-    return this;
+    return (ObjectOptions) super.putHeader("x-amz-copy-if-match", entityTag);
   }
 
   // Copies only if object ETag doesn’t match.
   public ObjectOptions copyIfNoneMatch(String entityTag) {
-    super.putHeader("x-amz-copy-if-none-match", entityTag);
-    return this;
+    return (ObjectOptions) super.putHeader("x-amz-copy-if-none-match", entityTag);
   }
 
   // The range of the object to retrieve.
   // bytes=beginbyte-endbyte
   // bytes=0-100
   public ObjectOptions range(int begin, int end) {
-    super.putHeader("range", begin + "-" + end);
-    return this;
+    return (ObjectOptions) super.putHeader("range", begin + "-" + end);
   }
 
   // Gets only if modified since the timestamp.
   public ObjectOptions ifModifiedSince(String timestamp) {
-    super.putHeader("if-modified-since", timestamp);
-    return this;
+    return (ObjectOptions) super.putHeader("if-modified-since", timestamp);
   }
 
   // Gets only if not modified since the timestamp.
   public ObjectOptions ifUnmodifiedSince(String timestamp) {
-    super.putHeader("if-modified-since", timestamp);
-    return this;
+    return (ObjectOptions) super.putHeader("if-modified-since", timestamp);
   }
 
   // Gets only if object ETag matches ETag.
   public ObjectOptions ifMatch(String entityTag) {
-    super.putHeader("if-match", entityTag);
-    return this;
+    return (ObjectOptions) super.putHeader("if-match", entityTag);
   }
 
   // Gets only if object ETag matches ETag.
   public ObjectOptions ifNoneMatch(String entityTag) {
-    super.putHeader("if-none-match", entityTag);
-    return this;
+    return (ObjectOptions) super.putHeader("if-none-match", entityTag);
   }
 
   public ObjectOptions partNumber(String no) {
-    super.addQueryParam("partNumber", no);
-    return this;
+    return (ObjectOptions) super.addQueryParam("partNumber", no);
   }
 
   public ObjectOptions uploadId(String id) {
-    super.addQueryParam("uploadId", id);
-    return this;
+    return (ObjectOptions) super.addQueryParam("uploadId", id);
   }
 
   public ObjectOptions append() {
-    super.addQueryParam("append", "");
-    return this;
+    return (ObjectOptions) super.addQueryParam("append", "");
   }
 
   public ObjectOptions position(String value) {
-    super.addQueryParam("position", value);
-    return this;
+    return (ObjectOptions) super.addQueryParam("position", value);
   }
 
   public ObjectOptions retention() {
-    super.addQueryParam("retention", "");
-    return this;
+    return (ObjectOptions) super.addQueryParam("retention", "");
   }
 
   public ObjectOptions versionId(String id) {
-    super.addQueryParam("versionId", id);
-    return this;
+    return (ObjectOptions) super.addQueryParam("versionId", id);
   }
 
   public ObjectOptions legalHold() {
-    super.addQueryParam("legal-hold", "");
-    return this;
+    return (ObjectOptions) super.addQueryParam("legal-hold", "");
   }
 
   // common
