@@ -20,7 +20,7 @@ var authOptions = new S3AuthOptions()
 // Create client options
 var clientOptions = new S3ClientOptions()
     .setAuthOptions(authOptions)
-    .setRegion("region")
+    .setRegion("kw-west-1")
     .setHost("s3.example.com")
     .setPort(443)
     .setSsl(true);
@@ -28,8 +28,8 @@ var clientOptions = new S3ClientOptions()
 // Create the client
 var client = S3Client.create(vertx, clientOptions);
 
-// Create new bucket
-client.put(new BucketOptions(), "/my-bucket").onComplete(r -> {
+// Create new general purpose bucket
+client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
   if (r.succeeded()) {
     System.out.println("Bucket created");
   } else {
