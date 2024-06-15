@@ -20,7 +20,11 @@ public class S3RequestOptions extends ObjectStorageRequestOptions {
     return (S3RequestOptions) super.addQueryParam("acl", "");
   }
 
-  public ObjectStorageRequestOptions uploads() {
+  public S3RequestOptions uploads() {
     return (S3RequestOptions) super.addQueryParam("uploads", "");
+  }
+
+  public S3RequestOptions expectedBucketOwner(String value) {
+    return (S3RequestOptions) super.putHeader("x-amz-expected-bucket-owner", value);
   }
 }
