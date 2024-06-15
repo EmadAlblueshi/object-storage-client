@@ -7,6 +7,7 @@ import io.vertx.codegen.annotations.VertxGen;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.json.JsonObject;
 
 /**
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
@@ -23,7 +24,7 @@ public interface S3Client extends ObjectStorageClient {
   Future<ObjectResponse<Void>> put(ObjectOptions objectOptions, String path, Buffer object);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Buffer>> copy(ObjectOptions objectOptions, String sourcePath, String targetPath);
+  Future<ObjectResponse<CopyObjectResult>> copy(ObjectOptions objectOptions, String sourcePath, String targetPath);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
   Future<ObjectResponse<Buffer>> get(ObjectOptions objectOptions, String path);
@@ -38,6 +39,25 @@ public interface S3Client extends ObjectStorageClient {
   Future<ObjectResponse<Buffer>> acl(ObjectOptions objectOptions, String path);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Void>> put(BucketOptions bucketOptions, String path);
+  Future<ObjectResponse<Void>> putBucket(BucketOptions bucketOptions, String path);
 
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  Future<ObjectResponse<Void>> putBucket(BucketOptions bucketOptions, String path,
+      CreateBucketConfiguration config);
+
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  Future<ObjectResponse<Void>> deleteBucket(BucketOptions bucketOptions, String path);
+
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  Future<ObjectResponse<PolicyStatus>> getBucketPolicyStatus(BucketOptions bucketOptions, String path);
+
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  Future<ObjectResponse<Void>> putBucketPolicy(BucketOptions bucketOptions, String path,
+      JsonObject policy);
+
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  Future<ObjectResponse<Buffer>> getBucketPolicy(BucketOptions bucketOptions, String path);
+
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  Future<ObjectResponse<Void>> deleteBucketPolicy(BucketOptions bucketOptions, String path);
 }
