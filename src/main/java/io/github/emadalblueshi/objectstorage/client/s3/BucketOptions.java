@@ -13,84 +13,83 @@ public class BucketOptions extends S3RequestOptions {
   }
 
   public BucketOptions bucketObjectLockEnabled(String value) {
-    super.putHeader("x-amz-bucket-object-lock-enabled", value);
-    return this;
+    return (BucketOptions) super.putHeader("x-amz-bucket-object-lock-enabled", value);
+  }
+
+  public BucketOptions expectedBucketOwner(String value) {
+    return (BucketOptions) super.expectedBucketOwner(value);
+  }
+
+  public BucketOptions policy() {
+    return (BucketOptions) super.addQueryParam("policy", "");
+  }
+
+  public BucketOptions policyStatus() {
+    return (BucketOptions) super.addQueryParam("policyStatus", "");
   }
 
   public BucketOptions maxKeys(int value) {
-    super.addQueryParam("max-keys", String.valueOf(value));
-    return this;
+    return (BucketOptions) super.addQueryParam("max-keys", String.valueOf(value));
   }
 
   public BucketOptions prefix(String value) {
-    super.addQueryParam("prefix", value);
-    return this;
+    return (BucketOptions) super.addQueryParam("prefix", value);
   }
 
   public BucketOptions delimiter(String value) {
-    super.addQueryParam("delimiter", value);
-    return this;
+    return (BucketOptions) super.addQueryParam("delimiter", value);
   }
 
   public BucketOptions marker(String value) {
-    super.addQueryParam("marker", value);
-    return this;
+    return (BucketOptions) super.addQueryParam("marker", value);
   }
 
   public BucketOptions allowUnordered(boolean value) {
-    super.addQueryParam("allow-unordered", String.valueOf(value));
-    return this;
+    return (BucketOptions) super.addQueryParam("allow-unordered", String.valueOf(value));
   }
 
   public BucketOptions location() {
-    super.addQueryParam("location", "");
-    return this;
+    return (BucketOptions) super.addQueryParam("location", "");
   }
 
   public BucketOptions keyMarker(String value) {
-    super.addQueryParam("key-marker", value);
-    return this;
+    return (BucketOptions) super.addQueryParam("key-marker", value);
   }
 
   public BucketOptions maxUploads(int value) {
-    super.addQueryParam("max-uploads", String.valueOf(value));
-    return this;
+    return (BucketOptions) super.addQueryParam("max-uploads", String.valueOf(value));
   }
 
   public BucketOptions uploadIdMarker(String value) {
-    super.addQueryParam("upload-id-marker", value);
-    return this;
+    return (BucketOptions) super.addQueryParam("upload-id-marker", value);
   }
 
   public BucketOptions versioning() {
-    super.addQueryParam("versioning", "");
-    return this;
+    return (BucketOptions) super.addQueryParam("versioning", "");
   }
 
   public BucketOptions objectLock() {
-    super.addQueryParam("object-lock", "");
-    return this;
+    return (BucketOptions) super.addQueryParam("object-lock", "");
   }
 
   public BucketOptions notification() {
-    super.addQueryParam("notification", "");
-    return this;
+    return (BucketOptions) super.addQueryParam("notification", "");
   }
 
   public BucketOptions notification(String id) {
-    super.addQueryParam("notification", id);
-    return this;
+    return (BucketOptions) super.addQueryParam("notification", id);
   }
 
-  // common
-
-  // A canned ACL.
   public BucketOptions acl(Acl acl) {
     return (BucketOptions) super.acl(acl);
   }
 
   public BucketOptions acl() {
     return (BucketOptions) super.acl();
+  }
+
+  public BucketOptions objectOwnership(ObjectOwnership objectOwnership) {
+    return (BucketOptions) super.putHeader("x-amz-object-ownership", objectOwnership.toString());
   }
 
   public BucketOptions uploads() {
