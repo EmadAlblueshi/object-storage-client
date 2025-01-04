@@ -35,47 +35,6 @@ public class S3ClientImpl implements S3Client {
   private final WebClient webClient;
   private final Buffer EMPTY_BUFFER = Buffer.buffer("");
 
-  @SuppressWarnings("unchecked")
-  private <T> Function<HttpResponse<Buffer>, Future<S3Response<T>>> toS3Response(Class<T> clazz) {
-    return httpResponse -> {
-      Promise<S3Response<T>> promise = Promise.promise();
-      if (httpResponse.statusCode() > 300 && httpResponse.statusCode() < 600) {
-        try {
-          S3ErrorResponse err = xmlMapper.readValue(httpResponse.bodyAsString(), S3ErrorResponse.class);
-          promise.fail(new S3ResponseException(
-              err.getCode(),
-              err.getMessage(),
-              err.getResource(),
-              err.getRequestId()));
-        } catch (Throwable e) {
-          promise.fail(e);
-        }
-      } else {
-        try {
-          T body = null;
-          if (!clazz.equals(Buffer.class)) {
-            body = (clazz != Void.class) ? xmlMapper.<T>readValue(httpResponse.bodyAsString(), clazz) : null;
-          } else {
-            body = (T) httpResponse.bodyAsBuffer();
-          }
-          promise.complete(new S3ResponseImpl<>(
-              httpResponse.version(),
-              httpResponse.statusCode(),
-              httpResponse.statusMessage(),
-              httpResponse.headers(),
-              httpResponse.trailers(),
-              httpResponse.cookies(),
-              body,
-              httpResponse.followedRedirects()));
-        } catch (Throwable e) {
-          promise.fail(e);
-        }
-      }
-      return promise.future();
-    };
-
-  }
-
   public S3ClientImpl(Vertx vertx, S3ClientOptions s3clientOptions) {
     Objects.requireNonNull(vertx);
     Objects.requireNonNull(s3clientOptions);
@@ -124,11 +83,6 @@ public class S3ClientImpl implements S3Client {
 
   @Override
   public Future<S3Response<AccessControlPolicy>> acl(ObjectOptions objectOptions, String objectPath) {
-    return request(HttpMethod.GET, objectPath, objectOptions.acl()).send()
-        .compose(toS3Response(AccessControlPolicy.class));
-  }
-
-  public Future<S3Response<AccessControlPolicy>> aclTest(ObjectOptions objectOptions, String objectPath) {
     return request(HttpMethod.GET, objectPath, objectOptions.acl()).send()
         .compose(toS3Response(AccessControlPolicy.class));
   }
@@ -230,4 +184,44 @@ public class S3ClientImpl implements S3Client {
 
   }
 
+  @SuppressWarnings("unchecked")
+  private <T> Function<HttpResponse<Buffer>, Future<S3Response<T>>> toS3Response(Class<T> clazz) {
+    return httpResponse -> {
+      Promise<S3Response<T>> promise = Promise.promise();
+      if (httpResponse.statusCode() > 300 && httpResponse.statusCode() < 600) {
+        try {
+          S3ErrorResponse err = xmlMapper.readValue(httpResponse.bodyAsString(), S3ErrorResponse.class);
+          promise.fail(new S3ResponseException(
+              err.getCode(),
+              err.getMessage(),
+              err.getResource(),
+              err.getRequestId()));
+        } catch (Throwable e) {
+          promise.fail(e);
+        }
+      } else {
+        try {
+          T body = null;
+          if (!clazz.equals(Buffer.class)) {
+            body = (clazz != Void.class) ? xmlMapper.<T>readValue(httpResponse.bodyAsString(), clazz) : null;
+          } else {
+            body = (T) httpResponse.bodyAsBuffer();
+          }
+          promise.complete(new S3ResponseImpl<>(
+              httpResponse.version(),
+              httpResponse.statusCode(),
+              httpResponse.statusMessage(),
+              httpResponse.headers(),
+              httpResponse.trailers(),
+              httpResponse.cookies(),
+              body,
+              httpResponse.followedRedirects()));
+        } catch (Throwable e) {
+          promise.fail(e);
+        }
+      }
+      return promise.future();
+    };
+
+  }
 }
