@@ -30,9 +30,8 @@
     <logback-classic.version>1.5.6</logback-classic.version>
     <junit-jupiter.version>5.10.2</junit-jupiter.version>
     <jackson-dataformat-xml.version>2.11.3</jackson-dataformat-xml.version>
-    <jackson-datatype-jsr310.version>2.17.1</jackson-datatype-jsr310.version>
     <testcontainers.version>1.19.8</testcontainers.version>
-    <vertx.version>4.5.8</vertx.version>
+    <vertx.version>4.5.11</vertx.version>
     <generated.dir>${project.basedir}/src/main/generated</generated.dir>
     <asciidoc.dir>${project.basedir}/src/main/asciidoc</asciidoc.dir>
     <jar.manifest>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</jar.manifest>
@@ -92,7 +91,6 @@
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
       <artifactId>jackson-datatype-jsr310</artifactId>
-      <version>${jackson-datatype-jsr310.version}</version>
     </dependency>    
     <dependency>
       <groupId>org.testcontainers</groupId>
