@@ -2,7 +2,7 @@ package io.github.emadalblueshi.objectstorage.client.s3.impl;
 
 import java.util.List;
 
-import io.github.emadalblueshi.objectstorage.client.s3.ObjectResponse;
+import io.github.emadalblueshi.objectstorage.client.s3.S3Response;
 import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpVersion;
@@ -13,9 +13,9 @@ import io.vertx.ext.web.client.impl.HttpResponseImpl;
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
-public class ObjectResponseImpl<T> extends HttpResponseImpl<T> implements ObjectResponse<T> {
+public class S3ResponseImpl<T> extends HttpResponseImpl<T> implements S3Response<T> {
 
-  public ObjectResponseImpl(HttpVersion version,
+  public S3ResponseImpl(HttpVersion version,
       int statusCode,
       String statusMessage,
       MultiMap headers,

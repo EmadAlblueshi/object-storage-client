@@ -21,43 +21,43 @@ public interface S3Client extends ObjectStorageClient {
   }
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Void>> put(ObjectOptions objectOptions, String path, Buffer object);
+  Future<S3Response<Void>> put(ObjectOptions objectOptions, String path, Buffer object);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<CopyObjectResult>> copy(ObjectOptions objectOptions, String sourcePath, String targetPath);
+  Future<S3Response<CopyObjectResult>> copy(ObjectOptions objectOptions, String sourcePath, String targetPath);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Buffer>> get(ObjectOptions objectOptions, String path);
+  Future<S3Response<Buffer>> get(ObjectOptions objectOptions, String path);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Void>> delete(ObjectOptions objectOptions, String path);
+  Future<S3Response<Void>> delete(ObjectOptions objectOptions, String path);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Void>> info(ObjectOptions objectOptions, String path);
+  Future<S3Response<Void>> info(ObjectOptions objectOptions, String path);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Buffer>> acl(ObjectOptions objectOptions, String path);
+  Future<S3Response<AccessControlPolicy>> acl(ObjectOptions objectOptions, String path);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Void>> putBucket(BucketOptions bucketOptions, String path);
+  Future<S3Response<Void>> putBucket(BucketOptions bucketOptions, String path);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Void>> putBucket(BucketOptions bucketOptions, String path,
+  Future<S3Response<Void>> putBucket(BucketOptions bucketOptions, String path,
       CreateBucketConfiguration config);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Void>> deleteBucket(BucketOptions bucketOptions, String path);
+  Future<S3Response<Void>> deleteBucket(BucketOptions bucketOptions, String path);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<PolicyStatus>> getBucketPolicyStatus(BucketOptions bucketOptions, String path);
+  Future<S3Response<PolicyStatus>> getBucketPolicyStatus(BucketOptions bucketOptions, String path);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Void>> putBucketPolicy(BucketOptions bucketOptions, String path,
+  Future<S3Response<Void>> putBucketPolicy(BucketOptions bucketOptions, String path,
       JsonObject policy);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Buffer>> getBucketPolicy(BucketOptions bucketOptions, String path);
+  Future<S3Response<Buffer>> getBucketPolicy(BucketOptions bucketOptions, String path);
 
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
-  Future<ObjectResponse<Void>> deleteBucketPolicy(BucketOptions bucketOptions, String path);
+  Future<S3Response<Void>> deleteBucketPolicy(BucketOptions bucketOptions, String path);
 }

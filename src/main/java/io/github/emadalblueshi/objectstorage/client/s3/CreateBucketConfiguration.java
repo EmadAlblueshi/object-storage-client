@@ -5,6 +5,5 @@ package io.github.emadalblueshi.objectstorage.client.s3;
  */
 
 public class CreateBucketConfiguration {
-  private String LocationConstraint;
 
 }

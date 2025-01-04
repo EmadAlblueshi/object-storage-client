@@ -1,8 +1,13 @@
 package io.github.emadalblueshi.objectstorage.client.s3;
 
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+import java.util.List;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
@@ -11,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import io.github.emadalblueshi.objectstorage.client.s3.impl.S3ResponseException;
 import io.github.emadalblueshi.objectstorage.container.MinIOS3Container;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -111,18 +117,36 @@ public class S3ClientTest {
         })));
   }
 
+  @Order(2)
+  @Test
+  void testFailedGetBucketPolicyStatus(Vertx vertx, VertxTestContext testContext) {
+    String notExistBucket = "/demo-bucket-abc";
+    BucketOptions options = new BucketOptions();
+    s3Client.getBucketPolicyStatus(options, notExistBucket)
+        .onComplete(testContext.failing(exception -> testContext.verify(() -> {
+          S3ResponseException s3Exception = (S3ResponseException) exception;
+          assertInstanceOf(S3ResponseException.class, s3Exception);
+          assertEquals("NoSuchBucket", s3Exception.getCode());
+          assertEquals(notExistBucket, s3Exception.getResource());
+          assertEquals("The specified bucket does not exist", s3Exception.getMessage());
+          assertNotNull(s3Exception.getRequestId());
+          testContext.completeNow();
+        })));
+  }
+
   @Order(3)
   @Test
   void testPutBucketPolicy(Vertx vertx, VertxTestContext testContext) {
-    var policy = vertx.fileSystem().readFileBlocking("policy.json").toJsonObject();
+    var policy = vertx.fileSystem().readFileBlocking("allow-public-get-object-policy.json").toJsonObject();
     String path = "/demo-bucket";
     BucketOptions options = new BucketOptions();
     s3Client.putBucketPolicy(options, path, policy)
-        .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
-          assertEquals(204, r.statusCode());
-          assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
-          assertNotNull(r.getHeader("x-amz-id-2"));
-          assertNotNull(r.requestId());
+        .onComplete(testContext.succeeding(res -> testContext.verify(() -> {
+          assertNull(res.body());
+          assertEquals(204, res.statusCode());
+          assertEquals("kw-west-1", res.getHeader("x-amz-bucket-region"));
+          assertNotNull(res.getHeader("x-amz-id-2"));
+          assertNotNull(res.requestId());
           testContext.completeNow();
         })));
   }
@@ -215,6 +239,23 @@ public class S3ClientTest {
         })));
   }
 
+  @Order(7)
+  @Test
+  void testGetObjectFailed(VertxTestContext testContext) {
+    String notExistKey = "/" + BUCKET_NAME + "/not-exist-object.txt";
+    ObjectOptions options = new ObjectOptions();
+    s3Client.get(options, notExistKey)
+        .onComplete(testContext.failing(exception -> testContext.verify(() -> {
+          S3ResponseException s3Exception = (S3ResponseException) exception;
+          assertInstanceOf(S3ResponseException.class, s3Exception);
+          assertEquals("NoSuchKey", s3Exception.getCode());
+          assertEquals(notExistKey, s3Exception.getResource());
+          assertEquals("The specified key does not exist.", s3Exception.getMessage());
+          assertNotNull(s3Exception.getRequestId());
+          testContext.completeNow();
+        })));
+  }
+
   @Order(8)
   @Test
   void testObjectInfoSucceeded(VertxTestContext testContext) {
@@ -248,6 +289,33 @@ public class S3ClientTest {
           assertNotNull(r.getHeader("x-amz-id-2"));
           assertNotNull(r.getHeader("x-amz-request-id"));
           assertNotNull(r.body());
+          AccessControlPolicy acp = r.body();
+          assertNotNull(acp);
+          AccessControlList acl = acp.getAccessControlList();
+          assertNotNull(acl);
+          List<Grant> grantList = acl.getGrantList();
+          assertNotNull(grantList);
+          assertEquals(1, grantList.size());
+          assertEquals("FULL_CONTROL", grantList.get(0).getPermission());
+          assertEquals("CanonicalUser", grantList.get(0).getGrantee().getType());
+          assertEquals("CanonicalUser", grantList.get(0).getGrantee().getAttributeType());
+          testContext.completeNow();
+        })));
+  }
+
+  @Order(9)
+  @Test
+  void testObjectAclFailed(VertxTestContext testContext) {
+    String notExistKey = "/" + BUCKET_NAME + "/cool.txtttt";
+    ObjectOptions options = new ObjectOptions();
+    s3Client.acl(options, notExistKey)
+        .onComplete(testContext.failing(exception -> testContext.verify(() -> {
+          S3ResponseException s3Exception = (S3ResponseException) exception;
+          assertInstanceOf(S3ResponseException.class, s3Exception);
+          assertEquals("NoSuchKey", s3Exception.getCode());
+          assertEquals(notExistKey, s3Exception.getResource());
+          assertEquals("The specified key does not exist.", s3Exception.getMessage());
+          assertNotNull(s3Exception.getRequestId());
           testContext.completeNow();
         })));
   }

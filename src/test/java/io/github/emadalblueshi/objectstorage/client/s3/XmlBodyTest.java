@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -69,6 +71,41 @@ public class XmlBodyTest {
     assertEquals("2024-06-15T16:13:55.719Z", copyObjectResult.getLastModified().toString());
     assertNotNull(copyObjectResult.getETag());
     assertEquals("\"5360706c803a759e3a9f2ca54a651950\"", copyObjectResult.getETag());
+  }
+
+  @Test
+  void testAccessControlPolicy() throws Exception {
+    String xmlString = "<AccessControlPolicy>" +
+        "<Owner>" +
+        "<ID>123</ID>" +
+        "<DisplayName>Emad Alblueshi</DisplayName>" +
+        "</Owner>" +
+        "<AccessControlList>" +
+        "<Grant>" +
+        "<Grantee xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"CanonicalUser\">"
+        +
+        "<Type>CanonicalUser</Type>" +
+        "</Grantee>" +
+        "<Permission>FULL_CONTROL</Permission>" +
+        "</Grant>" +
+        "<Grant>" +
+        "<Grantee xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"CanonicalUser\">"
+        +
+        "<Type>CanonicalUser</Type>" +
+        "</Grantee>" +
+        "<Permission>FULL_CONTROL</Permission>" +
+        "</Grant>" +
+        "</AccessControlList>" +
+        "</AccessControlPolicy>";
+    AccessControlPolicy accessControlPolicy = xmlToObject(xmlString, AccessControlPolicy.class);
+    assertEquals("123", accessControlPolicy.getOwner().getId());
+    assertEquals("Emad Alblueshi", accessControlPolicy.getOwner().getDisplayName());
+    List<Grant> grantList = accessControlPolicy.getAccessControlList().getGrantList();
+    assertEquals(2, grantList.size());
+    assertEquals("FULL_CONTROL", grantList.get(0).getPermission());
+    assertEquals("CanonicalUser", grantList.get(0).getGrantee().getAttributeType());
+    assertEquals("FULL_CONTROL", grantList.get(1).getPermission());
+    assertEquals("CanonicalUser", grantList.get(1).getGrantee().getAttributeType());
   }
 
   public <T> T xmlToObject(String xmlString, Class<T> clazz) throws Exception {
