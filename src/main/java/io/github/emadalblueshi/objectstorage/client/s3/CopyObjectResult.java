@@ -3,11 +3,13 @@ package io.github.emadalblueshi.objectstorage.client.s3;
 import java.time.Instant;
 
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 
 /**
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
+@JacksonXmlRootElement(localName = "CopyObjectResult")
 public class CopyObjectResult {
 
   @JacksonXmlProperty(localName = "LastModified")

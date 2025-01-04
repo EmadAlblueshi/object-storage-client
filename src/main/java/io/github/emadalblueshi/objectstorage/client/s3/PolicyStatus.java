@@ -1,11 +1,13 @@
 package io.github.emadalblueshi.objectstorage.client.s3;
 
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 
 /**
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
+@JacksonXmlRootElement(localName = "PolicyStatus")
 public class PolicyStatus {
 
   @JacksonXmlProperty(localName = "IsPublic")

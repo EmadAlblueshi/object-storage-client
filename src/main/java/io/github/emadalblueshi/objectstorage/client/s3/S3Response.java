@@ -14,7 +14,7 @@ import io.vertx.ext.web.client.HttpResponse;
  */
 
 @VertxGen
-public interface ObjectResponse<T> extends HttpResponse<T> {
+public interface S3Response<T> extends HttpResponse<T> {
 
   @CacheReturn
   String requestId();

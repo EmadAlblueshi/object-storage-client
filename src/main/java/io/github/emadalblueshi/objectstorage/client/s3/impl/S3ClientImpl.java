@@ -5,12 +5,14 @@ import static io.github.emadalblueshi.objectstorage.client.s3.impl.S3SignatureV4
 import java.util.Objects;
 import java.util.function.Function;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import io.github.emadalblueshi.objectstorage.client.s3.*;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
@@ -25,40 +27,53 @@ import io.vertx.ext.web.client.WebClient;
 
 public class S3ClientImpl implements S3Client {
 
-  private final XmlMapper xmlMapper = XmlMapper.builder().addModule(new JavaTimeModule()).build();
+  private final XmlMapper xmlMapper = XmlMapper.builder()
+      .addModule(new JavaTimeModule())
+      .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+      .build();
   private final S3ClientOptions options;
   private final WebClient webClient;
-  private final Buffer EMPTY = Buffer.buffer("");
+  private final Buffer EMPTY_BUFFER = Buffer.buffer("");
 
-  private <T> Function<HttpResponse<T>, ObjectResponse<T>> objectResponse() {
-    return httpResponse -> new ObjectResponseImpl<T>(
-        httpResponse.version(),
-        httpResponse.statusCode(),
-        httpResponse.statusMessage(),
-        httpResponse.headers(),
-        httpResponse.trailers(),
-        httpResponse.cookies(),
-        httpResponse.body(),
-        httpResponse.followedRedirects());
-  }
-
-  private <T> Function<HttpResponse<Buffer>, ObjectResponse<T>> mapper(Class<T> clazz) {
+  @SuppressWarnings("unchecked")
+  private <T> Function<HttpResponse<Buffer>, Future<S3Response<T>>> toS3Response(Class<T> clazz) {
     return httpResponse -> {
-      try {
-        T body = (clazz != Void.class) ? xmlMapper.<T>readValue(httpResponse.bodyAsString(), clazz) : null;
-        return new ObjectResponseImpl<T>(
-            httpResponse.version(),
-            httpResponse.statusCode(),
-            httpResponse.statusMessage(),
-            httpResponse.headers(),
-            httpResponse.trailers(),
-            httpResponse.cookies(),
-            body,
-            httpResponse.followedRedirects());
-      } catch (Exception e) {
-        throw new RuntimeException(e);
+      Promise<S3Response<T>> promise = Promise.promise();
+      if (httpResponse.statusCode() > 300 && httpResponse.statusCode() < 600) {
+        try {
+          S3ErrorResponse err = xmlMapper.readValue(httpResponse.bodyAsString(), S3ErrorResponse.class);
+          promise.fail(new S3ResponseException(
+              err.getCode(),
+              err.getMessage(),
+              err.getResource(),
+              err.getRequestId()));
+        } catch (Throwable e) {
+          promise.fail(e);
+        }
+      } else {
+        try {
+          T body = null;
+          if (!clazz.equals(Buffer.class)) {
+            body = (clazz != Void.class) ? xmlMapper.<T>readValue(httpResponse.bodyAsString(), clazz) : null;
+          } else {
+            body = (T) httpResponse.bodyAsBuffer();
+          }
+          promise.complete(new S3ResponseImpl<>(
+              httpResponse.version(),
+              httpResponse.statusCode(),
+              httpResponse.statusMessage(),
+              httpResponse.headers(),
+              httpResponse.trailers(),
+              httpResponse.cookies(),
+              body,
+              httpResponse.followedRedirects()));
+        } catch (Throwable e) {
+          promise.fail(e);
+        }
       }
+      return promise.future();
     };
+
   }
 
   public S3ClientImpl(Vertx vertx, S3ClientOptions s3clientOptions) {
@@ -70,51 +85,56 @@ public class S3ClientImpl implements S3Client {
   }
 
   @Override
-  public Future<ObjectResponse<Void>> put(ObjectOptions objectOptions, String objectPath, Buffer object) {
+  public Future<S3Response<Void>> put(ObjectOptions objectOptions, String objectPath, Buffer object) {
     return request(HttpMethod.PUT, objectPath, object, objectOptions)
         .sendBuffer(object)
-        .map(mapper(Void.class));
+        .compose(toS3Response(Void.class));
+
   }
 
   @Override
-  public Future<ObjectResponse<CopyObjectResult>> copy(ObjectOptions objectOptions, String objectSourcePath,
+  public Future<S3Response<CopyObjectResult>> copy(ObjectOptions objectOptions, String objectSourcePath,
       String objectTargetPath) {
     objectOptions.copySource(objectSourcePath);
     return request(HttpMethod.PUT, objectTargetPath, objectOptions)
         .send()
-        .map(mapper(CopyObjectResult.class));
+        .compose(toS3Response(CopyObjectResult.class));
   }
 
   @Override
-  public Future<ObjectResponse<Buffer>> get(ObjectOptions objectOptions, String objectPath) {
+  public Future<S3Response<Buffer>> get(ObjectOptions objectOptions, String objectPath) {
     return request(HttpMethod.GET, objectPath, objectOptions)
         .send()
-        .map(objectResponse());
+        .compose(toS3Response(Buffer.class));
   }
 
   @Override
-  public Future<ObjectResponse<Void>> delete(ObjectOptions objectOptions, String objectPath) {
+  public Future<S3Response<Void>> delete(ObjectOptions objectOptions, String objectPath) {
     return request(HttpMethod.DELETE, objectPath, objectOptions)
         .send()
-        .map(mapper(Void.class));
+        .compose(toS3Response(Void.class));
   }
 
   @Override
-  public Future<ObjectResponse<Void>> info(ObjectOptions objectOptions, String objectPath) {
+  public Future<S3Response<Void>> info(ObjectOptions objectOptions, String objectPath) {
     return request(HttpMethod.HEAD, objectPath, objectOptions)
         .send()
-        .map(mapper(Void.class));
+        .compose(toS3Response(Void.class));
   }
 
   @Override
-  public Future<ObjectResponse<Buffer>> acl(ObjectOptions objectOptions, String objectPath) {
-    return request(HttpMethod.GET, objectPath, objectOptions.acl())
-        .send()
-        .map(objectResponse());
+  public Future<S3Response<AccessControlPolicy>> acl(ObjectOptions objectOptions, String objectPath) {
+    return request(HttpMethod.GET, objectPath, objectOptions.acl()).send()
+        .compose(toS3Response(AccessControlPolicy.class));
+  }
+
+  public Future<S3Response<AccessControlPolicy>> aclTest(ObjectOptions objectOptions, String objectPath) {
+    return request(HttpMethod.GET, objectPath, objectOptions.acl()).send()
+        .compose(toS3Response(AccessControlPolicy.class));
   }
 
   @Override
-  public Future<ObjectResponse<Void>> putBucket(BucketOptions bucketOptions, String path,
+  public Future<S3Response<Void>> putBucket(BucketOptions bucketOptions, String path,
       CreateBucketConfiguration config) {
     String bucket = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
         + "<CreateBucketConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
@@ -125,49 +145,49 @@ public class S3ClientImpl implements S3Client {
     Buffer body = Buffer.buffer(bucket);
     return request(HttpMethod.PUT, path, body, bucketOptions)
         .sendBuffer(body)
-        .map(mapper(Void.class));
+        .compose(toS3Response(Void.class));
   }
 
   @Override
-  public Future<ObjectResponse<Void>> putBucket(BucketOptions bucketOptions, String bucketPath) {
+  public Future<S3Response<Void>> putBucket(BucketOptions bucketOptions, String bucketPath) {
     return request(HttpMethod.PUT, bucketPath, bucketOptions)
         .send()
-        .map(mapper(Void.class));
+        .compose(toS3Response(Void.class));
   }
 
   @Override
-  public Future<ObjectResponse<Void>> deleteBucket(BucketOptions bucketOptions, String path) {
+  public Future<S3Response<Void>> deleteBucket(BucketOptions bucketOptions, String path) {
     return request(HttpMethod.DELETE, path, bucketOptions)
         .send()
-        .map(mapper(Void.class));
+        .compose(toS3Response(Void.class));
   }
 
   @Override
-  public Future<ObjectResponse<PolicyStatus>> getBucketPolicyStatus(BucketOptions bucketOptions, String path) {
+  public Future<S3Response<PolicyStatus>> getBucketPolicyStatus(BucketOptions bucketOptions, String path) {
     return request(HttpMethod.GET, path, bucketOptions.policyStatus())
         .send()
-        .map(mapper(PolicyStatus.class));
+        .compose(toS3Response(PolicyStatus.class));
   }
 
   @Override
-  public Future<ObjectResponse<Void>> putBucketPolicy(BucketOptions bucketOptions, String path, JsonObject policy) {
+  public Future<S3Response<Void>> putBucketPolicy(BucketOptions bucketOptions, String path, JsonObject policy) {
     return request(HttpMethod.PUT, path, policy.toBuffer(), bucketOptions.policy())
         .sendJsonObject(policy)
-        .map(mapper(Void.class));
+        .compose(toS3Response(Void.class));
   }
 
   @Override
-  public Future<ObjectResponse<Buffer>> getBucketPolicy(BucketOptions bucketOptions, String path) {
+  public Future<S3Response<Buffer>> getBucketPolicy(BucketOptions bucketOptions, String path) {
     return request(HttpMethod.GET, path, bucketOptions.policy())
         .send()
-        .map(objectResponse());
+        .compose(toS3Response(Buffer.class));
   }
 
   @Override
-  public Future<ObjectResponse<Void>> deleteBucketPolicy(BucketOptions bucketOptions, String path) {
+  public Future<S3Response<Void>> deleteBucketPolicy(BucketOptions bucketOptions, String path) {
     return request(HttpMethod.DELETE, path, bucketOptions.policy())
         .send()
-        .map(mapper(Void.class));
+        .compose(toS3Response(Void.class));
   }
 
   @Override
@@ -206,7 +226,7 @@ public class S3ClientImpl implements S3Client {
       HttpMethod httpMethod,
       String path,
       S3RequestOptions requestOptions) {
-    return request(httpMethod, path, EMPTY, requestOptions);
+    return request(httpMethod, path, EMPTY_BUFFER, requestOptions);
 
   }
 
