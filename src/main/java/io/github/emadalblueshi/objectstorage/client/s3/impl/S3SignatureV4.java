@@ -5,6 +5,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -52,8 +53,7 @@ public class S3SignatureV4 {
         .collect(Collectors.toList());
 
     List<String> hashedHeaders = new ArrayList<>();
-    List<String> canonicalRequestLines = Stream.of(method, path, query).collect(Collectors.toList());
-
+    List<String> canonicalRequestLines = new ArrayList<>(Arrays.asList(method, path, query));
     headerSortedKeys.forEach(key -> {
       hashedHeaders.add(key);
       canonicalRequestLines.add(key + ":" + headers.get(key).trim());
@@ -61,11 +61,10 @@ public class S3SignatureV4 {
 
     String signedHeaders = hashedHeaders.stream().collect(Collectors.joining(";"));
 
-    canonicalRequestLines.addAll(Stream.of(null, signedHeaders, contentSha256).collect(Collectors.toList()));
+    canonicalRequestLines.addAll(List.of("", signedHeaders, contentSha256));
 
     String canonicalRequest = canonicalRequestLines
         .stream()
-        .map(line -> line == null ? "" : line)
         .collect(Collectors.joining("\n"));
 
     String canonicalRequestHashedPayload = hex(sha256(canonicalRequest.getBytes(StandardCharsets.UTF_8)));
