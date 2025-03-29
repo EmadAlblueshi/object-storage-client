@@ -31,13 +31,13 @@ var client = S3Client.create(vertx, clientOptions);
 // Create new bucket
 client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
   if (r.succeeded()) {
-    System.out.println("Bucket create succeeded");
+    System.out.println("Put bucket succeeded");
   } else {
-    System.out.println("Bucket create failed!");
+    System.out.println("Put bucket failed!");
   }
 });
 
-// Create object request options
+// Create object request options with content type
 var objectOptions = new ObjectOptions()
     .contentType("text/plain");
 
@@ -45,27 +45,26 @@ var objectOptions = new ObjectOptions()
 Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
 
 // Create new object
-client.putObject(objectOptions, "/my-bucket/my-object.txt", fileBuffer).onComplete(r -> {
+client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
   if (r.succeeded()) {
-    System.out.println("Object create succeeded");
+    System.out.println("Put object succeeded");
   } else {
-    System.out.println("Object create failed!");
+    System.out.println("Put object failed!");
   }
 });
 
+// The S3 Client now supports streaming for large objects
 AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
 // Object content type
 ObjectOptions options = new ObjectOptions().contentType("image/png");
-// Upload object as RaedStream<Buffer>
+// Upload large object as ReadStream<Buffer>
 client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
   if(res.succeeded()) {
-    System.out.println("Object create stream succeeded");
+    System.out.println("Put large object as stream succeeded");
   } else {
-    System.out.println("Object create stream failed!");
+    System.out.println("Put large object as stream failed!");
   }
 });
-
-//
 ----
 
 == Building

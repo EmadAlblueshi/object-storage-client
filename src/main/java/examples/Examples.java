@@ -31,18 +31,17 @@ public class Examples {
   void example3(S3Client client) {
     client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
       if (r.succeeded()) {
-        System.out.println("Bucket created");
+        System.out.println("Put bucket succeeded");
       } else {
-        System.out.println("Bucket failed");
+        System.out.println("Put bucket failed!");
       }
     });
   }
 
   void example4() {
+    // Create object request options with content type
     ObjectOptions objectOptions = new ObjectOptions()
-        .contentType("text/plain")
-        .storageClass(StorageClass.STANDARD)
-        .acl(Acl.PUBLIC_READ);
+        .contentType("text/plain");
   }
 
   void example5(Vertx vertx) {
@@ -52,9 +51,9 @@ public class Examples {
   void example6(S3Client client, ObjectOptions objectOptions, Buffer fileBuffer) {
     client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
       if (r.succeeded()) {
-        System.out.println("Object created");
+        System.out.println("Put object succeeded");
       } else {
-        System.out.println("Object failed");
+        System.out.println("Put object failed!");
       }
     });
   }
@@ -64,19 +63,21 @@ public class Examples {
       if (r.succeeded()) {
         System.out.println(r.result().bodyAsString());
       } else {
-        System.out.println("Failed!");
+        System.out.println("Get object failed!");
       }
     });
   }
 
   void example8(Vertx vertx, S3Client client) {
     AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
+    // Object content type
     ObjectOptions options = new ObjectOptions().contentType("image/png");
-    client.putObjectAsStream(options, "/bucket-name/large-object.png", asyncFile).onComplete(res -> {
+    // Upload large object as ReadStream<Buffer>
+    client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
       if(res.succeeded()) {
-        System.out.println("Object stream succeeded!");
+        System.out.println("Put large object as stream succeeded");
       } else {
-        System.out.println("Object stream Failed!");
+        System.out.println("Put large object as stream failed!");
       }
     });
   }
@@ -103,17 +104,15 @@ public class Examples {
     // Create new bucket
     client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
       if (r.succeeded()) {
-        System.out.println("Bucket created");
+        System.out.println("Put bucket succeeded");
       } else {
-        System.out.println("Bucket failed");
+        System.out.println("Put bucket failed!");
       }
     });
 
-    // Create object request options
+    // Create object request options with content type
     var objectOptions = new ObjectOptions()
-        .contentType("text/plain")
-        .storageClass(StorageClass.STANDARD)
-        .acl(Acl.PUBLIC_READ);
+        .contentType("text/plain");
 
     // Read existing text file
     Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
@@ -121,22 +120,22 @@ public class Examples {
     // Create new object
     client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
       if (r.succeeded()) {
-        System.out.println("Object created");
+        System.out.println("Put object succeeded");
       } else {
-        System.out.println("Object failed");
+        System.out.println("Put object failed!");
       }
     });
 
-    // RaedStream<Buffer>
+    // The S3 Client now supports streaming for large objects
     AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
     // Object content type
     ObjectOptions options = new ObjectOptions().contentType("image/png");
-    // Upload object as RaedStream<Buffer>
+    // Upload large object as ReadStream<Buffer>
     client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
       if(res.succeeded()) {
-        System.out.println("Object stream upload succeeded!");
+        System.out.println("Put large object as stream succeeded");
       } else {
-        System.out.println("Object stream upload Failed!");
+        System.out.println("Put large object as stream failed!");
       }
     });
 
