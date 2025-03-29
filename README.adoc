@@ -6,7 +6,7 @@ image:https://github.com/EmadAlblueshi/object-storage-client/actions/workflows/c
 A convenient S3 client based on Vert.x that is compatible with
 https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API protocol]
 
-WARNING: The module in active development, this means the API can change between versions. 
+WARNING: The module in active development, this means the API can change between versions.
 
 == Example
 [source,java]
@@ -20,7 +20,7 @@ var authOptions = new S3AuthOptions()
 // Create client options
 var clientOptions = new S3ClientOptions()
     .setAuthOptions(authOptions)
-    .setRegion("kw-west-1")
+    .setRegion("region")
     .setHost("s3.example.com")
     .setPort(443)
     .setSsl(true);
@@ -28,32 +28,44 @@ var clientOptions = new S3ClientOptions()
 // Create the client
 var client = S3Client.create(vertx, clientOptions);
 
-// Create new general purpose bucket
+// Create new bucket
 client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
   if (r.succeeded()) {
-    System.out.println("Bucket created");
+    System.out.println("Bucket create succeeded");
   } else {
-    System.out.println("Bucket failed");
+    System.out.println("Bucket create failed!");
   }
 });
 
 // Create object request options
 var objectOptions = new ObjectOptions()
-    .contentType("text/plain")
-    .storageClass(StorageClass.STANDARD)
-    .acl(Acl.PUBLIC_READ);
+    .contentType("text/plain");
 
-// Read an existing text file
-Buffer fileBuffer = vertx.fileSystem().readFileBlocking("example.txt");
+// Read existing text file
+Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
 
 // Create new object
-client.put(objectOptions, "/my-bucket/my-object.txt", fileBuffer).onComplete(r -> {
+client.putObject(objectOptions, "/my-bucket/my-object.txt", fileBuffer).onComplete(r -> {
   if (r.succeeded()) {
-    System.out.println("Object created");
+    System.out.println("Object create succeeded");
   } else {
-    System.out.println("Object failed");
+    System.out.println("Object create failed!");
   }
-});   
+});
+
+AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
+// Object content type
+ObjectOptions options = new ObjectOptions().contentType("image/png");
+// Upload object as RaedStream<Buffer>
+client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
+  if(res.succeeded()) {
+    System.out.println("Object create stream succeeded");
+  } else {
+    System.out.println("Object create stream failed!");
+  }
+});
+
+//
 ----
 
 == Building

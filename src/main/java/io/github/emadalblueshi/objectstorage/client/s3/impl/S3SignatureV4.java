@@ -10,7 +10,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import io.netty.handler.codec.http.QueryStringEncoder;
 import io.vertx.core.MultiMap;
@@ -59,24 +58,21 @@ public class S3SignatureV4 {
       canonicalRequestLines.add(key + ":" + headers.get(key).trim());
     });
 
-    String signedHeaders = hashedHeaders.stream().collect(Collectors.joining(";"));
+    String signedHeaders = String.join(";", hashedHeaders);
 
     canonicalRequestLines.addAll(List.of("", signedHeaders, contentSha256));
 
-    String canonicalRequest = canonicalRequestLines
-        .stream()
-        .collect(Collectors.joining("\n"));
+    String canonicalRequest = String.join("\n", canonicalRequestLines);
 
     String canonicalRequestHashedPayload = hex(sha256(canonicalRequest.getBytes(StandardCharsets.UTF_8)));
 
     String credentialScope = String.format("%s/%s/%s/%s", isoDate, region, service, AWS4_REQUEST);
 
-    String stringToSign = Stream.of(AWS4_HMAC_SHA256, date, credentialScope, canonicalRequestHashedPayload)
-        .collect(Collectors.joining("\n"));
+    String stringToSign = String.join("\n", AWS4_HMAC_SHA256, date, credentialScope, canonicalRequestHashedPayload);
 
     byte[] dateKey = hmacSHA256((String.format("%s%s", AWS4, secretKey)).getBytes(StandardCharsets.UTF_8), isoDate);
-    byte[] dateRegionkey = hmacSHA256(dateKey, region);
-    byte[] dateRegionServiceKey = hmacSHA256(dateRegionkey, service);
+    byte[] dateRegionKey = hmacSHA256(dateKey, region);
+    byte[] dateRegionServiceKey = hmacSHA256(dateRegionKey, service);
     byte[] signingKey = hmacSHA256(dateRegionServiceKey, AWS4_REQUEST);
 
     String signature = hex(hmacSHA256(signingKey, stringToSign));

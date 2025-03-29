@@ -2,9 +2,13 @@ package io.github.emadalblueshi.objectstorage.client.s3.impl;
 
 import static io.github.emadalblueshi.objectstorage.client.s3.impl.S3SignatureV4.sign;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -15,8 +19,11 @@ import io.vertx.core.MultiMap;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.file.AsyncFile;
+import io.vertx.core.file.OpenOptions;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
@@ -34,17 +41,18 @@ public class S3ClientImpl implements S3Client {
   private final S3ClientOptions options;
   private final WebClient webClient;
   private final Buffer EMPTY_BUFFER = Buffer.buffer("");
+  private final Vertx vertx;
 
   public S3ClientImpl(Vertx vertx, S3ClientOptions s3clientOptions) {
     Objects.requireNonNull(vertx);
-    Objects.requireNonNull(s3clientOptions);
     Objects.requireNonNull(s3clientOptions.getAuthOptions());
-    options = s3clientOptions;
+    this.vertx = vertx;
+    options = Objects.requireNonNull(s3clientOptions);
     webClient = WebClient.create(vertx, s3clientOptions);
   }
 
   @Override
-  public Future<S3Response<Void>> put(ObjectOptions objectOptions, String objectPath, Buffer object) {
+  public Future<S3Response<Void>> putObject(ObjectOptions objectOptions, String objectPath, Buffer object) {
     return request(HttpMethod.PUT, objectPath, object, objectOptions)
         .sendBuffer(object)
         .compose(toS3Response(Void.class));
@@ -52,8 +60,10 @@ public class S3ClientImpl implements S3Client {
   }
 
   @Override
-  public Future<S3Response<CopyObjectResult>> copy(ObjectOptions objectOptions, String objectSourcePath,
-      String objectTargetPath) {
+  public Future<S3Response<CopyObjectResult>> copyObject(
+    ObjectOptions objectOptions,
+    String objectSourcePath,
+    String objectTargetPath) {
     objectOptions.copySource(objectSourcePath);
     return request(HttpMethod.PUT, objectTargetPath, objectOptions)
         .send()
@@ -61,45 +71,43 @@ public class S3ClientImpl implements S3Client {
   }
 
   @Override
-  public Future<S3Response<Buffer>> get(ObjectOptions objectOptions, String objectPath) {
+  public Future<S3Response<Buffer>> getObject(ObjectOptions objectOptions, String objectPath) {
     return request(HttpMethod.GET, objectPath, objectOptions)
         .send()
         .compose(toS3Response(Buffer.class));
   }
 
   @Override
-  public Future<S3Response<Void>> delete(ObjectOptions objectOptions, String objectPath) {
+  public Future<S3Response<Void>> deleteObject(ObjectOptions objectOptions, String objectPath) {
     return request(HttpMethod.DELETE, objectPath, objectOptions)
         .send()
         .compose(toS3Response(Void.class));
   }
 
   @Override
-  public Future<S3Response<Void>> info(ObjectOptions objectOptions, String objectPath) {
+  public Future<S3Response<Void>> ObjectInfo(ObjectOptions objectOptions, String objectPath) {
     return request(HttpMethod.HEAD, objectPath, objectOptions)
         .send()
         .compose(toS3Response(Void.class));
   }
 
   @Override
-  public Future<S3Response<AccessControlPolicy>> acl(ObjectOptions objectOptions, String objectPath) {
+  public Future<S3Response<AccessControlPolicy>> ObjectAcl(ObjectOptions objectOptions, String objectPath) {
     return request(HttpMethod.GET, objectPath, objectOptions.acl()).send()
         .compose(toS3Response(AccessControlPolicy.class));
   }
 
   @Override
   public Future<S3Response<Void>> putBucket(BucketOptions bucketOptions, String path,
-      CreateBucketConfiguration config) {
-    String bucket = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-        + "<CreateBucketConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
-        // + "<LocationConstraint>default</LocationConstraint>"
-        // + "<Location><Name>string</Name><Type>string</Type></Location>"
-        // "<Bucket><DataRedundancy>SingleAvailabilityZone</DataRedundancy><Type>string</Type></Bucket>"
-        + "</CreateBucketConfiguration>";
-    Buffer body = Buffer.buffer(bucket);
-    return request(HttpMethod.PUT, path, body, bucketOptions)
+      CreateBucketConfiguration createBucketConfiguration)  {
+    try {
+      Buffer body = Buffer.buffer(xmlMapper.writeValueAsString(createBucketConfiguration));
+      return request(HttpMethod.PUT, path, body, bucketOptions)
         .sendBuffer(body)
         .compose(toS3Response(Void.class));
+    } catch (JsonProcessingException ex) {
+      throw new RuntimeException(ex);
+    }
   }
 
   @Override
@@ -145,8 +153,119 @@ public class S3ClientImpl implements S3Client {
   }
 
   @Override
+  public Future<S3Response<CompleteMultipartUploadResult>> putObjectAsStream(ObjectOptions objectOptions, String path,
+                                                                             ReadStream<Buffer> readStream) {
+    return initiateMultipart(path, objectOptions)
+        .compose(initMultipart -> {
+          Promise<S3Response<CompleteMultipartUploadResult>> promise = Promise.promise();
+          String uploadId = initMultipart.body().getUploadId();
+          List<Part> parts = new ArrayList<>();
+          AtomicInteger partNumber = new AtomicInteger(0);
+          BufferQueueReadStream stream = new BufferQueueReadStream(readStream);
+          stream.handler(buffer -> {
+            stream.pause();
+            uploadPart(path, buffer, partNumber.incrementAndGet(), uploadId)
+                .onComplete(r -> {
+                  if (r.succeeded()) {
+                    parts.add(new Part(partNumber.get(), r.result().ETag()));
+                    stream.resume();
+                  } else {
+                    promise.fail(r.cause());
+                  }
+                });
+          }).exceptionHandler(promise::tryFail).endHandler(e -> {
+            completeMultipart(path, uploadId, parts, promise);
+          });
+          stream.resume();
+          return promise.future();
+        });
+  }
+
+  @Override
+  public Future<S3Response<CompleteMultipartUploadResult>> putObjectFileAsStream(ObjectOptions objectOptions, String path,
+                                                                                 String filePath) {
+    return initiateMultipart(path, objectOptions)
+        .compose(initMultipart -> {
+          Promise<S3Response<CompleteMultipartUploadResult>> promise = Promise.promise();
+          String uploadId = initMultipart.body().getUploadId();
+          openAsyncFile(filePath).onComplete(f -> {
+            if (f.succeeded()) {
+              List<Part> parts = new ArrayList<>();
+              AtomicInteger partNumber = new AtomicInteger(0);
+              AsyncFile asyncFile = f.result();
+              BufferQueueReadStream stream = new BufferQueueReadStream(asyncFile);
+              stream.handler(buffer -> {
+                stream.pause();
+                uploadPart(path, buffer, partNumber.incrementAndGet(), uploadId)
+                    .onComplete(r -> {
+                      if (r.succeeded()) {
+                        parts.add(new Part(partNumber.get(), r.result().ETag()));
+                        stream.resume();
+                      } else {
+                        promise.fail(r.cause());
+                        asyncFile.close();
+                      }
+                    });
+              }).exceptionHandler(e -> {
+                promise.tryFail(e);
+                asyncFile.close();
+              }).endHandler(e -> {
+                completeMultipart(path, uploadId, parts, promise);
+              });
+              stream.resume();
+            } else {
+              promise.fail(f.cause());
+            }
+          });
+          return promise.future();
+        });
+  }
+
+  @Override
   public void close() {
     webClient.close();
+  }
+
+  private Future<S3Response<InitiateMultipartUploadResult>> initiateMultipart(String path,
+      ObjectOptions objectOptions) {
+    return request(HttpMethod.POST, path, objectOptions.uploads())
+        .send()
+        .compose(toS3Response(InitiateMultipartUploadResult.class));
+  }
+
+  private Future<AsyncFile> openAsyncFile(String filePath) {
+    return vertx.fileSystem().open(filePath, new OpenOptions());
+  }
+
+  private Future<S3Response<Void>> uploadPart(String path, Buffer buffer, int partNumber, String uploadId) {
+    // Upload part and the order must be 'partNumber' then 'uploadId'!
+    return request(HttpMethod.PUT, path, buffer,
+        new ObjectOptions().partNumber(String.valueOf(partNumber)).uploadId(uploadId))
+        .sendBuffer(buffer)
+        .compose(toS3Response(Void.class));
+  }
+
+  private void completeMultipart(String path, String uploadId,
+      List<Part> parts, Promise<S3Response<CompleteMultipartUploadResult>> promise) {
+    try {
+      Buffer body = Buffer.buffer(xmlMapper.writeValueAsString(new CompleteMultipartUpload(parts)));
+      completeMultipartUpload(path, body, uploadId).onComplete(r -> {
+        if (r.succeeded()) {
+          promise.tryComplete(r.result());
+        } else {
+          promise.tryFail(r.cause());
+        }
+      });
+    } catch (JsonProcessingException ex) {
+      promise.tryFail(ex);
+    }
+  }
+
+  private Future<S3Response<CompleteMultipartUploadResult>> completeMultipartUpload(String path, Buffer body,
+      String uploadId) {
+    return request(HttpMethod.POST, path, body, new ObjectOptions().uploadId(uploadId))
+        .sendBuffer(body)
+        .compose(toS3Response(CompleteMultipartUploadResult.class));
   }
 
   private HttpRequest<Buffer> request(

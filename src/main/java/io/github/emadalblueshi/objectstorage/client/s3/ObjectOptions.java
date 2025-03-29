@@ -1,17 +1,28 @@
 package io.github.emadalblueshi.objectstorage.client.s3;
 
 import io.vertx.core.MultiMap;
+import io.vertx.core.json.JsonObject;
+
 import static io.vertx.core.http.HttpHeaders.*;
+
+import io.vertx.codegen.annotations.DataObject;
+import io.vertx.codegen.json.annotations.JsonGen;
 
 /**
  *
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
+@DataObject
+@JsonGen(publicConverter = false)
 public class ObjectOptions extends S3RequestOptions {
 
   public ObjectOptions() {
     super();
+  }
+
+  public ObjectOptions(JsonObject json) {
+    ObjectOptionsConverter.fromJson(json, this);
   }
 
   public ObjectOptions expectedBucketOwner(String value) {
@@ -138,8 +149,8 @@ public class ObjectOptions extends S3RequestOptions {
     return (ObjectOptions) super.addQueryParam(name, value);
   }
 
-  public ObjectOptions addQueryParams(MultiMap queryParams) {
-    return (ObjectOptions) super.addQueryParams(queryParams);
+  public ObjectOptions addQueryParam(MultiMap queryParams) {
+    return (ObjectOptions) super.addQueryParam(queryParams);
   }
 
 }
