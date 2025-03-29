@@ -3,6 +3,8 @@ package examples;
 import io.github.emadalblueshi.objectstorage.client.s3.*;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.file.AsyncFile;
+import io.vertx.core.file.OpenOptions;
 
 @SuppressWarnings("unused")
 public class Examples {
@@ -48,7 +50,7 @@ public class Examples {
   }
 
   void example6(S3Client client, ObjectOptions objectOptions, Buffer fileBuffer) {
-    client.put(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
+    client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
       if (r.succeeded()) {
         System.out.println("Object created");
       } else {
@@ -58,11 +60,23 @@ public class Examples {
   }
 
   void example7(S3Client client) {
-    client.get(new ObjectOptions(), "/my-bucket/my-file.txt").onComplete(r -> {
+    client.getObject(new ObjectOptions(), "/my-bucket/my-object.txt").onComplete(r -> {
       if (r.succeeded()) {
         System.out.println(r.result().bodyAsString());
       } else {
         System.out.println("Failed!");
+      }
+    });
+  }
+
+  void example8(Vertx vertx, S3Client client) {
+    AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
+    ObjectOptions options = new ObjectOptions().contentType("image/png");
+    client.putObjectAsStream(options, "/bucket-name/large-object.png", asyncFile).onComplete(res -> {
+      if(res.succeeded()) {
+        System.out.println("Object stream succeeded!");
+      } else {
+        System.out.println("Object stream Failed!");
       }
     });
   }
@@ -105,11 +119,24 @@ public class Examples {
     Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
 
     // Create new object
-    client.put(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
+    client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
       if (r.succeeded()) {
         System.out.println("Object created");
       } else {
         System.out.println("Object failed");
+      }
+    });
+
+    // RaedStream<Buffer>
+    AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
+    // Object content type
+    ObjectOptions options = new ObjectOptions().contentType("image/png");
+    // Upload object as RaedStream<Buffer>
+    client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
+      if(res.succeeded()) {
+        System.out.println("Object stream upload succeeded!");
+      } else {
+        System.out.println("Object stream upload Failed!");
       }
     });
 

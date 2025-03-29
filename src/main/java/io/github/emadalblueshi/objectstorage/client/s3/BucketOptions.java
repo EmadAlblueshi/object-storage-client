@@ -1,15 +1,24 @@
 package io.github.emadalblueshi.objectstorage.client.s3;
 
+import io.vertx.codegen.annotations.DataObject;
+import io.vertx.codegen.json.annotations.JsonGen;
 import io.vertx.core.MultiMap;
+import io.vertx.core.json.JsonObject;
 
 /**
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
+@DataObject
+@JsonGen(publicConverter = false)
 public class BucketOptions extends S3RequestOptions {
 
   public BucketOptions() {
     super();
+  }
+
+  public BucketOptions(JsonObject json) {
+    BucketOptionsConverter.fromJson(json, this);
   }
 
   public BucketOptions bucketObjectLockEnabled(String value) {
@@ -108,8 +117,8 @@ public class BucketOptions extends S3RequestOptions {
     return (BucketOptions) super.addQueryParam(name, value);
   }
 
-  public BucketOptions addQueryParams(MultiMap queryParams) {
-    return (BucketOptions) super.addQueryParams(queryParams);
+  public BucketOptions addQueryParam(MultiMap queryParams) {
+    return (BucketOptions) super.addQueryParam(queryParams);
   }
 
 }

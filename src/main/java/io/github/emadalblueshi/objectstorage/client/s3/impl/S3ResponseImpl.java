@@ -106,6 +106,11 @@ public class S3ResponseImpl<T> extends HttpResponseImpl<T> implements S3Response
   }
 
   @Override
+  public String contentLength() {
+    return super.getHeader("content-length");
+  }
+
+  @Override
   public String storageClass() {
     return super.getHeader("x-amz-storage-class");
   }
@@ -116,8 +121,7 @@ public class S3ResponseImpl<T> extends HttpResponseImpl<T> implements S3Response
   }
 
   @Override
-  public String nextAppendPosition() {
-    return super.getHeader("x-rgw-next-append-position");
+  public String bucketRegion() {
+    return super.getHeader("x-amz-bucket-region");
   }
-
 }

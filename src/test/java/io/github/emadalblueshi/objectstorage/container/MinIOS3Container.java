@@ -11,7 +11,7 @@ import org.testcontainers.utility.DockerImageName;
 
 public class MinIOS3Container extends GenericContainer<MinIOS3Container> {
   private static final DockerImageName IMAGE_NAME = DockerImageName.parse("quay.io/minio/minio");
-  private static final String IMAGE_TAG = "RELEASE.2024-12-18T13-15-44Z";
+  private static final String IMAGE_TAG = "RELEASE.2025-03-12T18-04-18Z";
   private static final int PORT_S3_API = 9000;
   private static final int PORT_WEB_UI = 9001;
   private static final String ACCESS_KEY = "minioadmin";

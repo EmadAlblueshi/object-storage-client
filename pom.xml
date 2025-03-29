@@ -5,7 +5,7 @@
 
   <groupId>io.github.emadalblueshi</groupId>
   <artifactId>object-storage-client</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.2.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>Object Storage Client</name>
@@ -29,9 +29,9 @@
     <asciidoctor-maven-plugin>2.2.6</asciidoctor-maven-plugin>
     <logback-classic.version>1.5.6</logback-classic.version>
     <junit-jupiter.version>5.10.2</junit-jupiter.version>
-    <jackson-dataformat-xml.version>2.11.3</jackson-dataformat-xml.version>
-    <testcontainers.version>1.19.8</testcontainers.version>
-    <vertx.version>4.5.11</vertx.version>
+    <jackson-dataformat-xml.version>2.16.1</jackson-dataformat-xml.version>
+    <testcontainers.version>1.20.6</testcontainers.version>
+    <vertx.version>4.5.13</vertx.version>
     <generated.dir>${project.basedir}/src/main/generated</generated.dir>
     <asciidoc.dir>${project.basedir}/src/main/asciidoc</asciidoc.dir>
     <jar.manifest>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</jar.manifest>
@@ -91,7 +91,7 @@
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
       <artifactId>jackson-datatype-jsr310</artifactId>
-    </dependency>    
+    </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers</artifactId>

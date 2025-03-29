@@ -1,6 +1,9 @@
 package io.github.emadalblueshi.objectstorage.client;
 
+import io.vertx.codegen.annotations.DataObject;
+import io.vertx.codegen.json.annotations.JsonGen;
 import io.vertx.core.MultiMap;
+import io.vertx.core.json.JsonObject;
 
 /**
  *
@@ -10,14 +13,19 @@ import io.vertx.core.MultiMap;
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
+@DataObject
+@JsonGen(publicConverter = false)
 public class ObjectStorageRequestOptions {
 
-  private final MultiMap headers;
-  private final MultiMap queryParams;
+  private final MultiMap headers = MultiMap.caseInsensitiveMultiMap();
+  private final MultiMap queryParams = MultiMap.caseInsensitiveMultiMap();
 
   public ObjectStorageRequestOptions() {
-    headers = MultiMap.caseInsensitiveMultiMap();
-    queryParams = MultiMap.caseInsensitiveMultiMap();
+    super();
+  }
+
+  public ObjectStorageRequestOptions(JsonObject json) {
+    ObjectStorageRequestOptionsConverter.fromJson(json, this);
   }
 
   public ObjectStorageRequestOptions putHeader(CharSequence name, String value) {
@@ -45,7 +53,7 @@ public class ObjectStorageRequestOptions {
     return this;
   }
 
-  public ObjectStorageRequestOptions addQueryParams(MultiMap queryParams) {
+  public ObjectStorageRequestOptions addQueryParam(MultiMap queryParams) {
     queryParams.addAll(queryParams);
     return this;
   }

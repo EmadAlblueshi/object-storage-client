@@ -26,12 +26,14 @@ public interface S3Response<T> extends HttpResponse<T> {
   String contentType();
 
   @Nullable
+  String contentLength();
+
+  @Nullable
   String storageClass();
 
   @Nullable
   String contentRange();
 
   @Nullable
-  String nextAppendPosition();
-
+  String bucketRegion();
 }

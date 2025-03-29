@@ -2,11 +2,16 @@ package io.github.emadalblueshi.objectstorage.client.s3;
 
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
+import io.vertx.codegen.annotations.DataObject;
+import io.vertx.codegen.json.annotations.JsonGen;
+import io.vertx.core.json.JsonObject;
 
 /**
  * @author <a href="mailto:emad.albloushi@gmail.com">Emad Alblueshi</a>
  */
 
+@DataObject
+@JsonGen(publicConverter = false)
 @JacksonXmlRootElement(localName = "Grantee")
 public class Grantee {
 
@@ -26,6 +31,10 @@ public class Grantee {
   private String uri;
 
   public Grantee() {
+  }
+
+  public Grantee(JsonObject json) {
+    GranteeConverter.fromJson(json, this);
   }
 
   public String getType() {

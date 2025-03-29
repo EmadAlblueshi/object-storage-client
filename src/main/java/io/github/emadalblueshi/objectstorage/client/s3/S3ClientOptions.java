@@ -87,22 +87,18 @@ public class S3ClientOptions extends ObjectStorageClientOptions {
     return authOptions;
   }
 
-  @GenIgnore
   public S3ClientOptions setHost(String host) {
     return (S3ClientOptions) super.setDefaultHost(host);
   }
 
-  @GenIgnore
   public String getHost() {
     return super.getDefaultHost();
   }
 
-  @GenIgnore
   public S3ClientOptions setPort(int port) {
     return (S3ClientOptions) super.setDefaultPort(port);
   }
 
-  @GenIgnore
   public int getPort() {
     return super.getDefaultPort();
   }
