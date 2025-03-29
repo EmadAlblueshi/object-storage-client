@@ -10,11 +10,11 @@ The distributed object storage systems have their own web API in order to
 interact with its resources such as https://docs.aws.amazon.com/s3/[S3],
 https://docs.openstack.org/swift/latest/[SWIFT] and others we may encounter.
 
-Additionally, there are broad range of distributed object storage 
-systems implement compatible https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API] 
-to be as best as possible. For example but not limited to 
-https://min.io/docs/minio/linux/reference/s3-api-compatibility.html[MinIO], 
-https://docs.ceph.com/en/latest/radosgw/s3/[Ceph], https://docs.openstack.org/swift/latest/s3_compat.html[OpenStack] 
+Additionally, there are broad range of distributed object storage
+systems implement compatible https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API]
+to be as best as possible. For example but not limited to
+https://min.io/docs/minio/linux/reference/s3-api-compatibility.html[MinIO],
+https://docs.ceph.com/en/latest/radosgw/s3/[Ceph], https://docs.openstack.org/swift/latest/s3_compat.html[OpenStack]
 and https://garagehq.deuxfleurs.fr/documentation/reference-manual/s3-compatibility/[Garage].
 
 **The client is based on Vert.x ecosystem and meant to be compatible with S3 as much as possible.**
@@ -25,46 +25,42 @@ In order to configure the client for S3 client simply do the following:
 ----
 // Set S3 protocol options
 {@link examples.Examples#example1}
-
 ----
 NOTE: The client supports S3 request signature version 4 only.
 [source,$lang]
 ----
 // Set the client options
 {@link examples.Examples#example2}
-
 ----
 Now, Let's create a new `bucket`.
 [source,$lang]
 ----
-
 {@link examples.Examples#example3}
-
 ----
 We need to set the `object` request options such as
-the content type (MIME type) and access control list (ACL) for a text file.
+the content type (MIME type) for a text file.
 [source,$lang]
 ----
 {@link examples.Examples#example4}
-
 ----
 `Object` can be any binary data so let's read an existing text file content.
 [source,$lang]
 ----
-
 {@link examples.Examples#example5}
-
 ----
 Let's create the `Object` inside the recent created `Bucket` with any name we want.
 [source,$lang]
 ----
 {@link examples.Examples#example6}
-
 ----
 Finally, let's get the recent created `Object` and print its content.
 [source,$lang]
 ----
-
 {@link examples.Examples#example7}
+----
 
+Currently, the `S3Client` supports any `ReadStream<Buffer>` for large objects as follows:
+[source,$lang]
+----
+{@link examples.Examples#example8}
 ----
