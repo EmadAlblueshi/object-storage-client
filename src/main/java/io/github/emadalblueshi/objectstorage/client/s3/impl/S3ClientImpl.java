@@ -162,6 +162,7 @@ public class S3ClientImpl implements S3Client {
         List<S3Part> s3Parts = new ArrayList<>();
         AtomicInteger partNumber = new AtomicInteger(0);
         S3BufferQueueReadStream stream = new S3BufferQueueReadStream(readStream);
+        stream.pause();
         stream.handler(buffer -> {
           stream.pause();
           uploadPart(path, buffer, partNumber.incrementAndGet(), uploadId)
@@ -194,6 +195,7 @@ public class S3ClientImpl implements S3Client {
             AtomicInteger partNumber = new AtomicInteger(0);
             AsyncFile asyncFile = f.result();
             S3BufferQueueReadStream stream = new S3BufferQueueReadStream(asyncFile);
+            stream.pause();
             stream.handler(buffer -> {
               stream.pause();
               uploadPart(path, buffer, partNumber.incrementAndGet(), uploadId)
