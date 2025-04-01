@@ -58,7 +58,7 @@ public class S3ClientTest {
     REGION = container.getRegion();
 
     var s3AuthOptions = new S3AuthOptions()
-      .setSignatureVersion(SignatureVersion.V4)
+      .setSignatureVersion(S3SignatureVersion.V4)
       .setAccessKey(ACCESS_KEY)
       .setSecretKey(SECRET_KEY);
 
@@ -82,7 +82,7 @@ public class S3ClientTest {
   void testPutObjectBucket(VertxTestContext testContext) {
     Checkpoint checkpoint = testContext.checkpoint(2);
     String path = "/" + BUCKET_NAME;
-    BucketOptions options = new BucketOptions();
+    S3BucketOptions options = new S3BucketOptions();
     s3Client.putBucket(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -101,7 +101,7 @@ public class S3ClientTest {
   @Test
   void testGetObjectBucketPolicyStatus(Vertx vertx, VertxTestContext testContext) {
     String path = "/" + BUCKET_NAME;
-    BucketOptions options = new BucketOptions();
+    S3BucketOptions options = new S3BucketOptions();
     s3Client.getBucketPolicyStatus(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -117,7 +117,7 @@ public class S3ClientTest {
   @Test
   void testFailedGetObjectBucketPolicyStatus(Vertx vertx, VertxTestContext testContext) {
     String notExistBucket = "/demo-bucket-abc";
-    BucketOptions options = new BucketOptions();
+    S3BucketOptions options = new S3BucketOptions();
     s3Client.getBucketPolicyStatus(options, notExistBucket)
       .onComplete(testContext.failing(exception -> testContext.verify(() -> {
         S3ResponseException s3Exception = (S3ResponseException) exception;
@@ -135,7 +135,7 @@ public class S3ClientTest {
   void testPutObjectBucketPolicy(Vertx vertx, VertxTestContext testContext) {
     var policy = vertx.fileSystem().readFileBlocking("allow-public-get-object-policy.json").toJsonObject();
     String path = "/" + BUCKET_NAME;
-    BucketOptions options = new BucketOptions();
+    S3BucketOptions options = new S3BucketOptions();
     s3Client.putBucketPolicy(options, path, policy)
       .onComplete(testContext.succeeding(res -> testContext.verify(() -> {
         assertNull(res.body());
@@ -151,7 +151,7 @@ public class S3ClientTest {
   @Test
   void testGetObjectBucketPolicy(VertxTestContext testContext) {
     String path = "/" + BUCKET_NAME;
-    BucketOptions options = new BucketOptions();
+    S3BucketOptions options = new S3BucketOptions();
     s3Client.getBucketPolicy(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -172,7 +172,7 @@ public class S3ClientTest {
     Checkpoint checkpoint = testContext.checkpoint(2);
     String path = "/" + BUCKET_NAME + "/cool.txt";
     Buffer buffer = vertx.fileSystem().readFileBlocking("fun.txt");
-    ObjectOptions options = new ObjectOptions()
+    S3ObjectOptions options = new S3ObjectOptions()
       .contentType("text/plain");
     s3Client.putObject(options, path, buffer)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
@@ -200,7 +200,7 @@ public class S3ClientTest {
   void testCopyObjectObjectSucceeded(VertxTestContext testContext) {
     String source = "/" + BUCKET_NAME + "/cool.txt";
     String target = "/" + BUCKET_NAME + "/cool2.txt";
-    ObjectOptions options = new ObjectOptions();
+    S3ObjectOptions options = new S3ObjectOptions();
     s3Client.copyObject(options, source, target)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -219,7 +219,7 @@ public class S3ClientTest {
   @Test
   void testGetObjectObjectSucceeded(VertxTestContext testContext) {
     String path = "/" + BUCKET_NAME + "/cool.txt";
-    ObjectOptions options = new ObjectOptions();
+    S3ObjectOptions options = new S3ObjectOptions();
     s3Client.getObject(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -237,7 +237,7 @@ public class S3ClientTest {
   @Test
   void testGetObjectObjectFailed(VertxTestContext testContext) {
     String notExistKey = "/" + BUCKET_NAME + "/not-exist-object.txt";
-    ObjectOptions options = new ObjectOptions();
+    S3ObjectOptions options = new S3ObjectOptions();
     s3Client.getObject(options, notExistKey)
       .onComplete(testContext.failing(exception -> testContext.verify(() -> {
         S3ResponseException s3Exception = (S3ResponseException) exception;
@@ -254,7 +254,7 @@ public class S3ClientTest {
   @Test
   void testObjectObjectInfoSucceeded(VertxTestContext testContext) {
     String path = "/" + BUCKET_NAME + "/cool.txt";
-    ObjectOptions options = new ObjectOptions();
+    S3ObjectOptions options = new S3ObjectOptions();
     s3Client.ObjectInfo(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -271,7 +271,7 @@ public class S3ClientTest {
   @Test
   void testObjectObjectAclSucceeded(VertxTestContext testContext) {
     String path = "/" + BUCKET_NAME + "/cool.txt";
-    ObjectOptions options = new ObjectOptions();
+    S3ObjectOptions options = new S3ObjectOptions();
     s3Client.ObjectAcl(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -279,16 +279,16 @@ public class S3ClientTest {
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
         assertNotNull(r.body());
-        AccessControlPolicy acp = r.body();
+        S3AccessControlPolicy acp = r.body();
         assertNotNull(acp);
-        AccessControlList acl = acp.getAccessControlList();
+        S3AccessControlList acl = acp.getAccessControlList();
         assertNotNull(acl);
-        List<Grant> grantList = acl.getGrantList();
-        assertNotNull(grantList);
-        assertEquals(1, grantList.size());
-        assertEquals("FULL_CONTROL", grantList.get(0).getPermission());
-        assertEquals("CanonicalUser", grantList.get(0).getGrantee().getType());
-        assertEquals("CanonicalUser", grantList.get(0).getGrantee().getAttributeType());
+        List<S3Grant> s3GrantList = acl.getGrantList();
+        assertNotNull(s3GrantList);
+        assertEquals(1, s3GrantList.size());
+        assertEquals("FULL_CONTROL", s3GrantList.get(0).getPermission());
+        assertEquals("CanonicalUser", s3GrantList.get(0).getGrantee().getType());
+        assertEquals("CanonicalUser", s3GrantList.get(0).getGrantee().getAttributeType());
         testContext.completeNow();
       })));
   }
@@ -297,7 +297,7 @@ public class S3ClientTest {
   @Test
   void testObjectObjectAclFailed(VertxTestContext testContext) {
     String notExistKey = "/" + BUCKET_NAME + "/cool.txtttt";
-    ObjectOptions options = new ObjectOptions();
+    S3ObjectOptions options = new S3ObjectOptions();
     s3Client.ObjectAcl(options, notExistKey)
       .onComplete(testContext.failing(exception -> testContext.verify(() -> {
         S3ResponseException s3Exception = (S3ResponseException) exception;
@@ -314,7 +314,7 @@ public class S3ClientTest {
   @Test
   void testDeleteObjectObjectSucceeded(VertxTestContext testContext) {
     String path = "/" + BUCKET_NAME + "/cool.txt";
-    ObjectOptions options = new ObjectOptions();
+    S3ObjectOptions options = new S3ObjectOptions();
     s3Client.deleteObject(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(204, r.statusCode());
@@ -330,7 +330,7 @@ public class S3ClientTest {
   @Test
   void testDeleteObjectCopiedObject(VertxTestContext testContext) {
     String path = "/" + BUCKET_NAME + "/cool2.txt";
-    ObjectOptions options = new ObjectOptions();
+    S3ObjectOptions options = new S3ObjectOptions();
     s3Client.deleteObject(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(204, r.statusCode());
@@ -346,7 +346,7 @@ public class S3ClientTest {
   @Test
   void testDeleteObjectBucketPolicy(VertxTestContext testContext) {
     String path = "/demo-bucket";
-    BucketOptions options = new BucketOptions();
+    S3BucketOptions options = new S3BucketOptions();
     s3Client.deleteBucketPolicy(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(204, r.statusCode());
@@ -363,7 +363,7 @@ public class S3ClientTest {
   void testPutObjectFileAsStream(VertxTestContext testContext) {
     String path = "/" + BUCKET_NAME + "/large-image.png";
     String filePath = "large-image.png";
-    ObjectOptions options = new ObjectOptions().contentType("image/png");
+    S3ObjectOptions options = new S3ObjectOptions().contentType("image/png");
     s3Client.putObjectFileAsStream(options, path, filePath)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -386,7 +386,7 @@ public class S3ClientTest {
   void testPutObjectAsStream(Vertx vertx, VertxTestContext testContext) {
     String path = "/" + BUCKET_NAME + "/large-stream-image.png";
     AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
-    ObjectOptions options = new ObjectOptions().contentType("image/png");
+    S3ObjectOptions options = new S3ObjectOptions().contentType("image/png");
     s3Client.putObjectAsStream(options, path, asyncFile)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -409,7 +409,7 @@ public class S3ClientTest {
   void testGetObjectUpload(Vertx vertx, VertxTestContext testContext) {
     int size = vertx.fileSystem().readFileBlocking("large-image.png").length();
     String path = "/" + BUCKET_NAME + "/large-image.png";
-    ObjectOptions options = new ObjectOptions();
+    S3ObjectOptions options = new S3ObjectOptions();
     s3Client.getObject(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
@@ -428,7 +428,7 @@ public class S3ClientTest {
   @Test
   void testDeleteObjectBucket(VertxTestContext testContext) {
     String path = "/demo-bucket";
-    BucketOptions options = new BucketOptions();
+    S3BucketOptions options = new S3BucketOptions();
     s3Client.deleteBucket(options, path)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(204, r.statusCode());

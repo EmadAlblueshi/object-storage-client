@@ -11,7 +11,7 @@ public class Examples {
 
   void example1() {
     var authOptions = new S3AuthOptions()
-        .setSignatureVersion(SignatureVersion.V4)
+        .setSignatureVersion(S3SignatureVersion.V4)
         .setAccessKey("access-key")
         .setSecretKey("secret-key");
   }
@@ -29,7 +29,7 @@ public class Examples {
   }
 
   void example3(S3Client client) {
-    client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
+    client.putBucket(new S3BucketOptions(), "/my-bucket").onComplete(r -> {
       if (r.succeeded()) {
         System.out.println("Put bucket succeeded");
       } else {
@@ -40,7 +40,7 @@ public class Examples {
 
   void example4() {
     // Create object request options with content type
-    ObjectOptions objectOptions = new ObjectOptions()
+    S3ObjectOptions s3ObjectOptions = new S3ObjectOptions()
         .contentType("text/plain");
   }
 
@@ -48,8 +48,8 @@ public class Examples {
     Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
   }
 
-  void example6(S3Client client, ObjectOptions objectOptions, Buffer fileBuffer) {
-    client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
+  void example6(S3Client client, S3ObjectOptions s3ObjectOptions, Buffer fileBuffer) {
+    client.putObject(s3ObjectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
       if (r.succeeded()) {
         System.out.println("Put object succeeded");
       } else {
@@ -59,7 +59,7 @@ public class Examples {
   }
 
   void example7(S3Client client) {
-    client.getObject(new ObjectOptions(), "/my-bucket/my-object.txt").onComplete(r -> {
+    client.getObject(new S3ObjectOptions(), "/my-bucket/my-object.txt").onComplete(r -> {
       if (r.succeeded()) {
         System.out.println(r.result().bodyAsString());
       } else {
@@ -71,7 +71,7 @@ public class Examples {
   void example8(Vertx vertx, S3Client client) {
     AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
     // Object content type
-    ObjectOptions options = new ObjectOptions().contentType("image/png");
+    S3ObjectOptions options = new S3ObjectOptions().contentType("image/png");
     // Upload large object as ReadStream<Buffer>
     client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
       if(res.succeeded()) {
@@ -86,7 +86,7 @@ public class Examples {
 
     // Create auth options
     var authOptions = new S3AuthOptions()
-        .setSignatureVersion(SignatureVersion.V4)
+        .setSignatureVersion(S3SignatureVersion.V4)
         .setAccessKey("access-key")
         .setSecretKey("secret-key");
 
@@ -102,7 +102,7 @@ public class Examples {
     var client = S3Client.create(vertx, clientOptions);
 
     // Create new bucket
-    client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
+    client.putBucket(new S3BucketOptions(), "/my-bucket").onComplete(r -> {
       if (r.succeeded()) {
         System.out.println("Put bucket succeeded");
       } else {
@@ -111,7 +111,7 @@ public class Examples {
     });
 
     // Create object request options with content type
-    var objectOptions = new ObjectOptions()
+    var objectOptions = new S3ObjectOptions()
         .contentType("text/plain");
 
     // Read existing text file
@@ -129,7 +129,7 @@ public class Examples {
     // The S3 Client now supports streaming for large objects
     AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
     // Object content type
-    ObjectOptions options = new ObjectOptions().contentType("image/png");
+    S3ObjectOptions options = new S3ObjectOptions().contentType("image/png");
     // Upload large object as ReadStream<Buffer>
     client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
       if(res.succeeded()) {

@@ -21,8 +21,8 @@ public class S3RequestOptions extends ObjectStorageRequestOptions {
     S3RequestOptionsConverter.fromJson(json, this);
   }
 
-  public S3RequestOptions acl(Acl acl) {
-    return (S3RequestOptions) super.putHeader("x-amz-acl", acl.toString());
+  public S3RequestOptions acl(S3Acl s3Acl) {
+    return (S3RequestOptions) super.putHeader("x-amz-acl", s3Acl.toString());
   }
 
   public S3RequestOptions acl() {

@@ -20,37 +20,37 @@ public interface S3Client extends ObjectStorageClient {
     return new S3ClientImpl(vertx, s3ClientOptions);
   }
 
-  Future<S3Response<Void>> putObject(ObjectOptions objectOptions, String path, Buffer object);
+  Future<S3Response<Void>> putObject(S3ObjectOptions s3ObjectOptions, String path, Buffer object);
 
-  Future<S3Response<CopyObjectResult>> copyObject(ObjectOptions objectOptions, String sourcePath, String targetPath);
+  Future<S3Response<S3CopyObjectResult>> copyObject(S3ObjectOptions s3ObjectOptions, String sourcePath, String targetPath);
 
-  Future<S3Response<Buffer>> getObject(ObjectOptions objectOptions, String path);
+  Future<S3Response<Buffer>> getObject(S3ObjectOptions s3ObjectOptions, String path);
 
-  Future<S3Response<Void>> deleteObject(ObjectOptions objectOptions, String path);
+  Future<S3Response<Void>> deleteObject(S3ObjectOptions s3ObjectOptions, String path);
 
-  Future<S3Response<Void>> ObjectInfo(ObjectOptions objectOptions, String path);
+  Future<S3Response<Void>> ObjectInfo(S3ObjectOptions s3ObjectOptions, String path);
 
-  Future<S3Response<AccessControlPolicy>> ObjectAcl(ObjectOptions objectOptions, String path);
+  Future<S3Response<S3AccessControlPolicy>> ObjectAcl(S3ObjectOptions s3ObjectOptions, String path);
 
-  Future<S3Response<Void>> putBucket(BucketOptions bucketOptions, String path);
+  Future<S3Response<Void>> putBucket(S3BucketOptions s3BucketOptions, String path);
 
-  Future<S3Response<Void>> putBucket(BucketOptions bucketOptions, String path,
-      CreateBucketConfiguration createBucketConfiguration);
+  Future<S3Response<Void>> putBucket(S3BucketOptions s3BucketOptions, String path,
+                                     S3CreateBucketConfiguration s3CreateBucketConfiguration);
 
-  Future<S3Response<Void>> deleteBucket(BucketOptions bucketOptions, String path);
+  Future<S3Response<Void>> deleteBucket(S3BucketOptions s3BucketOptions, String path);
 
-  Future<S3Response<PolicyStatus>> getBucketPolicyStatus(BucketOptions bucketOptions, String path);
+  Future<S3Response<S3PolicyStatus>> getBucketPolicyStatus(S3BucketOptions s3BucketOptions, String path);
 
-  Future<S3Response<Void>> putBucketPolicy(BucketOptions bucketOptions, String path,
-      JsonObject policy);
+  Future<S3Response<Void>> putBucketPolicy(S3BucketOptions s3BucketOptions, String path,
+                                           JsonObject policy);
 
-  Future<S3Response<Buffer>> getBucketPolicy(BucketOptions bucketOptions, String path);
+  Future<S3Response<Buffer>> getBucketPolicy(S3BucketOptions s3BucketOptions, String path);
 
-  Future<S3Response<Void>> deleteBucketPolicy(BucketOptions bucketOptions, String path);
+  Future<S3Response<Void>> deleteBucketPolicy(S3BucketOptions s3BucketOptions, String path);
 
-  Future<S3Response<CompleteMultipartUploadResult>> putObjectAsStream(
-    ObjectOptions objectOptions, String path, ReadStream<Buffer> readStream);
+  Future<S3Response<S3CompleteMultipartUploadResult>> putObjectAsStream(
+    S3ObjectOptions s3ObjectOptions, String path, ReadStream<Buffer> readStream);
 
-  Future<S3Response<CompleteMultipartUploadResult>> putObjectFileAsStream(
-    ObjectOptions objectOptions, String path, String filePath);
+  Future<S3Response<S3CompleteMultipartUploadResult>> putObjectFileAsStream(
+    S3ObjectOptions s3ObjectOptions, String path, String filePath);
 }
