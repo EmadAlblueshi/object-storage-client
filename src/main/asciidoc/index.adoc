@@ -32,7 +32,7 @@ NOTE: The client supports S3 request signature version 4 only.
 // Set the client options
 {@link examples.Examples#example2}
 ----
-Now, Let's create a new `bucket`.
+Now, Let's create a new `s3Bucket`.
 [source,$lang]
 ----
 {@link examples.Examples#example3}
@@ -48,7 +48,7 @@ the content type (MIME type) for a text file.
 ----
 {@link examples.Examples#example5}
 ----
-Let's create the `Object` inside the recent created `Bucket` with any name we want.
+Let's create the `Object` inside the recent created `S3Bucket` with any name we want.
 [source,$lang]
 ----
 {@link examples.Examples#example6}

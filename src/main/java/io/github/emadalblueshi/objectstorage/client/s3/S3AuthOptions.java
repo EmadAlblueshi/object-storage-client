@@ -12,11 +12,11 @@ import io.vertx.core.json.JsonObject;
 @JsonGen(publicConverter = false)
 public class S3AuthOptions {
 
-  private static final SignatureVersion DEFAULT_SIGNATURE_VERSION = SignatureVersion.V4;
+  private static final S3SignatureVersion DEFAULT_SIGNATURE_VERSION = S3SignatureVersion.V4;
   private static final String DEFAULT_ACCESS_KEY = "accesskey";
   private static final String DEFAULT_SECRET_KEY = "secretkey";
 
-  private SignatureVersion signatureVersion;
+  private S3SignatureVersion s3SignatureVersion;
   private String accessKey;
   private String secretKey;
 
@@ -54,12 +54,12 @@ public class S3AuthOptions {
     return secretKey;
   }
 
-  public S3AuthOptions setSignatureVersion(SignatureVersion signatureVersion) {
-    this.signatureVersion = signatureVersion;
+  public S3AuthOptions setSignatureVersion(S3SignatureVersion s3SignatureVersion) {
+    this.s3SignatureVersion = s3SignatureVersion;
     return this;
   }
 
-  public SignatureVersion getSignatureVersion() {
-    return signatureVersion;
+  public S3SignatureVersion getSignatureVersion() {
+    return s3SignatureVersion;
   }
 }

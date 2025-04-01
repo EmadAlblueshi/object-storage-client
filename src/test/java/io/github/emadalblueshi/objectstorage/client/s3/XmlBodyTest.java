@@ -40,8 +40,8 @@ public class XmlBodyTest {
         "<PolicyStatus xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" +
         "<IsPublic>TRUE</IsPublic>" +
         "</PolicyStatus>";
-    PolicyStatus policyStatus = xmlToObject(xmlString, PolicyStatus.class);
-    assertTrue(policyStatus.isPublic());
+    S3PolicyStatus s3PolicyStatus = xmlToObject(xmlString, S3PolicyStatus.class);
+    assertTrue(s3PolicyStatus.isPublic());
 
   }
 
@@ -51,8 +51,8 @@ public class XmlBodyTest {
         "<PolicyStatus xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" +
         "<IsPublic>FALSE</IsPublic>" +
         "</PolicyStatus>";
-    PolicyStatus policyStatus = xmlToObject(xmlString, PolicyStatus.class);
-    assertFalse(policyStatus.isPublic());
+    S3PolicyStatus s3PolicyStatus = xmlToObject(xmlString, S3PolicyStatus.class);
+    assertFalse(s3PolicyStatus.isPublic());
 
   }
 
@@ -64,13 +64,13 @@ public class XmlBodyTest {
         "<ETag>&#34;5360706c803a759e3a9f2ca54a651950&#34;</ETag>" +
         "</CopyObjectResult>";
 
-    CopyObjectResult copyObjectResult = xmlToObject(xmlString, CopyObjectResult.class);
+    S3CopyObjectResult s3CopyObjectResult = xmlToObject(xmlString, S3CopyObjectResult.class);
 
-    assertNotNull(copyObjectResult);
-    assertNotNull(copyObjectResult.getLastModified());
-    assertEquals("2024-06-15T16:13:55.719Z", copyObjectResult.getLastModified().toString());
-    assertNotNull(copyObjectResult.getETag());
-    assertEquals("\"5360706c803a759e3a9f2ca54a651950\"", copyObjectResult.getETag());
+    assertNotNull(s3CopyObjectResult);
+    assertNotNull(s3CopyObjectResult.getLastModified());
+    assertEquals("2024-06-15T16:13:55.719Z", s3CopyObjectResult.getLastModified().toString());
+    assertNotNull(s3CopyObjectResult.getETag());
+    assertEquals("\"5360706c803a759e3a9f2ca54a651950\"", s3CopyObjectResult.getETag());
   }
 
   @Test
@@ -97,15 +97,15 @@ public class XmlBodyTest {
         "</Grant>" +
         "</AccessControlList>" +
         "</AccessControlPolicy>";
-    AccessControlPolicy accessControlPolicy = xmlToObject(xmlString, AccessControlPolicy.class);
-    assertEquals("123", accessControlPolicy.getOwner().getId());
-    assertEquals("Emad Alblueshi", accessControlPolicy.getOwner().getDisplayName());
-    List<Grant> grantList = accessControlPolicy.getAccessControlList().getGrantList();
-    assertEquals(2, grantList.size());
-    assertEquals("FULL_CONTROL", grantList.get(0).getPermission());
-    assertEquals("CanonicalUser", grantList.get(0).getGrantee().getAttributeType());
-    assertEquals("FULL_CONTROL", grantList.get(1).getPermission());
-    assertEquals("CanonicalUser", grantList.get(1).getGrantee().getAttributeType());
+    S3AccessControlPolicy s3AccessControlPolicy = xmlToObject(xmlString, S3AccessControlPolicy.class);
+    assertEquals("123", s3AccessControlPolicy.getOwner().getId());
+    assertEquals("Emad Alblueshi", s3AccessControlPolicy.getOwner().getDisplayName());
+    List<S3Grant> s3GrantList = s3AccessControlPolicy.getAccessControlList().getGrantList();
+    assertEquals(2, s3GrantList.size());
+    assertEquals("FULL_CONTROL", s3GrantList.get(0).getPermission());
+    assertEquals("CanonicalUser", s3GrantList.get(0).getGrantee().getAttributeType());
+    assertEquals("FULL_CONTROL", s3GrantList.get(1).getPermission());
+    assertEquals("CanonicalUser", s3GrantList.get(1).getGrantee().getAttributeType());
   }
 
   public <T> T xmlToObject(String xmlString, Class<T> clazz) throws Exception {

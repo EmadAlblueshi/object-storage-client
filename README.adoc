@@ -13,7 +13,7 @@ WARNING: The module in active development, this means the API can change between
 ----
 // Create auth options
 var authOptions = new S3AuthOptions()
-    .setSignatureVersion(SignatureVersion.V4)
+    .setSignatureVersion(S3SignatureVersion.V4)
     .setAccessKey("access-key")
     .setSecretKey("secret-key");
 
@@ -29,7 +29,7 @@ var clientOptions = new S3ClientOptions()
 var client = S3Client.create(vertx, clientOptions);
 
 // Create new bucket
-client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
+client.putBucket(new S3BucketOptions(), "/my-bucket").onComplete(r -> {
   if (r.succeeded()) {
     System.out.println("Put bucket succeeded");
   } else {
@@ -38,11 +38,11 @@ client.putBucket(new BucketOptions(), "/my-bucket").onComplete(r -> {
 });
 
 // Create object request options with content type
-var objectOptions = new ObjectOptions()
+var objectOptions = new S3ObjectOptions()
     .contentType("text/plain");
 
 // Read existing text file
-Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
+var fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
 
 // Create new object
 client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
@@ -54,9 +54,9 @@ client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete
 });
 
 // The S3 Client now supports streaming for large objects
-AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
+var asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
 // Object content type
-ObjectOptions options = new ObjectOptions().contentType("image/png");
+var options = new S3ObjectOptions().contentType("image/png");
 // Upload large object as ReadStream<Buffer>
 client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
   if(res.succeeded()) {

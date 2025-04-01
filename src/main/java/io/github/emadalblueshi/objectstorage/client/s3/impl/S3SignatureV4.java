@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 import io.netty.handler.codec.http.QueryStringEncoder;
 import io.vertx.core.MultiMap;
 
-import static io.github.emadalblueshi.objectstorage.client.s3.impl.Hash.*;
+import static io.github.emadalblueshi.objectstorage.client.s3.impl.HashUtil.*;
 import static io.vertx.core.http.HttpHeaders.*;
 
 public class S3SignatureV4 {

@@ -32,7 +32,7 @@ public class S3AuthOptionsConverter {
           break;
         case "signatureVersion":
           if (member.getValue() instanceof String) {
-            obj.setSignatureVersion(io.github.emadalblueshi.objectstorage.client.s3.SignatureVersion.valueOf((String)member.getValue()));
+            obj.setSignatureVersion(io.github.emadalblueshi.objectstorage.client.s3.S3SignatureVersion.valueOf((String)member.getValue()));
           }
           break;
       }
