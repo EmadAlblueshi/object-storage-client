@@ -23,6 +23,7 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.file.AsyncFile;
 import io.vertx.core.file.OpenOptions;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.Checkpoint;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -63,16 +64,17 @@ public class S3ClientTest {
       .setSecretKey(SECRET_KEY);
 
     var options = new S3ClientOptions()
-      .setLogActivity(true)
       .setAuthOptions(s3AuthOptions)
       .setRegion(REGION)
-      .setHost(HOST)
-      .setPort(PORT_S3_API);
+      .setWebClientOptions(new WebClientOptions()
+        .setDefaultHost(HOST)
+        .setDefaultPort(PORT_S3_API)
+        .setLogActivity(true));
 
     s3Client = S3Client.create(vertx, options);
 
     // Test anonymous get objects policy
-    webClient = WebClient.create(vertx, options);
+    webClient = WebClient.create(vertx, options.getWebClientOptions());
 
     testContext.completeNow();
   }

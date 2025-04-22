@@ -31,7 +31,7 @@
     <junit-jupiter.version>5.10.2</junit-jupiter.version>
     <jackson-dataformat-xml.version>2.16.1</jackson-dataformat-xml.version>
     <testcontainers.version>1.20.6</testcontainers.version>
-    <vertx.version>4.5.13</vertx.version>
+    <vertx.version>5.0.0.CR6</vertx.version>
     <generated.dir>${project.basedir}/src/main/generated</generated.dir>
     <asciidoc.dir>${project.basedir}/src/main/asciidoc</asciidoc.dir>
     <jar.manifest>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</jar.manifest>
@@ -72,6 +72,7 @@
     <dependency>
       <groupId>io.vertx</groupId>
       <artifactId>vertx-docgen</artifactId>
+      <version>0.9.4</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
