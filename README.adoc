@@ -21,9 +21,10 @@ var authOptions = new S3AuthOptions()
 var clientOptions = new S3ClientOptions()
     .setAuthOptions(authOptions)
     .setRegion("region")
-    .setHost("s3.example.com")
-    .setPort(443)
-    .setSsl(true);
+    .setWebClientOptions(new WebClientOptions()
+        .setHost("s3.example.com")
+        .setPort(443)
+        .setSsl(true));
 
 // Create the client
 var client = S3Client.create(vertx, clientOptions);

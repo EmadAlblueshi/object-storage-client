@@ -5,6 +5,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.file.AsyncFile;
 import io.vertx.core.file.OpenOptions;
+import io.vertx.ext.web.client.WebClientOptions;
 
 @SuppressWarnings("unused")
 public class Examples {
@@ -20,9 +21,10 @@ public class Examples {
     var clientOptions = new S3ClientOptions()
         .setAuthOptions(authOptions)
         .setRegion("region")
-        .setHost("s3.example.com")
-        .setPort(443)
-        .setSsl(true);
+        .setWebClientOptions(new WebClientOptions()
+            .setDefaultHost("s3.example.com")
+            .setDefaultPort(443)
+            .setSsl(true));
 
     // Create the client
     var client = S3Client.create(vertx, clientOptions);
@@ -94,9 +96,10 @@ public class Examples {
     var clientOptions = new S3ClientOptions()
         .setAuthOptions(authOptions)
         .setRegion("region")
-        .setHost("s3.example.com")
-        .setPort(443)
-        .setSsl(true);
+        .setWebClientOptions(new WebClientOptions()
+            .setDefaultHost("s3.example.com")
+            .setDefaultPort(443)
+            .setSsl(true));
 
     // Create the client
     var client = S3Client.create(vertx, clientOptions);

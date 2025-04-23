@@ -48,7 +48,7 @@ public class S3ClientImpl implements S3Client {
     this.vertx = Objects.requireNonNull(vertx);
     this.clientOptions = Objects.requireNonNull(s3clientOptions);
     this.authOptions = Objects.requireNonNull(s3clientOptions.getAuthOptions());
-    this.webClient = WebClient.create(vertx, s3clientOptions);
+    this.webClient = WebClient.create(vertx, s3clientOptions.getWebClientOptions());
   }
 
   @Override
@@ -280,7 +280,7 @@ public class S3ClientImpl implements S3Client {
     MultiMap headers = requestOptions.headers();
     MultiMap queryParams = requestOptions.queryParams();
     sign(
-      clientOptions.getDefaultHost(),
+      clientOptions.getWebClientOptions().getDefaultHost(),
       httpMethod.name(),
       headers,
       path,
