@@ -31,7 +31,7 @@
     <junit-jupiter.version>5.10.2</junit-jupiter.version>
     <jackson-dataformat-xml.version>2.16.1</jackson-dataformat-xml.version>
     <testcontainers.version>1.20.6</testcontainers.version>
-    <vertx.version>5.0.0.CR6</vertx.version>
+    <vertx.version>5.0.0.CR7</vertx.version>
     <asciidoc.dir>${project.basedir}/src/main/asciidoc</asciidoc.dir>
     <jar.manifest>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</jar.manifest>
   </properties>
@@ -70,8 +70,8 @@
     </dependency>
     <dependency>
       <groupId>io.vertx</groupId>
-      <artifactId>vertx-docgen</artifactId>
-      <version>0.9.4</version>
+      <artifactId>vertx-docgen-processor</artifactId>
+      <version>0.9.8</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
@@ -140,7 +140,7 @@
               </systemProperties>
               <processors>
                 <processor>io.vertx.codegen.CodeGenProcessor</processor>
-                <processor>io.vertx.docgen.JavaDocGenProcessor</processor>
+                <processor>io.vertx.docgen.processor.JavaDocGenProcessor</processor>
               </processors>
               <optionMap>
                 <codegen.output>${project.basedir}/src/main</codegen.output>
