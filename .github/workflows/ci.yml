@@ -39,7 +39,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '11'
-          server-id: ossrh
+          server-id: central
           server-username: SONATYPE_NEXUS_USERNAME
           server-password: SONATYPE_NEXUS_PASSWORD
       - name: Get project version
@@ -63,7 +63,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '11'
-          server-id: ossrh
+          server-id: central
           server-username: SONATYPE_NEXUS_USERNAME
           server-password: SONATYPE_NEXUS_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
