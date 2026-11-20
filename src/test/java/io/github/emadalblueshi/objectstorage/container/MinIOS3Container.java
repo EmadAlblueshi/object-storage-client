@@ -16,8 +16,8 @@ public class MinIOS3Container extends GenericContainer<MinIOS3Container> {
   private static final int PORT_WEB_UI = 9001;
   private static final String ACCESS_KEY = "minioadmin";
   private static final String SECRET_KEY = "minioadmin";
-  private static final String REGION_NAME = "Kuwait West";
-  private static final String REGION = "kw-west-1";
+  private static final String REGION_NAME = "Test West";
+  private static final String REGION = "test-west-1";
 
   private String accessKey;
   private String secretKey;

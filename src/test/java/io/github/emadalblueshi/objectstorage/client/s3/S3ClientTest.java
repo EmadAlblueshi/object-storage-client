@@ -108,7 +108,7 @@ public class S3ClientTest {
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
         assertEquals("application/xml", r.contentType());
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         assertNotNull(r.requestId());
         assertFalse(r.body().isPublic());
         testContext.completeNow();
@@ -142,7 +142,7 @@ public class S3ClientTest {
       .onComplete(testContext.succeeding(res -> testContext.verify(() -> {
         assertNull(res.body());
         assertEquals(204, res.statusCode());
-        assertEquals("kw-west-1", res.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", res.getHeader("x-amz-bucket-region"));
         assertNotNull(res.getHeader("x-amz-id-2"));
         assertNotNull(res.requestId());
         testContext.completeNow();
@@ -158,7 +158,7 @@ public class S3ClientTest {
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
         assertEquals("application/json", r.contentType());
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.requestId());
         assertNotNull(r.body());
@@ -179,7 +179,7 @@ public class S3ClientTest {
     s3Client.putObject(options, path, buffer)
       .onComplete(testContext.succeeding(r -> testContext.verify(() -> {
         assertEquals(200, r.statusCode());
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.requestId());
         assertNotNull(r.ETag());
@@ -208,7 +208,7 @@ public class S3ClientTest {
         assertEquals(200, r.statusCode());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         assertNotNull(r.requestId());
         assertNotNull(r.body());
         assertNotNull(r.body().getETag());
@@ -227,7 +227,7 @@ public class S3ClientTest {
         assertEquals(200, r.statusCode());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         assertNotNull(r.requestId());
         assertEquals("text/plain", r.contentType());
         assertEquals("Hi!", r.bodyAsString());
@@ -264,7 +264,7 @@ public class S3ClientTest {
         assertNotNull(r.requestId());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         testContext.completeNow();
       })));
   }
@@ -323,7 +323,7 @@ public class S3ClientTest {
         assertNotNull(r.requestId());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         testContext.completeNow();
       })));
   }
@@ -339,7 +339,7 @@ public class S3ClientTest {
         assertNotNull(r.requestId());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         testContext.completeNow();
       })));
   }
@@ -355,7 +355,7 @@ public class S3ClientTest {
         assertNotNull(r.requestId());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         testContext.completeNow();
       })));
   }
@@ -373,7 +373,7 @@ public class S3ClientTest {
         assertNotNull(r.requestId());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         assertNotNull(r.body());
         assertNotNull(r.body().getETag());
         assertEquals(BUCKET_NAME, r.body().getBucket());
@@ -396,7 +396,7 @@ public class S3ClientTest {
         assertNotNull(r.requestId());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         assertNotNull(r.body());
         assertNotNull(r.body().getETag());
         assertEquals(BUCKET_NAME, r.body().getBucket());
@@ -417,7 +417,7 @@ public class S3ClientTest {
         assertEquals(200, r.statusCode());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.bucketRegion());
+        assertEquals("test-west-1", r.bucketRegion());
         assertEquals(String.valueOf(size), r.contentLength());
         assertNotNull(r.requestId());
         assertEquals("image/png", r.contentType());
@@ -437,7 +437,7 @@ public class S3ClientTest {
         assertNotNull(r.requestId());
         assertNotNull(r.getHeader("x-amz-id-2"));
         assertNotNull(r.getHeader("x-amz-request-id"));
-        assertEquals("kw-west-1", r.getHeader("x-amz-bucket-region"));
+        assertEquals("test-west-1", r.getHeader("x-amz-bucket-region"));
         testContext.completeNow();
       })));
   }
