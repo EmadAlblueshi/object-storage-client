@@ -365,6 +365,15 @@ Order rationale: options come before the transport, which consumes them (endpoin
 5. Name clash with AWS SDK v2 (`S3Client`, `S3Presigner`, `S3Exception`): keep our names. The user docs (Phase 6 README and the docgen manual) note that a file importing both libraries uses fully qualified names.
 6. The AWS S3 documentation examples are skipped: the page isn't fetchable by automated clients, and Silo's server-side signature verification is the S3-specific oracle.
 
+### Phase 2 — step 2 decisions and deviations (recorded 2026-11-20)
+- **Composition, not inheritance:** `S3ClientOptions` holds `HttpClientOptions` and `PoolOptions` (transport only); the endpoint URI is the single source of scheme, host and port. Vert.x 5.2.3's newer `HttpClientConfig` was not used: it is `@Unstable` and has no JSON support.
+- **`pathStyleAccess` defaults to `true`.** This differs from the AWS SDK default (virtual-hosted-style) and is documented as such on `S3ClientOptions`.
+- **Deviation from the step 2 plan row: no S3-level timeout options.** Connect and idle timeouts come from the composed `HttpClientOptions`. Per-operation (total) timeouts stay in Phase 5 (Hardening).
+- **Validation moves to step 4.** `S3Client.create()` validates everything and throws `IllegalArgumentException`: endpoint URI (http/https, host, optional port, no path/query/user info), required region, exactly one credential source, no default host/port/`ssl` set in `httpClientOptions`, and `UNSIGNED` payload signing over `http://`. Step 2 has only setter-level checks.
+- **AGENTS.md change scheduled for step 4:** the payload-signing policy line becomes "`UNSIGNED-PAYLOAD` over plain HTTP is rejected by `create()`" (it currently says "failed Future").
+- **Secrets:** `toJson()` omits and `toString()` masks the secret key and session token. `S3ClientOptions.toJson()` also strips the `password`/`aliasPassword` entries that Vert.x writes in clear in `HttpClientOptions` JSON (key and trust stores, proxy auth).
+- **Generated converters:** codegen emits `public class XConverter` with package-private methods even with `publicConverter = false`, as in Vert.x core. `PackagePolicyTest` allows exactly that shape. The javadoc config stays unchanged, so the javadoc jar includes their (empty) pages.
+
 ### Phase 2 — findings
 - **Backend difference: key segments.** Silo (like MinIO) rejects keys with empty, `.` or `..` segments (`a//b`, `a/./b`, `a/../b`) with `XMinioInvalidObjectName` / `XMinioInvalidResourceName`. They are valid on AWS. That the signer doesn't normalise paths is therefore unit-tested only (`S3SignatureV4Test`), not checked against Silo. Re-check with SeaweedFS in step 7.
 - **`encoding-type=url` encodes keys form-style.** A space comes back as `+` (verified against Silo). In step 8, ListObjectsV2 key decoding must treat `+` as a space.
