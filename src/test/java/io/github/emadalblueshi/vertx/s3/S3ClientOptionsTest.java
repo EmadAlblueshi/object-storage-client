@@ -32,6 +32,7 @@ class S3ClientOptionsTest {
     assertTrue(options.isPathStyleAccess());
     assertNull(options.getCredentials());
     assertNull(options.getCredentialsProvider());
+    assertEquals(4 * 1024 * 1024, options.getMaxBufferedObjectSize());
     assertEquals(new HttpClientOptions().toJson(), options.getHttpClientOptions().toJson());
     assertEquals(new PoolOptions().toJson(), options.getPoolOptions().toJson());
   }
@@ -67,6 +68,7 @@ class S3ClientOptionsTest {
     assertEquals("https://nyc3.digitaloceanspaces.com", parsed.getEndpoint());
     assertEquals("nyc3", parsed.getRegion());
     assertFalse(parsed.isPathStyleAccess());
+    assertEquals(1024, parsed.getMaxBufferedObjectSize());
     assertEquals(4321, parsed.getHttpClientOptions().getConnectTimeout());
     assertEquals(42, parsed.getPoolOptions().getHttp1MaxSize());
   }
@@ -145,6 +147,7 @@ class S3ClientOptionsTest {
   @Test
   void invalidValuesAreRejectedBySetters() {
     S3ClientOptions options = new S3ClientOptions();
+    assertThrows(IllegalArgumentException.class, () -> options.setMaxBufferedObjectSize(0));
     assertThrows(NullPointerException.class, () -> options.setHttpClientOptions(null));
     assertThrows(NullPointerException.class, () -> options.setPoolOptions(null));
   }
@@ -154,7 +157,8 @@ class S3ClientOptionsTest {
       .setEndpoint("https://nyc3.digitaloceanspaces.com")
       .setRegion("nyc3")
       .setPathStyleAccess(false)
-      .setCredentials(new S3Credentials("AKIAEXAMPLE", SECRET).setSessionToken(TOKEN));
+      .setCredentials(new S3Credentials("AKIAEXAMPLE", SECRET).setSessionToken(TOKEN))
+      .setMaxBufferedObjectSize(1024);
     options.getHttpClientOptions().setConnectTimeout(4321);
     options.getPoolOptions().setHttp1MaxSize(42);
     return options;

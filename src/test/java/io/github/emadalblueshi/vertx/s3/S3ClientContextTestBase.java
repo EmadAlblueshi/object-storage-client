@@ -1,5 +1,6 @@
 package io.github.emadalblueshi.vertx.s3;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -17,6 +18,7 @@ import io.github.emadalblueshi.vertx.s3.backend.S3TestBackend;
 import io.github.emadalblueshi.vertx.s3.context.CallerContext;
 import io.github.emadalblueshi.vertx.s3.context.CallerKind;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 
@@ -33,6 +35,8 @@ abstract class S3ClientContextTestBase {
   protected CallerContext caller;
   protected S3TestBackend backend;
   protected S3Client client;
+  private final String objectBucket = "ctx-objects-" + UUID.randomUUID().toString().substring(0, 8);
+  private final byte[] streamContent = new byte[256 * 1024];
 
   protected abstract CallerKind kind();
 
@@ -41,10 +45,16 @@ abstract class S3ClientContextTestBase {
     this.vertx = vertx;
     this.backend = S3TestBackend.sharedSilo();
     this.client = S3Client.create(vertx, options(backend));
-    CallerContext.deploy(vertx, kind()).onComplete(testContext.succeeding(c -> {
-      caller = c;
-      testContext.completeNow();
-    }));
+    new java.util.Random(1).nextBytes(streamContent);
+    // Fixtures are created outside the caller; only the operations under test run as the caller
+    client.createBucket(objectBucket)
+      .compose(v -> client.putObject(objectBucket, "stream-object", Buffer.buffer(streamContent)))
+      .compose(etag -> client.putObject(objectBucket, "empty-object", Buffer.buffer()))
+      .compose(etag -> CallerContext.deploy(vertx, kind()))
+      .onComplete(testContext.succeeding(c -> {
+        caller = c;
+        testContext.completeNow();
+      }));
   }
 
   @AfterAll
@@ -99,6 +109,86 @@ abstract class S3ClientContextTestBase {
       .onComplete(testContext.failing(e -> testContext.verify(() -> {
         assertInstanceOf(S3ClientException.class, e);
         assertTrue(e.getMessage().startsWith("Invalid bucket name"), e.getMessage());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void objectOperationsCompleteOnCallerContext(VertxTestContext testContext) {
+    String key = "ops-" + kind();
+    caller.assertCompletesOnCallerContext(ctx -> client.putObject(objectBucket, key, Buffer.buffer("data"),
+        new S3PutObjectOptions().setContentType("text/plain")))
+      .compose(etag -> caller.assertCompletesOnCallerContext(ctx -> client.headObject(objectBucket, key)))
+      .compose(head -> caller.assertCompletesOnCallerContext(ctx -> client.getObject(objectBucket, key)))
+      .compose(body -> {
+        testContext.verify(() -> assertEquals("data", body.toString()));
+        return caller.assertCompletesOnCallerContext(ctx -> client.deleteObject(objectBucket, key));
+      })
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  @Test
+  void getObjectFailureCompletesOnCallerContext(VertxTestContext testContext) {
+    caller.assertCompletesOnCallerContext(ctx -> client.getObject(objectBucket, "no-such-key"))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals("NoSuchKey", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void getObjectStreamDeliversOnCallerContextWithBackpressure(VertxTestContext testContext) {
+    caller.assertReadStreamOnCallerContext(ctx -> client.getObjectStream(objectBucket, "stream-object"))
+      .onComplete(testContext.succeeding(chunks -> testContext.verify(() -> {
+        Buffer all = Buffer.buffer();
+        chunks.forEach(all::appendBuffer);
+        assertArrayEquals(streamContent, all.getBytes());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void rangedObjectStreamDeliversOnCallerContext(VertxTestContext testContext) {
+    caller.assertReadStreamOnCallerContext(ctx -> client.getObjectStream(objectBucket, "stream-object", "bytes=1000-1999"))
+      .onComplete(testContext.succeeding(chunks -> testContext.verify(() -> {
+        Buffer all = Buffer.buffer();
+        chunks.forEach(all::appendBuffer);
+        assertArrayEquals(java.util.Arrays.copyOfRange(streamContent, 1000, 2000), all.getBytes());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void emptyObjectStreamEndsOnCallerContext(VertxTestContext testContext) {
+    caller.assertReadStreamOnCallerContext(ctx -> client.getObjectStream(objectBucket, "empty-object"))
+      .onComplete(testContext.succeeding(chunks -> testContext.verify(() -> {
+        assertEquals(0, chunks.stream().mapToInt(Buffer::length).sum());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void getObjectStreamFailureCompletesOnCallerContext(VertxTestContext testContext) {
+    caller.assertCompletesOnCallerContext(ctx -> client.getObjectStream(objectBucket, "no-such-key"))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals("NoSuchKey", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void cancelCompletesOnCallerContext(VertxTestContext testContext) {
+    caller.assertCompletesOnCallerContext(ctx -> client.getObjectStream(objectBucket, "stream-object"))
+      .compose(stream -> caller.assertCompletesOnCallerContext(ctx -> stream.cancel()))
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  @Test
+  void invalidKeyFailsOnCallerContext(VertxTestContext testContext) {
+    caller.assertCompletesOnCallerContext(ctx -> client.getObjectStream(objectBucket, ""))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        assertEquals("The object key must not be empty", e.getMessage());
         testContext.completeNow();
       })));
   }

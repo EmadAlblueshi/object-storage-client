@@ -181,6 +181,20 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - Large objects are never buffered in memory. `getObject` (Buffer) is for small objects only and
   is size-capped: it fails with an `S3ClientException` pointing to `getObjectStream` instead of
   buffering a body over the cap. `getObjectStream` streams the body with backpressure.
+- Every buffered response body is size-limited (`impl.Transport`): `maxBufferedObjectSize` for
+  `getObject`, a fixed internal 4 MiB for XML results, and error bodies truncated at 4 MiB. A body
+  over its limit is never read further: the request is cancelled, which closes the connection.
+  A HEAD response's `Content-Length` describes the object and never counts as a body.
+- The transport issues every HTTP request on the caller's context (`Caller.onContext`), so
+  response events and object-stream handlers run there (rule 4).
+- `S3ObjectStream` is handed out paused, with its own handlers attached to the response at once
+  (Vert.x drops chunks that arrive with no handler set). It delivers at most one terminal event
+  (end, failure or cancellation). `cancel()` closes the connection and fails the stream with an
+  `S3ClientException`, so pipes don't hang. Object streams must be consumed or cancelled; docs
+  and examples always show the cancel on paths that don't consume.
+- Object keys are validated before any I/O (`impl.ObjectRequests`): 1 to 1024 bytes of valid
+  UTF-8. So are ranges (a single `bytes=` range), content types and user metadata (token names,
+  case-insensitive; printable US-ASCII values).
 - Bucket names are validated before any I/O (`impl.BucketNames`): the general S3 rules, plus no
   dotted names with virtual-hosted-style access over HTTPS. An invalid name is a failed Future
   with an `S3ClientException`.

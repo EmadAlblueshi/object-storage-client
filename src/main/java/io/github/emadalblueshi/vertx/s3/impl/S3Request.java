@@ -41,6 +41,13 @@ final class S3Request {
     return new S3Request(method, null, null, List.of(), List.of(), null);
   }
 
+  /** An object request without query; {@code body} may be {@code null}. */
+  static S3Request object(HttpMethod method, String bucket, String key, List<Map.Entry<String, String>> headers,
+                          Buffer body) {
+    return new S3Request(method, Objects.requireNonNull(bucket, "bucket"), Objects.requireNonNull(key, "key"),
+      List.of(), headers, body);
+  }
+
   /** A bucket-level request without query or headers; {@code body} may be {@code null}. */
   static S3Request bucket(HttpMethod method, String bucket, Buffer body) {
     return new S3Request(method, Objects.requireNonNull(bucket, "bucket"), null, List.of(), List.of(), body);
