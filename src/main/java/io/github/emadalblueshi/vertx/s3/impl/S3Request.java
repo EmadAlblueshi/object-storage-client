@@ -40,4 +40,9 @@ final class S3Request {
   static S3Request service(HttpMethod method) {
     return new S3Request(method, null, null, List.of(), List.of(), null);
   }
+
+  /** A bucket-level request without query or headers; {@code body} may be {@code null}. */
+  static S3Request bucket(HttpMethod method, String bucket, Buffer body) {
+    return new S3Request(method, Objects.requireNonNull(bucket, "bucket"), null, List.of(), List.of(), body);
+  }
 }
