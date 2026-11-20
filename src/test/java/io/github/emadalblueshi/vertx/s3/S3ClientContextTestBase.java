@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.UUID;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -67,6 +69,36 @@ abstract class S3ClientContextTestBase {
       .eventually(wrongSecret::close)
       .onComplete(testContext.failing(e -> testContext.verify(() -> {
         assertEquals("SignatureDoesNotMatch", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void bucketOperationsCompleteOnCallerContext(VertxTestContext testContext) {
+    String bucket = "ctx-" + UUID.randomUUID().toString().substring(0, 8);
+    caller.assertCompletesOnCallerContext(ctx -> client.createBucket(bucket))
+      .compose(v -> caller.assertCompletesOnCallerContext(ctx -> client.headBucket(bucket)))
+      .compose(v -> caller.assertCompletesOnCallerContext(ctx -> client.deleteBucket(bucket)))
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  @Test
+  void bucketServerFailureCompletesOnCallerContext(VertxTestContext testContext) {
+    String missing = "ctx-missing-" + UUID.randomUUID().toString().substring(0, 8);
+    caller.assertCompletesOnCallerContext(ctx -> client.deleteBucket(missing))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals("NoSuchBucket", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void invalidBucketNameFailsOnCallerContext(VertxTestContext testContext) {
+    // Fails before any I/O: the immediate-failure path must still complete on the caller's context
+    caller.assertCompletesOnCallerContext(ctx -> client.headBucket("Not_Valid"))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        assertTrue(e.getMessage().startsWith("Invalid bucket name"), e.getMessage());
         testContext.completeNow();
       })));
   }

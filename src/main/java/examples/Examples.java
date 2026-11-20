@@ -5,6 +5,7 @@ import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.github.emadalblueshi.vertx.s3.S3CredentialsProvider;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.net.PemTrustOptions;
 
@@ -63,6 +64,26 @@ public class Examples {
       .setEndpoint("https://nyc3.digitaloceanspaces.com")
       .setRegion("nyc3")
       .setCredentialsProvider(provider);
+  }
+
+  public void createBucket(S3Client client) {
+    client.createBucket("my-bucket")
+      .onSuccess(v -> System.out.println("created"));
+  }
+
+  public void bucketExists(S3Client client) {
+    // headBucket fails with HTTP 404 if the bucket doesn't exist (HEAD responses have no error code)
+    Future<Boolean> exists = client.headBucket("my-bucket")
+      .map(true)
+      .recover(err -> err instanceof S3ServiceException && ((S3ServiceException) err).getStatusCode() == 404
+        ? Future.succeededFuture(false)
+        : Future.failedFuture(err));
+  }
+
+  public void deleteBucket(S3Client client) {
+    // The bucket must be empty
+    client.deleteBucket("my-bucket")
+      .onSuccess(v -> System.out.println("deleted"));
   }
 
   public void listBuckets(S3Client client) {

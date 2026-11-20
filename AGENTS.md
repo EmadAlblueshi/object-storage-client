@@ -87,8 +87,9 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 
 ## Build tooling policy
 - The revamp is about the API. Change build tooling **only where a recorded decision requires
-  it**: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the
-  processor wiring for codegen and docgen.
+  it**: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, the
+  processor wiring for codegen and docgen, and the filtered `src/main/resources-filtered`
+  directory that supplies the `User-Agent` version.
 - Leave the rest of the existing build, site and doc setup as it is: docgen, the asciidoctor
   site, javadoc, the source and test jars, Central publishing and the gpg profile.
 
@@ -178,6 +179,11 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - Large objects are never buffered in memory. `getObject` (Buffer) is for small objects only and
   is size-capped: it fails with an `S3ClientException` pointing to `getObjectStream` instead of
   buffering a body over the cap. `getObjectStream` streams the body with backpressure.
+- Bucket names are validated before any I/O (`impl.BucketNames`): the general S3 rules, plus no
+  dotted names with virtual-hosted-style access over HTTPS. An invalid name is a failed Future
+  with an `S3ClientException`.
+- Every request carries `User-Agent: vertx-s3-client/<version>` (unsigned). The version is
+  filtered into `impl/version.properties` at build time and never hard-coded.
 - Errors map to the library's `S3Exception` hierarchy: `S3ServiceException` for error responses
   (HTTP status, S3 code, request ids, details; bodiless and non-XML responses included) and
   `S3ClientException` for everything else (connection, TLS, unreadable response, credentials,

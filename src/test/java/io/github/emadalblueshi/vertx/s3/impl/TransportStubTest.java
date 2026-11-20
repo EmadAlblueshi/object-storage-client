@@ -201,7 +201,95 @@ class TransportStubTest {
     assertEquals(S3SignatureV4.hostHeader("s3.example.com", -1, true), HostAndPort.authority("s3.example.com", -1).toString());
   }
 
+  @Test
+  void userAgentIsSentButNotSigned(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.listBuckets().eventually(client::close).onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+      Captured c = last.get();
+      assertEquals(UserAgent.VALUE, c.headers.get("User-Agent"));
+      assertTrue(c.headers.get("User-Agent").matches("vertx-s3-client/\\d+\\.\\d+\\.\\d+.*"), c.headers.get("User-Agent"));
+      assertFalse(c.headers.get("Authorization").contains("user-agent"), c.headers.get("Authorization"));
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void createBucketSendsTheLocationConstraint(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, ""));
+    client.createBucket("my-bucket").eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      Captured c = last.get();
+      assertEquals(HttpMethod.PUT, c.method);
+      assertEquals("/my-bucket", c.uri);
+      String body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CreateBucketConfiguration "
+        + "xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LocationConstraint>kw-west-1</LocationConstraint>"
+        + "</CreateBucketConfiguration>";
+      assertEquals(body, c.body.toString());
+      assertEquals(Integer.toString(body.length()), c.headers.get("Content-Length"));
+      assertEquals(HashUtil.sha256Hex(body), c.headers.get("x-amz-content-sha256"));
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void createBucketInUsEast1SendsNoBody(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false).setRegion("us-east-1"));
+    responder.set(c -> new Stub(200, ""));
+    client.createBucket("my-bucket").eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      Captured c = last.get();
+      assertEquals(0, c.body.length());
+      assertEquals("0", c.headers.get("Content-Length"));
+      assertEquals(S3SignatureV4.EMPTY_PAYLOAD_SHA256, c.headers.get("x-amz-content-sha256"));
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void headAndDeleteBucketUseTheirMethods(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(c.method == HttpMethod.HEAD ? 200 : 204, ""));
+    client.headBucket("my-bucket")
+      .compose(v -> {
+        testContext.verify(() -> {
+          assertEquals(HttpMethod.HEAD, last.get().method);
+          assertEquals("/my-bucket", last.get().uri);
+        });
+        return client.deleteBucket("my-bucket");
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+        assertEquals(HttpMethod.DELETE, last.get().method);
+        assertEquals("/my-bucket", last.get().uri);
+        assertEquals(2, requests.get());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void invalidBucketNameFailsWithoutAnyRequest(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.createBucket("Invalid_Name").eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertTrue(e.getMessage().startsWith("Invalid bucket name \"Invalid_Name\""), e.getMessage());
+      assertEquals(0, requests.get());
+      testContext.completeNow();
+    })));
+  }
+
   // --- responses and failures -------------------------------------------------------------------------
+
+  @Test
+  void headBucket404HasStatusButNoErrorCode(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(404, "").header("x-amz-request-id", "req-404"));
+    client.headBucket("missing").eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      S3ServiceException service = assertInstanceOf(S3ServiceException.class, e);
+      assertEquals(404, service.getStatusCode());
+      assertNull(service.getErrorCode());
+      assertEquals("req-404", service.getRequestId());
+      testContext.completeNow();
+    })));
+  }
 
   @Test
   void errorDocumentBecomesServiceException(VertxTestContext testContext) {

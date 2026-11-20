@@ -25,6 +25,7 @@ import io.vertx.core.net.HostAndPort;
  *   {@code executeBlocking}.</li>
  *   <li>{@code Content-Length} is always set when a body is sent (and as {@code 0} for PUT/POST
  *   without a body). Redirects are never followed.</li>
+ *   <li>Every request carries {@code User-Agent: vertx-s3-client/<version>}, unsigned.</li>
  *   <li>Non-2xx responses fail with {@code S3ServiceException} ({@link ErrorMapper}); everything
  *   else fails with {@link S3ClientException}.</li>
  * </ul>
@@ -106,6 +107,8 @@ final class Transport {
     for (Map.Entry<String, String> header : signed.headers) {
       options.putHeader(header.getKey(), header.getValue());
     }
+    // Not signed: proxies may rewrite it, and the AWS SDKs don't sign it either
+    options.putHeader(HttpHeaders.USER_AGENT, UserAgent.VALUE);
     Buffer body = request.body;
     if (body != null) {
       options.putHeader(HttpHeaders.CONTENT_LENGTH, Integer.toString(body.length()));

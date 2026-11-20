@@ -67,7 +67,36 @@ thread-safe and can be shared between verticles.
 A client created inside a verticle is closed automatically when that verticle is undeployed,
 like a Vert.x `HttpClient`. Otherwise it is closed together with its `Vertx` instance.
 
-== Listing buckets
+== Buckets
+
+Create a bucket in the client's region:
+
+[source,$lang]
+----
+{@link examples.Examples#createBucket}
+----
+
+Bucket names are checked before any request is sent: 3 to 63 lowercase letters, digits, dots and
+hyphens, starting and ending with a letter or digit, no two adjacent dots, and not an IP address.
+With virtual-hosted-style access over HTTPS, names containing dots are rejected, because
+`bucket.with.dots.host` doesn't match the server's wildcard certificate. An invalid name fails with
+an `S3ClientException`.
+
+Check whether a bucket exists:
+
+[source,$lang]
+----
+{@link examples.Examples#bucketExists}
+----
+
+Delete an empty bucket:
+
+[source,$lang]
+----
+{@link examples.Examples#deleteBucket}
+----
+
+List your buckets:
 
 [source,$lang]
 ----

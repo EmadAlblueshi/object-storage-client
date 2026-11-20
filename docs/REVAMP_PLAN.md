@@ -413,6 +413,12 @@ Order rationale: options come before the transport, which consumes them (endpoin
 3. **Bucket-name validation in step 5**, including dotted names with virtual-hosted style over TLS: `a.b.host` doesn't match a `*.host` wildcard certificate.
 4. **`User-Agent: vertx-s3-client/<version>` in step 5**, with the version read from build metadata, not hard-coded.
 
+### Phase 2 — step 5 findings and decisions (2026-11-20)
+- **CreateBucket location constraint:** the client's region is sent as `LocationConstraint`, except for `us-east-1`, where AWS rejects it. No public option. Silo, which enforces `kw-west-1`, accepts it. **Verify against Spaces in step 7.**
+- **HeadBucket failures have no S3 error code:** HEAD responses have no body. A missing bucket is an `S3ServiceException` with status 404 and a `null` error code; no code is synthesized. Documented, with an "exists" example in the manual.
+- **Bucket-name validation** follows the general S3 rules. AWS-only reserved prefixes and suffixes are left to the server. Legacy names with uppercase letters or underscores (pre-2018 us-east-1 buckets) are rejected. Dotted names are rejected only with virtual-hosted-style access over HTTPS, with a message pointing to `pathStyleAccess = true`; there is no silent fallback to path-style.
+- **User-Agent version source:** a Maven-filtered `impl/version.properties` (one filtered resource directory in the pom). The jar manifest was rejected because fat-jar shading replaces or merges it, which would report the application's version. The module descriptor was rejected because it's absent on the class path. The header isn't signed, as in the AWS SDKs, because proxies may rewrite it.
+
 ### Phase 2 — step 6 requirements (recorded 2026-11-20)
 - **`getObjectStream` (issue #36).** Large objects (e.g. 1 GB) are never buffered in memory.
   - The Future completes when the response headers arrive. An error response fails it with an `S3ServiceException` before any body is streamed.

@@ -97,6 +97,11 @@
           <include>**/*</include>
         </includes>
       </resource>
+      <!-- Filtered: version.properties for the User-Agent header (see impl.UserAgent) -->
+      <resource>
+        <directory>${project.basedir}/src/main/resources-filtered</directory>
+        <filtering>true</filtering>
+      </resource>
     </resources>
     <plugins>
       <plugin>
