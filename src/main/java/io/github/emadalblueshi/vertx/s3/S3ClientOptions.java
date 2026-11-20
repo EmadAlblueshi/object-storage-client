@@ -41,6 +41,12 @@ public class S3ClientOptions {
    */
   public static final boolean DEFAULT_PATH_STYLE_ACCESS = true;
 
+  /**
+   * Default: {@code getObject} buffers objects of up to 4 MiB. It is for small objects only; use
+   * {@code getObjectStream} for anything larger.
+   */
+  public static final int DEFAULT_MAX_BUFFERED_OBJECT_SIZE = 4 * 1024 * 1024;
+
   // Keys Vert.x writes in clear inside HttpClientOptions JSON (key/trust store passwords, proxy auth).
   private static final Set<String> SECRET_JSON_KEYS = Set.of("password", "aliasPassword");
 
@@ -49,11 +55,13 @@ public class S3ClientOptions {
   private boolean pathStyleAccess;
   private S3Credentials credentials;
   private S3CredentialsProvider credentialsProvider;
+  private int maxBufferedObjectSize;
   private HttpClientOptions httpClientOptions;
   private PoolOptions poolOptions;
 
   public S3ClientOptions() {
     pathStyleAccess = DEFAULT_PATH_STYLE_ACCESS;
+    maxBufferedObjectSize = DEFAULT_MAX_BUFFERED_OBJECT_SIZE;
     httpClientOptions = new HttpClientOptions();
     poolOptions = new PoolOptions();
   }
@@ -65,6 +73,7 @@ public class S3ClientOptions {
     pathStyleAccess = other.pathStyleAccess;
     credentials = other.credentials == null ? null : new S3Credentials(other.credentials);
     credentialsProvider = other.credentialsProvider;
+    maxBufferedObjectSize = other.maxBufferedObjectSize;
     httpClientOptions = new HttpClientOptions(other.httpClientOptions);
     poolOptions = new PoolOptions(other.poolOptions);
   }
@@ -136,6 +145,23 @@ public class S3ClientOptions {
   }
 
   /**
+   * The largest object {@code getObject} buffers in memory, in bytes. A larger object fails
+   * with an {@link S3ClientException} pointing to {@code getObjectStream}, without its body being
+   * read.
+   */
+  public int getMaxBufferedObjectSize() {
+    return maxBufferedObjectSize;
+  }
+
+  public S3ClientOptions setMaxBufferedObjectSize(int maxBufferedObjectSize) {
+    if (maxBufferedObjectSize <= 0) {
+      throw new IllegalArgumentException("maxBufferedObjectSize must be > 0");
+    }
+    this.maxBufferedObjectSize = maxBufferedObjectSize;
+    return this;
+  }
+
+  /**
    * Transport settings for the underlying HTTP client (TLS trust, timeouts, keep-alive, ...).
    * Default host, default port and {@code ssl} must be left at their defaults: they are
    * derived from the endpoint.
@@ -192,6 +218,7 @@ public class S3ClientOptions {
       + ", region=" + region
       + ", pathStyleAccess=" + pathStyleAccess
       + ", credentials=" + credentials
-      + ", credentialsProvider=" + (credentialsProvider == null ? null : credentialsProvider.getClass().getName()) + '}';
+      + ", credentialsProvider=" + (credentialsProvider == null ? null : credentialsProvider.getClass().getName())
+      + ", maxBufferedObjectSize=" + maxBufferedObjectSize + '}';
   }
 }

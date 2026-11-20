@@ -107,6 +107,96 @@ List your buckets:
 {@link examples.Examples#listBuckets}
 ----
 
+== Objects
+
+Object keys are 1 to 1024 bytes of UTF-8 and may contain any character: the client encodes them on
+the wire. An invalid key fails with an `S3ClientException` before any request is sent.
+
+=== Uploading
+
+Upload an object from a `Buffer`:
+
+[source,$lang]
+----
+{@link examples.Examples#putObject}
+----
+
+with a content type and user metadata (sent as `x-amz-meta-*` headers; names are case-insensitive,
+values are printable US-ASCII):
+
+[source,$lang]
+----
+{@link examples.Examples#putObjectWithOptions}
+----
+
+Metadata values that aren't US-ASCII are rejected, not encoded. If you need them (e.g. Arabic file
+names), URL-encode them yourself, or keep such data in the object key (keys accept any Unicode
+character) or in your own database.
+
+=== Downloading small objects
+
+`getObject` buffers the whole object in memory, so it is for *small objects only*. An object larger
+than `S3ClientOptions.maxBufferedObjectSize` (default 4 MiB) fails with an `S3ClientException`
+pointing to `getObjectStream`, without its body being read.
+
+[source,$lang]
+----
+{@link examples.Examples#getObject}
+----
+
+=== Streaming objects of any size
+
+`getObjectStream` never buffers the object. Its future completes when the response headers arrive:
+an error such as `NoSuchKey` fails it before any data is streamed. On success you get an
+`S3ObjectStream`, a `ReadStream<Buffer>` with real backpressure that also carries the object's
+metadata. It is handed out *paused*, and its handlers run on the context that called
+`getObjectStream`. Pipe it to a file:
+
+[source,$lang]
+----
+{@link examples.Examples#getObjectStreamToFile}
+----
+
+or to an HTTP response:
+
+[source,$lang]
+----
+{@link examples.Examples#getObjectStreamToHttpResponse}
+----
+
+A single byte range can be requested with an HTTP `Range` value (`bytes=0-99`, `bytes=100-` or
+`bytes=-100`):
+
+[source,$lang]
+----
+{@link examples.Examples#getObjectRange}
+----
+
+IMPORTANT: Until it ends, an object stream holds a pooled HTTP connection. Read it to the end or
+cancel it. A stream that is neither consumed nor cancelled never releases its connection.
+
+[source,$lang]
+----
+{@link examples.Examples#cancelObjectStream}
+----
+
+=== Metadata and deletion
+
+[source,$lang]
+----
+{@link examples.Examples#headObject}
+----
+
+`headObject` and `headBucket` failures carry no S3 error code, because HEAD responses have no body: a
+missing object fails with an `S3ServiceException` with status code 404.
+
+[source,$lang]
+----
+{@link examples.Examples#deleteObject}
+----
+
+Deleting a key that doesn't exist succeeds.
+
 == Errors
 
 Failures are `S3Exception` instances. An `S3ServiceException` means the server answered with an

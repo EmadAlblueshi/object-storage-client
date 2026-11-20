@@ -27,9 +27,11 @@ import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
+import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
@@ -60,6 +62,7 @@ class TransportStubTest {
   private final AtomicReference<Function<Captured, Stub>> responder = new AtomicReference<>();
   private final AtomicReference<Captured> last = new AtomicReference<>();
   private final AtomicInteger requests = new AtomicInteger();
+  private final AtomicInteger connectionCloses = new AtomicInteger();
 
   @BeforeAll
   void startStubs(Vertx vertx, VertxTestContext testContext) {
@@ -82,9 +85,11 @@ class TransportStubTest {
     responder.set(c -> new Stub(200, LIST_BUCKETS));
     last.set(null);
     requests.set(0);
+    connectionCloses.set(0);
   }
 
   private void handle(io.vertx.core.http.HttpServerRequest request) {
+    request.connection().closeHandler(v -> connectionCloses.incrementAndGet());
     request.body().onSuccess(body -> {
       Captured captured = new Captured(request.method(), request.uri(),
         MultiMap.caseInsensitiveMultiMap().addAll(request.headers()), body);
@@ -93,7 +98,18 @@ class TransportStubTest {
       Stub stub = responder.get().apply(captured);
       io.vertx.core.http.HttpServerResponse response = request.response().setStatusCode(stub.status);
       stub.headers.forEach(response::putHeader);
-      response.end(stub.body);
+      Buffer out = stub.raw != null ? stub.raw : Buffer.buffer(stub.body);
+      if (stub.headersOnly) {
+        response.writeHead(); // the announced body never comes
+      } else if (stub.chunked) {
+        response.setChunked(true);
+        for (int i = 0; i < out.length(); i += 8192) {
+          response.write(out.slice(i, Math.min(out.length(), i + 8192)));
+        }
+        response.end();
+      } else {
+        response.end(out);
+      }
     });
   }
 
@@ -394,6 +410,253 @@ class TransportStubTest {
       })));
   }
 
+  // --- objects: wire format, size limits, streams ---------------------------------------------------
+
+  @Test
+  void putObjectSendsContentTypeAndMetadataAndReturnsTheEtag(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "").header("ETag", "\"abc123\""));
+    S3PutObjectOptions put = new S3PutObjectOptions().setContentType("text/plain; charset=utf-8")
+      .setMetadata(Map.of("Owner-Id", "42"));
+    client.putObject("bucket", "dir/a b.txt", Buffer.buffer("hello"), put).eventually(client::close)
+      .onComplete(testContext.succeeding(etag -> testContext.verify(() -> {
+        assertEquals("\"abc123\"", etag);
+        Captured c = last.get();
+        assertEquals(HttpMethod.PUT, c.method);
+        assertEquals("/bucket/dir/a%20b.txt", c.uri);
+        assertEquals("hello", c.body.toString());
+        assertEquals("5", c.headers.get("Content-Length"));
+        assertEquals("text/plain; charset=utf-8", c.headers.get("Content-Type"));
+        assertEquals("42", c.headers.get("x-amz-meta-owner-id"));
+        assertTrue(c.headers.get("Authorization").contains(
+          "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-meta-owner-id,"), c.headers.get("Authorization"));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void invalidMetadataFailsWithoutAnyRequest(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    S3PutObjectOptions put = new S3PutObjectOptions().setMetadata(Map.of("name", "caf\u00e9"));
+    client.putObject("bucket", "key", Buffer.buffer("x"), put).eventually(client::close)
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        assertTrue(e.getMessage().startsWith("Invalid value for metadata \"name\""), e.getMessage());
+        assertEquals(0, requests.get());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void getObjectOverTheLimitWithContentLengthFailsBeforeReadingTheBody(VertxTestContext testContext) {
+    S3ClientOptions options = options(http.actualPort(), false).setMaxBufferedObjectSize(1024);
+    S3Client client = S3Client.create(vertx, options);
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[2048])));
+    client.getObject("bucket", "big").eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertEquals("The object is larger than the getObject limit of 1024 bytes (2048 bytes): use getObjectStream, "
+        + "or raise S3ClientOptions.maxBufferedObjectSize", e.getMessage());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void getObjectFailsOnTheAnnouncedLengthWithoutWaitingForTheBody(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false).setMaxBufferedObjectSize(1024));
+    responder.set(c -> new Stub(200, "").header("Content-Length", "1000000").headersOnly());
+    client.getObject("bucket", "big").eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertTrue(e.getMessage().startsWith("The object is larger than the getObject limit of 1024 bytes (1000000 bytes)"),
+        e.getMessage());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void streamIsHandedOutPausedSoALateConsumerLosesNothing(VertxTestContext testContext) {
+    byte[] data = new byte[512 * 1024];
+    new Random(3).nextBytes(data);
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, Buffer.buffer(data)));
+    client.getObjectStream("bucket", "late").compose(stream -> {
+      Promise<Void> later = Promise.promise();
+      vertx.setTimer(200, id -> later.complete()); // the whole body has arrived by now
+      return later.future().compose(v -> stream.collect(java.util.stream.Collectors.toList()));
+    }).eventually(client::close).onComplete(testContext.succeeding(chunks -> testContext.verify(() -> {
+      Buffer all = Buffer.buffer();
+      chunks.forEach(all::appendBuffer);
+      assertEquals(Buffer.buffer(data), all);
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void getObjectOverTheLimitWithoutContentLengthIsAbandonedAtTheLimit(VertxTestContext testContext) {
+    S3ClientOptions options = options(http.actualPort(), false).setMaxBufferedObjectSize(10_000);
+    S3Client client = S3Client.create(vertx, options);
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked());
+    client.getObject("bucket", "big")
+      .transform(ar -> {
+        testContext.verify(() -> {
+          assertTrue(ar.failed());
+          assertEquals("The object is larger than the getObject limit of 10000 bytes: use getObjectStream, "
+            + "or raise S3ClientOptions.maxBufferedObjectSize", ar.cause().getMessage());
+        });
+        responder.set(c -> new Stub(200, "small"));
+        // the abandoned download's connection is closed, and the client still works
+        return connectionClosed().compose(v -> client.getObject("bucket", "small"));
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeeding(body -> testContext.verify(() -> {
+        assertEquals("small", body.toString());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void getObjectAtTheLimitSucceeds(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false).setMaxBufferedObjectSize(1024));
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[1024])).chunked());
+    client.getObject("bucket", "exact").eventually(client::close).onComplete(testContext.succeeding(body -> testContext.verify(() -> {
+      assertEquals(1024, body.length());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void xmlResultsOverTheInternalLimitFail(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[Transport.MAX_BUFFERED_RESPONSE_SIZE + 1])));
+    expectFailure(testContext, e -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertEquals("The response body exceeds the limit of 4194304 bytes (Content-Length 4194305)", e.getMessage());
+    });
+  }
+
+  @Test
+  void errorBodiesOverTheInternalLimitAreTruncated(VertxTestContext testContext) {
+    byte[] huge = new byte[Transport.MAX_BUFFERED_RESPONSE_SIZE + 100_000];
+    java.util.Arrays.fill(huge, (byte) 'x');
+    responder.set(c -> new Stub(500, Buffer.buffer(huge)).chunked());
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.listBuckets()
+      .transform(ar -> {
+        testContext.verify(() -> {
+          S3ServiceException service = assertInstanceOf(S3ServiceException.class, ar.cause());
+          assertEquals(500, service.getStatusCode());
+          assertNull(service.getErrorCode());
+          assertTrue(service.getMessage().length() < 1000, "only an excerpt is kept: " + service.getMessage().length());
+        });
+        return connectionClosed(); // the rest of the body is not read: the connection is closed
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  @Test
+  void headObjectReadsMetadataAndIgnoresTheContentLengthOfHeadResponses(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "")
+      .header("Content-Length", "10737418240") // 10 GiB object: far over every buffering limit
+      .header("Content-Type", "video/mp4")
+      .header("ETag", "\"e\"")
+      .header("Last-Modified", "Fri, 20 Nov 2026 10:15:30 GMT")
+      .header("X-Amz-Meta-Camera", "front"));
+    client.headObject("bucket", "movie.mp4").eventually(client::close).onComplete(testContext.succeeding(m -> testContext.verify(() -> {
+      assertEquals(HttpMethod.HEAD, last.get().method);
+      assertEquals(10737418240L, m.getContentLength());
+      assertEquals("video/mp4", m.getContentType());
+      assertEquals("\"e\"", m.getEtag());
+      assertEquals(java.time.Instant.parse("2026-11-20T10:15:30Z"), m.getLastModified());
+      assertEquals(Map.of("camera", "front"), m.getMetadata());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void getObjectStreamErrorFailsBeforeAnyBody(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(404, "<Error><Code>NoSuchKey</Code><Message>gone</Message></Error>"));
+    client.getObjectStream("bucket", "missing").eventually(client::close)
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals("NoSuchKey", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void getObjectStreamSendsTheRangeAndReportsItsLength(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(206, "234").header("Content-Range", "bytes 2-4/10"));
+    client.getObjectStream("bucket", "digits", "bytes=2-4")
+      .compose(stream -> {
+        testContext.verify(() -> assertEquals(3, stream.metadata().getContentLength()));
+        return stream.collect(java.util.stream.Collectors.toList());
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeeding(chunks -> testContext.verify(() -> {
+        assertEquals("bytes=2-4", last.get().headers.get("Range"));
+        assertTrue(last.get().headers.get("Authorization").contains(";range;"), last.get().headers.get("Authorization"));
+        assertEquals("234", chunks.stream().map(Buffer::toString).collect(java.util.stream.Collectors.joining()));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void malformedRangeFailsWithoutAnyRequest(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.getObjectStream("bucket", "key", "0-99").eventually(client::close)
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        assertTrue(e.getMessage().startsWith("Invalid range \"0-99\""), e.getMessage());
+        assertEquals(0, requests.get());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void cancelReleasesThePooledConnection(VertxTestContext testContext) {
+    // One pooled connection: while the stream holds it, any other request has to wait
+    S3ClientOptions options = options(http.actualPort(), false);
+    options.getPoolOptions().setHttp1MaxSize(1);
+    S3Client client = S3Client.create(vertx, options);
+    responder.set(c -> c.uri.endsWith("/big") ? new Stub(200, Buffer.buffer(new byte[8 * 1024 * 1024])) : new Stub(200, LIST_BUCKETS));
+    List<Throwable> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
+    AtomicInteger ends = new AtomicInteger();
+    client.getObjectStream("bucket", "big").compose(stream -> {
+      stream.exceptionHandler(errors::add).endHandler(v -> ends.incrementAndGet());
+      Future<?> waiting = client.listBuckets();
+      Promise<Void> checked = Promise.promise();
+      vertx.setTimer(300, id -> {
+        testContext.verify(() -> assertFalse(waiting.isComplete(), "the second request must wait for the connection"));
+        stream.cancel().onComplete(checked);
+      });
+      return checked.future().compose(v -> waiting);
+    }).compose(v -> {
+      Promise<Void> settled = Promise.promise();
+      vertx.setTimer(100, id -> settled.complete()); // let any late stream event arrive
+      return settled.future();
+    }).eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      assertEquals(1, errors.size(), errors.toString());
+      assertEquals("The object stream was cancelled", errors.get(0).getMessage());
+      assertInstanceOf(S3ClientException.class, errors.get(0));
+      assertEquals(0, ends.get());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void cancelAfterTheEndIsANoOp(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "tiny"));
+    List<Throwable> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
+    client.getObjectStream("bucket", "tiny").compose(stream -> {
+      stream.exceptionHandler(errors::add);
+      return stream.collect(java.util.stream.Collectors.toList()).compose(chunks -> stream.cancel());
+    }).eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      assertTrue(errors.isEmpty(), errors.toString());
+      testContext.completeNow();
+    })));
+  }
+
   // --- helpers ---------------------------------------------------------------------------------------
 
   private void expectFailure(VertxTestContext testContext, java.util.function.Consumer<Throwable> check) {
@@ -403,6 +666,22 @@ class TransportStubTest {
         check.accept(e);
         testContext.completeNow();
       })));
+  }
+
+  /** Succeeds once the stub has seen a connection close (within 5 s). */
+  private Future<Void> connectionClosed() {
+    Promise<Void> closed = Promise.promise();
+    long start = System.nanoTime();
+    vertx.setPeriodic(10, id -> {
+      if (connectionCloses.get() > 0) {
+        vertx.cancelTimer(id);
+        closed.tryComplete();
+      } else if (System.nanoTime() - start > 5_000_000_000L) {
+        vertx.cancelTimer(id);
+        closed.tryFail("the connection was not closed");
+      }
+    });
+    return closed.future();
   }
 
   private Transport transport(S3ClientOptions options) {
@@ -439,9 +718,31 @@ class TransportStubTest {
     final String body;
     final Map<String, String> headers = new java.util.LinkedHashMap<>();
 
+    Buffer raw;
+    boolean chunked;
+
     Stub(int status, String body) {
       this.status = status;
       this.body = body;
+    }
+
+    Stub(int status, Buffer raw) {
+      this(status, "");
+      this.raw = raw;
+    }
+
+    boolean headersOnly;
+
+    /** Sends the status and headers, then never the body. */
+    Stub headersOnly() {
+      headersOnly = true;
+      return this;
+    }
+
+    /** Sends the body with chunked transfer encoding, i.e. without Content-Length. */
+    Stub chunked() {
+      chunked = true;
+      return this;
     }
 
     Stub header(String name, String value) {

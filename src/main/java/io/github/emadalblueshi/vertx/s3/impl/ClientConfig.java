@@ -31,6 +31,7 @@ final class ClientConfig {
   final String region;
   final boolean pathStyleAccess;
   final S3CredentialsProvider credentialsProvider;
+  final int maxBufferedObjectSize;
   final HttpClientOptions httpClientOptions;
   final PoolOptions poolOptions;
   final Clock clock;
@@ -44,6 +45,7 @@ final class ClientConfig {
     this.region = options.getRegion().trim();
     this.pathStyleAccess = options.isPathStyleAccess();
     this.credentialsProvider = credentialsProvider;
+    this.maxBufferedObjectSize = options.getMaxBufferedObjectSize();
     this.httpClientOptions = new HttpClientOptions(options.getHttpClientOptions())
       .setDefaultHost(host).setDefaultPort(port).setSsl(tls);
     this.poolOptions = new PoolOptions(options.getPoolOptions());

@@ -2,9 +2,11 @@ package io.github.emadalblueshi.vertx.s3.impl;
 
 import java.util.Objects;
 import java.util.concurrent.Callable;
+import java.util.function.Supplier;
 
 import io.vertx.core.Closeable;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.internal.PromiseInternal;
@@ -77,6 +79,37 @@ final class ContextSupport {
     /** Runs {@code task} on a worker thread (unordered); the Future is bound to the caller's context. */
     <T> Future<T> executeBlocking(Callable<T> task) {
       return context.executeBlocking(task, false);
+    }
+
+    /** A promise bound to the caller's context, for results assembled from stream events. */
+    <T> Promise<T> promise() {
+      return context.promise();
+    }
+
+    /**
+     * Runs {@code task} on the caller's context: directly when already running on it, otherwise
+     * dispatched to it. Needed where Vert.x binds work to the <em>current</em> context, e.g.
+     * {@code HttpClient.request()}: the response's stream handlers then run on the caller's
+     * context (Vert.x rule 4), also for callers on non-Vert.x threads.
+     */
+    <T> Future<T> onContext(Supplier<Future<T>> task) {
+      if (context.isRunningOnContext()) {
+        return task.get();
+      }
+      PromiseInternal<T> promise = context.promise();
+      context.runOnContext(v -> {
+        try {
+          task.get().onComplete(promise);
+        } catch (RuntimeException e) {
+          promise.tryFail(e);
+        }
+      });
+      return promise.future();
+    }
+
+    /** Runs {@code action} later on the caller's context (never synchronously). */
+    void runOnContext(Runnable action) {
+      context.runOnContext(v -> action.run());
     }
   }
 }

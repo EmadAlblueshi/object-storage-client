@@ -3,6 +3,7 @@ package io.github.emadalblueshi.vertx.s3;
 import io.github.emadalblueshi.vertx.s3.impl.S3ClientImpl;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 
 /**
  * Asynchronous client for Amazon S3 and S3-compatible storage.
@@ -81,6 +82,100 @@ public interface S3Client {
    *     {@link S3ServiceException} such as {@code NoSuchBucket} or {@code BucketNotEmpty}
    */
   Future<Void> deleteBucket(String bucket);
+
+  /**
+   * Uploads an object from a buffer (PutObject), replacing any existing object with that key.
+   * <p>
+   * Object keys are 1 to 1024 bytes of UTF-8 (any characters; they are encoded on the wire). An
+   * invalid key fails with an {@link S3ClientException}, as does a {@code null} body. The same
+   * key check applies to every method taking a key.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param body the content; an empty buffer creates an empty object
+   * @return the object's ETag as sent by the server (with its double quotes), or {@code null} if
+   *     the server sent none
+   */
+  Future<String> putObject(String bucket, String key, Buffer body);
+
+  /**
+   * Uploads an object from a buffer (PutObject) with a content type and user metadata.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param body the content; an empty buffer creates an empty object
+   * @param options the content type and user metadata; {@code null} for none
+   * @return the object's ETag as sent by the server (with its double quotes), or {@code null}
+   * @see #putObject(String, String, Buffer)
+   */
+  Future<String> putObject(String bucket, String key, Buffer body, S3PutObjectOptions options);
+
+  /**
+   * Downloads a <strong>small</strong> object into memory (GetObject).
+   * <p>
+   * The object must not be larger than {@link S3ClientOptions#getMaxBufferedObjectSize()}
+   * (default 4 MiB). A larger object fails with an {@link S3ClientException} pointing to
+   * {@link #getObjectStream(String, String)}: when the server announces the size, before any of
+   * the body is read; otherwise as soon as the limit is crossed, and the download is abandoned.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @return the content; it fails with an {@link S3ServiceException} such as {@code NoSuchKey}
+   */
+  Future<Buffer> getObject(String bucket, String key);
+
+  /**
+   * Downloads an object of any size as a stream (GetObject), never buffering it in memory.
+   * <p>
+   * The future completes when the response headers arrive. An error response fails it with an
+   * {@link S3ServiceException} (e.g. {@code NoSuchKey}) before any body is streamed. On success,
+   * the {@link S3ObjectStream} is paused, carries the object's metadata, and its handlers run on
+   * the calling context. <strong>Read it to the end or {@linkplain S3ObjectStream#cancel()
+   * cancel} it</strong>: until then it holds a pooled connection.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @return the paused object stream
+   */
+  Future<S3ObjectStream> getObjectStream(String bucket, String key);
+
+  /**
+   * Downloads a byte range of an object as a stream (GetObject with {@code Range}).
+   * <p>
+   * {@code range} is a single HTTP byte range: {@code bytes=0-99} (the first 100 bytes),
+   * {@code bytes=100-} (from byte 100 to the end) or {@code bytes=-100} (the last 100 bytes). A
+   * malformed range fails with an {@link S3ClientException}; a range outside the object fails
+   * with an {@link S3ServiceException} ({@code InvalidRange}, HTTP 416). The stream's
+   * {@linkplain S3ObjectMetadata#getContentLength() content length} is the length of the range.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param range the byte range
+   * @return the paused object stream
+   * @see #getObjectStream(String, String)
+   */
+  Future<S3ObjectStream> getObjectStream(String bucket, String key, String range);
+
+  /**
+   * Reads an object's metadata without its content (HeadObject).
+   * <p>
+   * As with {@link #headBucket}, failures carry no S3 error code: a missing object fails with an
+   * {@link S3ServiceException} with status code 404.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @return the object's metadata
+   */
+  Future<S3ObjectMetadata> headObject(String bucket, String key);
+
+  /**
+   * Deletes an object (DeleteObject). Deleting a key that doesn't exist succeeds.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @return a future completed when the object is deleted
+   */
+  Future<Void> deleteObject(String bucket, String key);
 
   /**
    * Closes the client and releases its HTTP connections. Idempotent. Operations started after

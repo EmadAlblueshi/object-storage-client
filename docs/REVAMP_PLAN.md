@@ -436,6 +436,25 @@ Order rationale: options come before the transport, which consumes them (endpoin
 - **Other buffered bodies (owner answer).** XML results and error bodies have a fixed internal limit, with no option, sized for the largest legitimate response (a full ListObjectsV2 page), e.g. 4 MiB. Error bodies keep only a truncated excerpt.
 - **Abandoned streams (owner answer).** An abandoned `getObjectStream` stream must not leak a pooled connection. The returned stream type gets one small cancel method that resets the request and releases the connection. The docs say the stream must be consumed or cancelled. The exact shape is proposed in the step 6 diff.
 
+### Phase 2 — step 6 decisions and findings (2026-11-20)
+- **Public API added:**
+  - `putObject(bucket, key, Buffer[, S3PutObjectOptions])` returns the ETag (`Future<String>`).
+  - `getObject(bucket, key)` returns `Future<Buffer>`, capped.
+  - `getObjectStream(bucket, key[, range])` returns `Future<S3ObjectStream>`.
+  - `headObject` returns `Future<S3ObjectMetadata>`.
+  - `deleteObject` returns `Future<Void>`.
+  - New types: `S3ObjectStream` (a `ReadStream<Buffer>` with `metadata()` and `cancel()`), `S3ObjectMetadata` and `S3PutObjectOptions` (content type and user metadata only).
+  - New option: `S3ClientOptions.maxBufferedObjectSize`, default 4 MiB.
+- **Range** is a single HTTP `bytes=` value (`bytes=0-99`, `bytes=100-`, `bytes=-100`), validated before I/O. No range type.
+- **ETags** are returned exactly as sent, including their quotes. `getEtag()` is the generated name.
+- **Non-ASCII metadata values are rejected, not RFC 2047-encoded** (owner decision). The javadoc and manual tell callers to URL-encode such values themselves, or to keep them in the key or their own database.
+- **No `Content-Range` exposure** on ranged streams for now (owner decision); `headObject` gives the total size.
+- **`cancel()`** uses Vert.x 5's `HttpClientRequest.cancel()` (it closes an HTTP/1.1 connection that is in flight), then resumes the response to drain anything already received. The stream's exception handler receives `S3ClientException("The object stream was cancelled")` unless the stream had already ended, so `pipeTo` fails instead of hanging.
+- **`collect()` resumes the paused stream**, as `pipeTo` does. Vert.x's default `collect` doesn't resume, so it would hang on a paused stream.
+- **Finding:** Vert.x 5.2.3 `HttpClientResponseImpl` drops body chunks while no handler is set, and throws when a handler is set after the end. `ObjectStreamImpl` therefore attaches its own handlers at construction, on the paused response.
+- **Finding:** a HEAD response's `Content-Length` (e.g. 10 GiB) must not count against buffering limits. It is pinned by a stub test.
+- **Not observable (equivalent mutant):** issuing the request through `Caller.onContext`. `send()` already runs on the caller's context because it is composed on a Future bound to it. `onContext` is kept as an explicit guard.
+
 ### Payload signing simplification (owner decision 2026-11-20, Option A)
 Done in a separate **BREAKING** commit between steps 5 and 6, which revised decision 4:
 - No public setting. `S3PayloadSigning` and `maxInlinePayloadHashSize` are removed.
