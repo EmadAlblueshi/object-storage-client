@@ -28,6 +28,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -61,7 +63,23 @@ class PackagePolicyTest {
    * Impl classes that must be public, by binary name (e.g. a client implementation the API
    * factory instantiates across packages). Keep it minimal; every entry needs a reason.
    */
-  private static final Set<String> PUBLIC_IMPL_ALLOWLIST = Set.of();
+  private static final Set<String> PUBLIC_IMPL_ALLOWLIST = Set.of(
+    // S3Client.create (API package) instantiates it across packages.
+    IMPL + ".S3ClientImpl");
+
+  /** Main sources of the API and impl packages, relative to the Maven base directory. */
+  private static final Path MAIN_SOURCES = Path.of("src", "main", "java", "io", "github", "emadalblueshi", "vertx", "s3");
+
+  /** The one impl class allowed to use {@code io.vertx.core.internal} (Vert.x rule 3 and the internal API policy). */
+  private static final String CONTEXT_HELPER = "impl/ContextSupport.java";
+
+  /** Context-less Future factories that must never build a Future the public API returns (rule 3). */
+  private static final Pattern CONTEXT_LESS_FUTURES = Pattern.compile(
+    "\\bPromise\\s*\\.\\s*promise\\s*\\(|\\bFuture\\s*\\.\\s*(succeededFuture|failedFuture|all|any|join)\\s*\\("
+      + "|\\bimport\\s+static\\s+io\\.vertx\\.core\\.(Future|Promise)\\.");
+
+  private static final Pattern INTERNAL_API = Pattern.compile(
+    "\\bio\\.vertx\\.core\\.internal\\b|\\b(ContextInternal|PromiseInternal|VertxInternal)\\b");
 
   private static Path classesRoot;
   private static List<Class<?>> mainClasses;
@@ -152,6 +170,45 @@ class PackagePolicyTest {
       }
     }
     assertTrue(violations.isEmpty(), () -> String.join("\n", violations));
+  }
+
+  /**
+   * Rule-3 guard. No main source in the API or impl packages builds a Future from a context-less
+   * factory ({@code Promise.promise()}, {@code Future.succeededFuture/failedFuture},
+   * {@code Future.all/any/join}). Only {@code ContextSupport} uses Vert.x internal APIs. Comments
+   * and string/char literals are ignored. Review covers what a source scan can't.
+   */
+  @Test
+  void rule3GuardContextBoundFuturesAndInternalApiConfinement() throws IOException {
+    assertTrue(Files.isDirectory(MAIN_SOURCES), "run from the Maven base directory; missing " + MAIN_SOURCES);
+    List<String> violations = new ArrayList<>();
+    boolean helperSeen = false;
+    try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
+      for (Path file : files.filter(f -> f.toString().endsWith(".java")).collect(Collectors.toList())) {
+        String relative = MAIN_SOURCES.relativize(file).toString().replace(file.getFileSystem().getSeparator(), "/");
+        String code = stripCommentsAndLiterals(Files.readString(file));
+        Matcher contextLess = CONTEXT_LESS_FUTURES.matcher(code);
+        while (contextLess.find()) {
+          violations.add(relative + ": context-less Future factory '" + contextLess.group().trim() + "'");
+        }
+        boolean usesInternal = INTERNAL_API.matcher(code).find();
+        if (relative.equals(CONTEXT_HELPER)) {
+          helperSeen = usesInternal;
+        } else if (usesInternal) {
+          violations.add(relative + ": uses Vert.x internal API (only " + CONTEXT_HELPER + " may)");
+        }
+      }
+    }
+    assertTrue(helperSeen, CONTEXT_HELPER + " is expected to exist and hold the internal API usage");
+    assertTrue(violations.isEmpty(), () -> "Rule-3 guard violations:\n" + String.join("\n", violations));
+  }
+
+  /** Removes char/string literals, block comments and line comments (in that order), keeping line structure loosely. */
+  static String stripCommentsAndLiterals(String source) {
+    String s = source.replaceAll("'(?:\\\\.|[^'\\\\])'", "''");
+    s = s.replaceAll("\"(?:\\\\.|[^\"\\\\])*\"", "\"\"");
+    s = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL).matcher(s).replaceAll(" ");
+    return s.replaceAll("//[^\n]*", "");
   }
 
   @Test

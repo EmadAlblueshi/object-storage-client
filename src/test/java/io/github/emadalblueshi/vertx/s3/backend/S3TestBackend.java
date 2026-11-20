@@ -30,6 +30,20 @@ public interface S3TestBackend {
     return new SiloBackend(true);
   }
 
+  /**
+   * A Silo backend over plain HTTP, shared by all test classes in the JVM: started on first use
+   * and never stopped by tests (Testcontainers' Ryuk removes it when the JVM exits). Tests must
+   * use unique bucket names. Never call {@link #stop()} on it.
+   */
+  static S3TestBackend sharedSilo() {
+    return SharedBackends.SILO.get();
+  }
+
+  /** Like {@link #sharedSilo()}, over HTTPS with the test-only self-signed certificate. */
+  static S3TestBackend sharedSiloTls() {
+    return SharedBackends.SILO_TLS.get();
+  }
+
   /** Short name used in test display names, e.g. {@code silo-tls}. */
   String name();
 
