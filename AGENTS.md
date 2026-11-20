@@ -1,5 +1,29 @@
 # AGENTS.md — vertx-s3-client
 
+## Scope and non-goals (owner decision, 2026-11-20; applies to every remaining step)
+**Goal:** a simple, clean, lean, efficient Vert.x S3 client for basic bucket and object operations,
+plus a presigner. **Not** a clone of the AWS SDK.
+
+**In scope:**
+- Buckets: create, head, delete, list (ListBuckets, without pagination).
+- Objects: `putObject` (Buffer); `getObject` (Buffer, size-capped, small objects only);
+  `getObjectStream`; `headObject`; `deleteObject`.
+- `putObject` from a stream or file. Multipart is used internally, only when required, and is
+  never exposed as a public multipart API.
+- ListObjectsV2.
+- `S3Presigner`: GET and PUT.
+- Optional, to be confirmed by the owner before the step starts: CopyObject, DeleteObjects.
+
+**Non-goals** (never add unless the owner explicitly asks): a public multipart API, ACLs, bucket
+policies, lifecycle, versioning, tagging, SSE/encryption options, object lock, presigned POST,
+ListBuckets pagination, per-operation timeout settings, a retry framework.
+
+**Rules:**
+- Prefer fewer options with good defaults over configurability.
+- Every new public method or option must justify itself against this scope. If in doubt, ask the
+  owner first.
+- Heavy testing is fine; a large public API is not.
+
 ## Purpose
 Asynchronous, idiomatic Vert.x 5 client for Amazon S3 and S3-compatible storage
 (DigitalOcean Spaces in production; MinIO-compatible servers for local dev and tests). Consumed by a pure
@@ -112,7 +136,7 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
    passed in. `close()` returns `Future<Void>`. A client created inside a verticle is
    closed when that context closes (close hook).
 7. **Prefer Vert.x primitives:** `HttpClient`, `Buffer`, `Future` composition
-   (`compose`, `transform`, `eventually`, `recover`), Vert.x timers for retries/timeouts,
+   (`compose`, `transform`, `eventually`, `recover`), Vert.x timers when timing is needed,
    JsonObject-backed `@DataObject` options classes with a copy constructor plus `toJson`/`fromJson`.
 8. Public async methods never throw; validation failures return a failed Future.
 
@@ -148,8 +172,12 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   the cache holds only the current entry, so rotated-out secrets aren't kept in memory.
 - `Mac`/`MessageDigest` are not thread-safe: use per-thread instances or `clone()` a prototype per
   use, and never share one instance.
-- Multipart: abort on every failure path; close every opened `AsyncFile`; an empty or small body
-  uses a single PutObject.
+- Multipart is internal only: `putObject` from a stream or file uses it when required, and no
+  multipart type or method is public. Abort on every failure path; close every opened
+  `AsyncFile`; an empty or small body uses a single PutObject.
+- Large objects are never buffered in memory. `getObject` (Buffer) is for small objects only and
+  is size-capped: it fails with an `S3ClientException` pointing to `getObjectStream` instead of
+  buffering a body over the cap. `getObjectStream` streams the body with backpressure.
 - Errors map to the library's `S3Exception` hierarchy: `S3ServiceException` for error responses
   (HTTP status, S3 code, request ids, details; bodiless and non-XML responses included) and
   `S3ClientException` for everything else (connection, TLS, unreadable response, credentials,
@@ -250,9 +278,12 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - Add or adjust tests (including context tests) with every behavior change. Run `mvn verify`.
 - Prefer deleting dead code over preserving it. There are no compatibility obligations.
 - Ask before adding any dependency, using an `io.vertx.core.internal` API not listed above,
-  or changing public API shape.
+  changing public API shape, or adding a public method or option the scope section doesn't
+  cover.
 
 **Don't**
+- Don't add anything listed under non-goals, or AWS SDK-style configurability "for
+  completeness".
 - Don't introduce callbacks, `CompletableFuture`, blocking calls, threads, executors,
   or static state.
 - Don't use WebClient, Jackson, or Vert.x `impl` packages outside `io.vertx.core.internal`.
