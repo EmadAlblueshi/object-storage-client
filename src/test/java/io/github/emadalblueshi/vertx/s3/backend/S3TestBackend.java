@@ -8,8 +8,8 @@ import io.vertx.core.http.HttpClientOptions;
  * An S3-compatible server that integration tests run against.
  * <p>
  * Tests depend only on this abstraction (endpoint, region, credentials, TLS), never on a
- * concrete container, so more backends can be added later (e.g. SeaweedFS, or a DigitalOcean
- * Spaces profile whose credentials come from the environment).
+ * concrete container. Implementations: Silo over HTTP and HTTPS (the only container backend) and
+ * the opt-in {@link ExternalBackend}, configured from environment variables.
  * <p>
  * {@link #start()} and {@link #stop()} block. Call them from the JUnit thread (for example in
  * {@code @BeforeAll}/{@code @AfterAll}), never from a Vert.x event loop.

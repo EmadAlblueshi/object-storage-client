@@ -99,6 +99,11 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - JDK 11 check: `mvn verify` on JDK 11. The `java11` profile auto-activates and only excludes
   the `virtual-threads` tag; it changes nothing else.
 - Single test: `mvn test -Dtest=ClassName#method`
+- External backend profile (opt-in, run locally by the owner; no CI job): set `S3_ENDPOINT`,
+  `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, then
+  `mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false`. Without all
+  four, the external tests are reported as skipped. Optional, test-only `S3_PATH_STYLE=false` runs
+  them with virtual-hosted-style addressing (default: path-style).
 - Site/docs: `mvn -DskipTests package site` (docgen output: `target/asciidoc/java`)
 
 ## Java 11 rules (`src/main` and `src/test`)
@@ -242,10 +247,20 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   exact release tag (never `latest`); don't change the tag without asking. Prefer the JVM-wide
   `S3TestBackend.sharedSilo()`/`sharedSiloTls()` (never stop them; use unique bucket names) over
   starting a container per test class.
-- Integration tests are backend-agnostic: one abstraction supplies the container, endpoint and
-  credentials, so more backends can be added (planned: SeaweedFS, and an optional DigitalOcean
-  Spaces profile that runs only when credentials come from environment variables or CI secrets).
-  Backend credentials are never committed.
+- **Silo is the only container backend.** Integration tests are backend-agnostic: `S3TestBackend`
+  supplies the endpoint, region, credentials and TLS. Besides Silo (HTTP and HTTPS) there is one
+  opt-in, generic `ExternalBackend`, configured only by the `S3_*` environment variables (no
+  provider names in variables, classes or tests). Backend credentials are never committed.
+- Suites run against several backends without duplication: an abstract `*TestBase` holds the
+  tests; one subclass per backend (`*SiloTest`, `*SiloTlsTest`, `*ExternalTest`) supplies it.
+  Backend differences are explicit expectations in the subclasses, never skipped assertions.
+  External subclasses are `@EnabledIf` on a local `configured()` method, so they are skipped,
+  never failed, when the variables are missing.
+- **Tests must be safe on a real account:** buckets get unique `vertx-s3-it-` names
+  (`TestResources.uniqueBucketName()`); every bucket and key is registered with `TestResources`
+  before it is created, and cleanup deletes everything even when tests fail. Keep bucket
+  creation to a minimum (providers rate-limit it): object tests share one suite bucket; checks
+  that need extra buckets stay in the Silo subclasses.
 - Every public async operation has a context test: from an **event-loop verticle**, a
   **worker verticle**, and a **virtual-thread verticle**, assert that
   `Vertx.currentContext()` inside every callback / Future completion is the same instance as
