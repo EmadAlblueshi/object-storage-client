@@ -29,7 +29,7 @@
     <asciidoctor-maven-plugin>2.2.6</asciidoctor-maven-plugin>
     <junit-jupiter.version>5.10.2</junit-jupiter.version>
     <jackson-dataformat-xml.version>2.16.1</jackson-dataformat-xml.version>
-    <testcontainers.version>1.21.3</testcontainers.version>
+    <testcontainers.version>2.0.5</testcontainers.version>
     <vertx.version>5.0.4</vertx.version>
     <asciidoc.dir>${project.basedir}/src/main/asciidoc</asciidoc.dir>
     <jar.manifest>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</jar.manifest>
