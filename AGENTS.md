@@ -45,7 +45,8 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - Impl is hidden on the class path too: every impl class that can be package-private is. No
   public API signature (return, parameter, throws, supertype, type bound, generics) mentions an
   impl type. Impl classes that must be public go on the explicit allowlist in
-  `PackagePolicyTest`, each with a reason.
+  `PackagePolicyTest`, each with a reason. Currently there's one: `impl.S3ClientImpl`, which
+  `S3Client.create` instantiates.
 - Public type names are `S3`-prefixed and must not clash with JDK, Vert.x or common library
   names. No generic names like `Credentials`, `Options` or `Bucket`. Deliberate exception:
   `S3Client`, `S3Presigner` and `S3Exception` keep the same names as AWS SDK v2 types (owner
@@ -118,7 +119,10 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - `io.vertx.core.internal` (`ContextInternal`, `PromiseInternal`, close hooks) is allowed
   **only inside `impl` packages**, never in the public API's signatures.
 - Use it for context-bound promises (`ContextInternal.promise()`) and
-  `addCloseHook`/`removeCloseHook`. Any other internal API needs explicit approval.
+  `addCloseHook`/`removeCloseHook`, **only inside `impl.ContextSupport`**, the single class that
+  may import `io.vertx.core.internal` (enforced by the rule-3 guard). Everything else goes through
+  `ContextSupport.Caller` (`bind`, `succeeded`, `failed`, `executeBlocking`). Any other internal
+  API needs explicit approval.
 - **On every Vert.x version bump, re-verify every internal API usage** (compile, plus the
   context test suite on all three threading models) before merging.
 
@@ -127,7 +131,8 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   - Streaming/multipart over HTTPS: `UNSIGNED-PAYLOAD`.
   - Small buffered requests: signed SHA-256. Above a configurable size threshold, the
     hash is computed via `executeBlocking`, never inline on the event loop.
-  - Over plain HTTP: payloads are always signed. `UNSIGNED-PAYLOAD` is rejected (failed Future).
+  - Over plain HTTP: payloads are always signed. `UNSIGNED` with an `http://` endpoint is
+    rejected by `create()` (`IllegalArgumentException`).
 - Never send AWS-only trailing checksums (`aws-chunked`, `x-amz-checksum-*` trailers) by
   default.
 
@@ -144,8 +149,10 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   use, and never share one instance.
 - Multipart: abort on every failure path; close every opened `AsyncFile`; an empty or small body
   uses a single PutObject.
-- Errors map to the library's `S3Exception` hierarchy (HTTP status, S3 code, requestId);
-  handle bodiless (HEAD) and non-XML error responses.
+- Errors map to the library's `S3Exception` hierarchy: `S3ServiceException` for error responses
+  (HTTP status, S3 code, request ids, details; bodiless and non-XML responses included) and
+  `S3ClientException` for everything else (connection, TLS, unreadable response, credentials,
+  closed client). Redirects are never followed.
 
 ## Presigned URLs
 - A synchronous API returning `URI`/`String`, with no `Future`. It's usable standalone via
@@ -181,7 +188,9 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 
 ## Testing rules
 - vertx-junit5. Integration tests run against Silo via Testcontainers. The image is pinned to an
-  exact release tag (never `latest`); don't change the tag without asking.
+  exact release tag (never `latest`); don't change the tag without asking. Prefer the JVM-wide
+  `S3TestBackend.sharedSilo()`/`sharedSiloTls()` (never stop them; use unique bucket names) over
+  starting a container per test class.
 - Integration tests are backend-agnostic: one abstraction supplies the container, endpoint and
   credentials, so more backends can be added (planned: SeaweedFS, and an optional DigitalOcean
   Spaces profile that runs only when credentials come from environment variables or CI secrets).
@@ -189,13 +198,13 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - Every public async operation has a context test: from an **event-loop verticle**, a
   **worker verticle**, and a **virtual-thread verticle**, assert that
   `Vertx.currentContext()` inside every callback / Future completion is the same instance as
-  the context captured before the call.
+  the context captured before the call. Cover failures as well as successes.
 - The harness complements the context-bound-Futures rule (Vert.x rule 3) but can't replace it.
   It can't detect timing-dependent violations: if a Future is already complete when the harness
   attaches its listener, the listener runs synchronously on the caller's thread and the check
   passes, even if the implementation used a context-less promise. Review and the rule-3 guard
-  test in `PackagePolicyTest` enforce rule 3. The guard lands in Phase 2 step 4, together with
-  the single impl context helper that is allowlisted to use `ContextInternal`.
+  test in `PackagePolicyTest` enforce rule 3. The guard scans main sources for context-less
+  Future factories and confines `io.vertx.core.internal` to `impl.ContextSupport`.
 - Virtual-thread tests are tagged `@Tag("virtual-threads")`. They are excluded only in the JDK 11 job.
 - Test code compiles with `--release 11`, same as main. Virtual-thread verticles are deployed
   through the Vert.x API only (`ThreadingModel.VIRTUAL_THREAD`), never through JDK

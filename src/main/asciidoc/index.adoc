@@ -1,8 +1,99 @@
 = Vert.x S3 Client
 
-An asynchronous client for Amazon S3 and S3-compatible storage, based on Vert.x.
+An asynchronous client for Amazon S3 and S3-compatible storage (DigitalOcean Spaces,
+MinIO-compatible servers), based on Vert.x.
 
-WARNING: The module is being rewritten. The API is not available yet and will change between versions.
+WARNING: The module is being rewritten. The API is incomplete and will change between versions.
 
-// Code snippets come from the examples.Examples class via docgen links.
-// Sections are added together with the operations they document.
+== Creating a client
+
+A client is configured with `S3ClientOptions`. The endpoint URI is the single source of scheme,
+host and port, and the region is required. Here is DigitalOcean Spaces:
+
+[source,$lang]
+----
+{@link examples.Examples#createForSpaces}
+----
+
+and a local MinIO-compatible server:
+
+[source,$lang]
+----
+{@link examples.Examples#createForLocalMinio}
+----
+
+`S3Client.create` validates the options and throws `IllegalArgumentException` if they are invalid
+(missing endpoint, region or credentials, `UNSIGNED` payload signing over `http://`, ...).
+
+=== Addressing style
+
+Buckets are addressed path-style by default (`https://host/bucket/key`), which every
+S3-compatible server supports. *This differs from the AWS SDK default*, which is
+virtual-hosted-style (`https://bucket.host/key`). To use virtual-hosted-style:
+
+[source,$lang]
+----
+{@link examples.Examples#virtualHostedStyle}
+----
+
+=== Transport options
+
+TLS trust, timeouts and connection pool sizes are configured on the composed Vert.x
+`HttpClientOptions` and `PoolOptions`:
+
+[source,$lang]
+----
+{@link examples.Examples#transportOptions}
+----
+
+=== Credentials
+
+Static credentials are set with `setCredentials`. For credentials that rotate (e.g. a watched
+Kubernetes secret), set a `S3CredentialsProvider` instead:
+
+[source,$lang]
+----
+{@link examples.Examples#rotatingCredentials}
+----
+
+Secrets never appear in `toJson()` or `toString()` of the options.
+
+== Contexts and threading
+
+Every asynchronous method captures the caller's Vert.x context and completes its `Future` on
+that context, whether the caller is an event-loop, worker or virtual-thread verticle. A client is
+thread-safe and can be shared between verticles.
+
+A client created inside a verticle is closed automatically when that verticle is undeployed,
+like a Vert.x `HttpClient`. Otherwise it is closed together with its `Vertx` instance.
+
+== Listing buckets
+
+[source,$lang]
+----
+{@link examples.Examples#listBuckets}
+----
+
+== Errors
+
+Failures are `S3Exception` instances. An `S3ServiceException` means the server answered with an
+error response: it carries the HTTP status, the S3 error code (when the response has an error
+document), and the request id to quote in support requests. Any other failure (connection, TLS,
+an unreadable response, failing credentials, a closed client) is an `S3ClientException`.
+
+[source,$lang]
+----
+{@link examples.Examples#handleErrors}
+----
+
+== Closing
+
+[source,$lang]
+----
+{@link examples.Examples#close}
+----
+
+== Using it next to the AWS SDK
+
+`S3Client`, `S3Presigner` and `S3Exception` have the same simple names as AWS SDK v2 types. In a
+file that uses both libraries, refer to one of them by its fully qualified name.
