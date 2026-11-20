@@ -10,8 +10,11 @@ on:
       - master
 jobs:
   Test:
-    name: Run tests
+    # JDK 21: full suite, including @Tag("virtual-threads").
+    # JDK 11: the pom's java11 profile auto-activates and excludes only the virtual-threads tag.
+    name: Run tests (JDK ${{ matrix.jdk }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest]
         jdk: [11,21]
