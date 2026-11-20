@@ -1,5 +1,32 @@
 # vertx-s3-client revamp — Analysis, Plan, and AGENTS.md proposal
 
+## Scope and non-goals (owner decision, 2026-11-20; applies to every remaining step)
+**Goal:** a simple, clean, lean, efficient Vert.x S3 client for basic bucket and object operations,
+plus a presigner. **Not** a clone of the AWS SDK.
+
+**In scope:**
+- Buckets: create, head, delete, list (ListBuckets, without pagination).
+- Objects: `putObject` (Buffer); `getObject` (Buffer, size-capped, small objects only);
+  `getObjectStream`; `headObject`; `deleteObject`.
+- `putObject` from a stream or file. Multipart is used internally, only when required, and is
+  never exposed as a public multipart API.
+- ListObjectsV2.
+- `S3Presigner`: GET and PUT.
+- Optional, to be confirmed by the owner before the step starts: CopyObject, DeleteObjects.
+
+**Non-goals** (never add unless the owner explicitly asks): a public multipart API, ACLs, bucket
+policies, lifecycle, versioning, tagging, SSE/encryption options, object lock, presigned POST,
+ListBuckets pagination, per-operation timeout settings, a retry framework.
+
+**Rules:**
+- Prefer fewer options with good defaults over configurability.
+- Every new public method or option must justify itself against this scope. If in doubt, ask the
+  owner first.
+- Heavy testing is fine; a large public API is not.
+- The analysis report (§1–10), the original decision questions and the original AGENTS.md
+  proposal below are a historical record. Where they list missing features or options, this
+  section decides.
+
 ## Context
 Total revamp of `object-storage-client` (renaming to `vertx-s3-client`), for Vert.x 5.2.x applications using S3-compatible storage (e.g. DigitalOcean Spaces, MinIO). Hard requirement: idiomatic Vert.x with strict context correctness. This step was **analysis only**. The only action after approval is writing `AGENTS.md` and `CLAUDE.md` at the repo root. Nothing is committed.
 
@@ -268,10 +295,10 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 |---|---|---|---|
 | **0. Groundwork** (this step) | Rules in place | AGENTS.md + CLAUDE.md | — |
 | **1. Rename + skeleton** ⚠️BREAKING | New identity, green build | pom coordinates; delete `objectstorage` tree; new package + `module-info` + docgen-ready `package-info`; Vert.x 5.2.3 pinned; `--release 11`; JUnit 5.14.4 BOM; Testcontainers 2.0.5; codegen **and docgen** processors via `annotationProcessorPaths`; remove web-client and Jackson; `java11` surefire profile; CI: the two JDK jobs only; test TLS certificate + MinIO container; **context-test harness first** (event-loop / worker / virtual-thread verticle fixtures + `assertSameContext` helper). Everything else in build/site/docs stays as is. | Old code can't compile once web-client/Jackson are removed (see Phase 1 steps) |
-| **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy, timeouts) with copy ctor + toJson/fromJson; SigV4 signer **ported** from git history and fixed (sorted/encoded query, RFC3986 path, canonical headers, no options mutation, host:port, session token), unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: head/get(Buffer)/put(Buffer)/delete/copy object, create/head/delete bucket, ListObjectsV2 (+ paging helper), DeleteObjects | Encoding edge cases; Spaces quirks |
+| **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy) with copy ctor + toJson/fromJson; SigV4 signer **ported** from git history and fixed (sorted/encoded query, RFC3986 path, canonical headers, no options mutation, host:port, session token), unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: list/create/head/delete bucket, put(Buffer)/get(Buffer, capped)/getObjectStream/head/delete object, ListObjectsV2, optionally CopyObject and DeleteObjects | Encoding edge cases; Spaces quirks |
 | **3. Presigned URLs** (own phase, right after the core client) | GET/PUT presign | Synchronous `S3Presigner` (standalone via `S3Presigner.create(options)` without `Vertx`, also exposed from the client) returning `URI`/`String`; shared SigV4 signer (query auth, `UNSIGNED-PAYLOAD`, cached signing key); separate presigner endpoint; expiry ≤ 604800 s; optional extra signed headers; `response-*` overrides; `X-Amz-Security-Token`; injectable `Clock`; unit tests on AWS published examples; integration via plain HTTP client against Silo (including a non-default port). Presigned POST is out of scope. | Host/port mismatch, clock skew |
-| **4. Streaming** | Backpressure-correct I/O | GetObject → `ReadStream<Buffer>` / `pipeTo(WriteStream)` / to file (AsyncFile); upload(ReadStream) with pause-before-async, incremental part hashing, configurable part size (≥5 MiB), single-PUT fallback for small/empty, **AbortMultipartUpload on every failure**, file close on all paths; uploadFile; public multipart ops (create/uploadPart/complete/abort/listParts) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
-| **5. Hardening** | Production-ready | Retries with backoff via Vert.x timers (5xx, SlowDown, connection reset; idempotent only), per-op timeouts, RequestTimeTooSkewed handling, close hook + in-flight tracking (abort uploads on close), log redaction rules, a configurable size cap for buffered responses, optional bucket policy/ACL/tagging ops, opt-in Spaces smoke test in CI with secrets | Internal API drift on Vert.x bumps |
+| **4. Streaming uploads** | Backpressure-correct uploads | `putObject` from a `ReadStream<Buffer>` and from a file (AsyncFile): pause-before-async, payload hashing per the payload-signing policy, single PUT for small/empty bodies, multipart **internally and only when required** (part size internal, no public option), **AbortMultipartUpload on every failure**, file close on all paths. No public multipart API. (`getObjectStream` moved to Phase 2 step 6.) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
+| **5. Hardening** (lean) | Production-ready | Closing the client aborts in-flight internal multipart uploads; log-redaction audit; opt-in Spaces smoke test in CI with secrets. No retry framework and no per-operation timeout settings (non-goals). | Internal API drift on Vert.x bumps |
 | **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `0.5.0` (or `1.0.0-alpha1`) | — |
 
 ---
@@ -352,10 +379,10 @@ Order rationale: options come before the transport, which consumes them (endpoin
 | 3 | XML (`impl`) | Hardened StAX reader (DTDs and external entities off), escaping writer, the S3 `Error` document parser. Operation model parsers land with their operations. | Escaping, XXE and entity-expansion rejection, error variants (AWS, MinIO, Spaces), unknown elements ignored. |
 | 4 | Transport, errors, client lifecycle | `S3Client.create`/`close()` on `HttpClientAgent`; the single impl context helper (the only `ContextInternal` user): context-bound promises and the close hook; request building; payload-signing policy; `Content-Length` always set; `S3Exception` hierarchy (bodiless and non-XML errors, 301 region redirects); ListBuckets as the first operation; the **rule-3 guard test** in `PackagePolicyTest`. | Error mapping against a local Vert.x `HttpServer` stub; ListBuckets against Silo; harness for `close()` and ListBuckets. |
 | 5 | Bucket ops | createBucket (with `LocationConstraint`), headBucket, deleteBucket. Bucket-name validation, including dotted names with virtual-hosted style over TLS. `User-Agent: vertx-s3-client/<version>` on every request (version from build metadata). | NoSuchBucket, BucketAlreadyOwnedByYou, BucketNotEmpty; name validation; User-Agent; harness. |
-| 6 | Buffered object ops | putObject(Buffer) (`Content-Length` always set; content type, metadata, conditional headers), getObject → Buffer (ranges; 304/412), headObject, deleteObject. | The payload-signing matrix over HTTP and HTTPS; special-character keys; runtime-generated data; harness. |
+| 6 | Object ops | putObject(Buffer) (`Content-Length` always set; content type, user metadata), getObject → Buffer (small objects only, size-capped), **getObjectStream** (issue #36; Range supported), headObject, deleteObject. See "Step 6 requirements" below. The commit says "Closes #36". | The payload-signing matrix over HTTP and HTTPS; the cap (with and without `Content-Length`); getObjectStream backpressure, ranges, errors before the body; special-character keys; runtime-generated data; harness, including `assertReadStreamOnCallerContext`. |
 | 7 | More backends | SeaweedFS behind `S3TestBackend`; an opt-in DigitalOcean Spaces profile driven only by environment variables or CI secrets, never committed. | Steps 4–6 suites run against every backend. |
-| 8 | ListObjectsV2 | Prefix, delimiter, common prefixes, start-after, continuation tokens, paging helper. `encoding-type=url` with key decoding. | Multi-page listings; special-character keys; harness. |
-| 9 | CopyObject + DeleteObjects | Copy-source encoding; CopyObject's 200-with-`<Error>`-body case; DeleteObjects with the required `Content-MD5`, quiet mode, per-key errors. | Same pattern; per-key failure reporting. |
+| 8 | ListObjectsV2 (issue #32) | Prefix, delimiter, common prefixes, start-after, continuation tokens (the caller pages; no paging helper). `encoding-type=url` with key decoding. | Multi-page listings; special-character keys; harness. |
+| 9 | CopyObject + DeleteObjects (optional; the owner confirms before the step starts) | Copy-source encoding; CopyObject's 200-with-`<Error>`-body case; DeleteObjects with the required `Content-MD5`, quiet mode, per-key errors. | Same pattern; per-key failure reporting. |
 
 ### Phase 2 — answers recorded (2026-11-20)
 1. `toJson` leaves the secret out; `fromJson` still accepts it (JSON is therefore not a full round trip for credentials).
@@ -368,7 +395,7 @@ Order rationale: options come before the transport, which consumes them (endpoin
 ### Phase 2 — step 2 decisions and deviations (recorded 2026-11-20)
 - **Composition, not inheritance:** `S3ClientOptions` holds `HttpClientOptions` and `PoolOptions` (transport only); the endpoint URI is the single source of scheme, host and port. Vert.x 5.2.3's newer `HttpClientConfig` was not used: it is `@Unstable` and has no JSON support.
 - **`pathStyleAccess` defaults to `true`.** This differs from the AWS SDK default (virtual-hosted-style) and is documented as such on `S3ClientOptions`.
-- **Deviation from the step 2 plan row: no S3-level timeout options.** Connect and idle timeouts come from the composed `HttpClientOptions`. Per-operation (total) timeouts stay in Phase 5 (Hardening).
+- **Deviation from the step 2 plan row: no S3-level timeout options.** Connect and idle timeouts come from the composed `HttpClientOptions`. Per-operation timeout settings are a non-goal (see the scope section).
 - **Validation moves to step 4.** `S3Client.create()` validates everything and throws `IllegalArgumentException`: endpoint URI (http/https, host, optional port, no path/query/user info), required region, exactly one credential source, no default host/port/`ssl` set in `httpClientOptions`, and `UNSIGNED` payload signing over `http://`. Step 2 has only setter-level checks.
 - **AGENTS.md change scheduled for step 4:** the payload-signing policy line becomes "`UNSIGNED-PAYLOAD` over plain HTTP is rejected by `create()`" (it currently says "failed Future").
 - **Secrets:** `toJson()` omits and `toString()` masks the secret key and session token. `S3ClientOptions.toJson()` also strips the `password`/`aliasPassword` entries that Vert.x writes in clear in `HttpClientOptions` JSON (key and trust stores, proxy auth).
@@ -381,10 +408,39 @@ Order rationale: options come before the transport, which consumes them (endpoin
 - **`encoding-type=url` encodes keys form-style.** A space comes back as `+` (verified against Silo). In step 8, ListObjectsV2 key decoding must treat `+` as a space.
 
 ### Phase 2 — step 4 answers (recorded 2026-11-20)
-1. **ListBuckets pagination later.** Step 4's `listBuckets()` takes no parameters. AWS's `max-buckets`, `continuation-token`, `prefix` and `bucket-region` (added in 2024) will be added when needed.
-2. **No cap on buffered responses for now.** Response bodies (XML results, error documents) are buffered in full. A configurable size cap for buffered responses is a Phase 5 item. Large downloads go through streaming in Phase 4.
+1. **ListBuckets has no pagination.** Superseded by the scope section: pagination is a non-goal.
+2. **Buffered-response cap.** Superseded: the `getObject` size cap moves to step 6 (see "Step 6 requirements").
 3. **Bucket-name validation in step 5**, including dotted names with virtual-hosted style over TLS: `a.b.host` doesn't match a `*.host` wildcard certificate.
 4. **`User-Agent: vertx-s3-client/<version>` in step 5**, with the version read from build metadata, not hard-coded.
+
+### Phase 2 — step 6 requirements (recorded 2026-11-20)
+- **`getObjectStream` (issue #36).** Large objects (e.g. 1 GB) are never buffered in memory.
+  - The Future completes when the response headers arrive. An error response fails it with an `S3ServiceException` before any body is streamed.
+  - On success it gives a `ReadStream<Buffer>` plus metadata: content length, ETag, content type, last modified, user metadata.
+  - The response is paused before the Future completes, so no data is lost before the caller attaches its handlers.
+  - Range is supported.
+  - Stream handlers run on the caller's context (rule 4). The HTTP request must therefore be issued on the captured context: `HttpClient.request()` called from a non-Vert.x thread would otherwise use a context of its own.
+  - Tests: `assertReadStreamOnCallerContext` for all caller kinds, including backpressure, plus ranges, an empty object and an error before the body.
+  - The step 6 commit says "Closes #36".
+- **Buffered `getObject` cap.**
+  - A configurable maximum size with a small default (a few MiB; the value is proposed in step 6).
+  - If `Content-Length` exceeds it, fail before reading the body with an `S3ClientException` that points to `getObjectStream`.
+  - Without `Content-Length`, abort the response as soon as the limit is crossed, with the same exception.
+  - `getObject` is documented as "small objects only".
+- **Other buffered bodies (owner answer).** XML results and error bodies have a fixed internal limit, with no option, sized for the largest legitimate response (a full ListObjectsV2 page), e.g. 4 MiB. Error bodies keep only a truncated excerpt.
+- **Abandoned streams (owner answer).** An abandoned `getObjectStream` stream must not leak a pooled connection. The returned stream type gets one small cancel method that resets the request and releases the connection. The docs say the stream must be consumed or cancelled. The exact shape is proposed in the step 6 diff.
+
+### Payload signing simplification (owner decision 2026-11-20, Option A)
+A separate **BREAKING** commit between steps 5 and 6 replaces decision 4:
+- No public setting. `S3PayloadSigning` and `maxInlinePayloadHashSize` are removed.
+- HTTPS: `UNSIGNED-PAYLOAD` for every request.
+- HTTP: the payload is always signed with SHA-256. Buffers above a fixed internal threshold (256 KiB) are hashed via `executeBlocking`; upload parts are hashed as their chunks arrive.
+- The same commit updates AGENTS.md's payload-signing section and decision 4.
+
+### GitHub issues (checked 2026-11-20)
+- #31 "Supports list buckets": done in step 4 (`8582fe1`), which didn't reference it. Close it by hand.
+- #32 "Supports list objects": in scope, Phase 2 step 8 (ListObjectsV2). That commit says "Closes #32".
+- #36 "Supports get object as stream": in scope, Phase 2 step 6 (`getObjectStream`). That commit says "Closes #36".
 
 ## Decision questions for you (answer before Phase 1)
 1. **Coordinates/package:** keep groupId `io.github.emadalblueshi`, root package `io.github.emadalblueshi.vertx.s3`, module `io.github.emadalblueshi.vertx.s3`? (alt: `io.github.emadalblueshi.s3`)
