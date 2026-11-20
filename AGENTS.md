@@ -160,10 +160,16 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - Presigned POST (browser form policy) is out of scope.
 
 ## XML
-- JDK StAX only. Parsers disable DTDs and external entities
-  (`SUPPORT_DTD=false`, `IS_SUPPORTING_EXTERNAL_ENTITIES=false`).
-- Request bodies are written with proper XML escaping of all text and attribute values
-  (keys, ETags, tags). Never build XML by unescaped string concatenation.
+- JDK StAX only, always via `XMLInputFactory.newDefaultFactory()`: never the StAX provider on
+  the application's class path (e.g. Woodstox), so the hardening behaves the same everywhere.
+  One factory per parse (the JDK factory isn't thread-safe to share).
+- Parsers disable DTDs and external entities (`SUPPORT_DTD=false`,
+  `IS_SUPPORTING_EXTERNAL_ENTITIES=false`, empty `ACCESS_EXTERNAL_DTD`/`ACCESS_EXTERNAL_SCHEMA`)
+  and reject any DTD or entity-reference event outright. Depth and element-count limits apply.
+  All parsing goes through `impl.S3Xml`.
+- Request bodies are written only with `impl.XmlWriter`, which escapes all text and attribute
+  values (keys, ETags, tags) and rejects characters XML 1.0 can't represent. Never build XML by
+  string concatenation.
 
 ## Security
 - Never log credentials, `Authorization`, `x-amz-security-token`, or presigned URLs.
