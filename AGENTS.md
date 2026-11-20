@@ -50,6 +50,14 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   names. No generic names like `Credentials`, `Options` or `Bucket`. Deliberate exception:
   `S3Client`, `S3Presigner` and `S3Exception` keep the same names as AWS SDK v2 types (owner
   decision). The user docs tell code importing both libraries to use fully qualified names.
+- Generated JSON converters are the one exception in the API package. Vert.x codegen generates
+  an `XConverter` next to each data object `X`: a public class with only package-private
+  methods, even with `publicConverter = false`, as in Vert.x core. `PackagePolicyTest` allows
+  exactly that shape.
+- Options classes compose Vert.x options, never extend them. `S3ClientOptions` holds
+  `HttpClientOptions` and `PoolOptions` (transport only); the endpoint URI is the single source of
+  scheme, host and port. Presigner-specific options (public endpoint) belong to Phase 3, not
+  `S3ClientOptions`.
 
 ## Build tooling policy
 - The revamp is about the API. Change build tooling **only where a recorded decision requires
@@ -159,7 +167,10 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 
 ## Security
 - Never log credentials, `Authorization`, `x-amz-security-token`, or presigned URLs.
-- Options `toJson()`/`toString()` must not expose the secret key.
+- Options `toJson()`/`toString()` never expose secrets: the secret key and session token are
+  omitted or masked. `S3ClientOptions.toJson()` also strips the `password`/`aliasPassword`
+  entries that Vert.x writes in clear inside the nested `HttpClientOptions` JSON (key and trust
+  stores, proxy auth).
 - No default credentials; fail fast when they are missing.
 
 ## Testing rules

@@ -111,6 +111,49 @@ class PackagePolicyTest {
     assertTrue(violations.isEmpty(), () -> String.join("\n", violations));
   }
 
+  /**
+   * Vert.x codegen generates a JSON converter next to each data object: {@code XConverter}, a
+   * public class with only package-private static methods (even with
+   * {@code publicConverter = false}). It's allowed in the API package only in exactly that shape.
+   */
+  @Test
+  void generatedConvertersExposeNothing() {
+    List<String> violations = new ArrayList<>();
+    for (Class<?> type : apiTopLevelTypes(true)) {
+      if (!type.getSimpleName().endsWith("Converter")) {
+        continue;
+      }
+      String dataObjectName = type.getName().substring(0, type.getName().length() - "Converter".length());
+      Class<?> dataObject = mainClasses.stream().filter(c -> c.getName().equals(dataObjectName)).findFirst().orElse(null);
+      if (dataObject == null || !Modifier.isPublic(dataObject.getModifiers())) {
+        violations.add(type.getName() + " has no matching public data object " + dataObjectName);
+        continue;
+      }
+      try {
+        dataObject.getConstructor(io.vertx.core.json.JsonObject.class);
+        dataObject.getMethod("toJson");
+      } catch (NoSuchMethodException e) {
+        violations.add(dataObjectName + " is not a data object (needs a public JsonObject constructor and toJson())");
+      }
+      for (Method method : type.getDeclaredMethods()) {
+        if (exposed(method.getModifiers())) {
+          violations.add(type.getName() + " exposes method " + method.getName());
+        }
+      }
+      for (Field field : type.getDeclaredFields()) {
+        if (exposed(field.getModifiers())) {
+          violations.add(type.getName() + " exposes field " + field.getName());
+        }
+      }
+      for (Constructor<?> constructor : type.getDeclaredConstructors()) {
+        if (constructor.getParameterCount() != 0) {
+          violations.add(type.getName() + " declares a constructor with parameters");
+        }
+      }
+    }
+    assertTrue(violations.isEmpty(), () -> String.join("\n", violations));
+  }
+
   @Test
   void apiSignaturesNeverMentionImplTypes() {
     List<String> violations = new ArrayList<>();
