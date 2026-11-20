@@ -32,12 +32,25 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 
 ## Coordinates & layout
 - Maven: `io.github.emadalblueshi:vertx-s3-client`
-- Module: `io.github.emadalblueshi.vertx.s3` (exports the API package only)
-- `io.github.emadalblueshi.vertx.s3` — public API (client interface, options, results, exceptions)
-- `io.github.emadalblueshi.vertx.s3.impl` (and sub-packages) — internals (signer, transport,
-  XML, streams). Never exported.
+- Module: `io.github.emadalblueshi.vertx.s3`
 - `examples` — docgen snippets referenced from `src/main/asciidoc`. Compiled, but excluded
   from the jar, sources and javadoc.
+
+## Package layout (idiomatic Vert.x; enforced by `PackagePolicyTest`)
+- `io.github.emadalblueshi.vertx.s3` — **public API only**: interfaces, `@DataObject`
+  options/models, the `S3Exception` hierarchy, and factories (e.g. `S3Client.create`, which
+  delegates to impl).
+- `io.github.emadalblueshi.vertx.s3.impl` — **all implementation**: client impl, signer,
+  transport, XML, context helper. Sub-packages under `impl` only if clearly needed.
+- `module-info` exports only the API package (unqualified, nothing opened). `impl` is never exported.
+- Impl is hidden on the class path too: every impl class that can be package-private is. No
+  public API signature (return, parameter, throws, supertype, type bound, generics) mentions an
+  impl type. Impl classes that must be public go on the explicit allowlist in
+  `PackagePolicyTest`, each with a reason.
+- Public type names are `S3`-prefixed and must not clash with JDK, Vert.x or common library
+  names. No generic names like `Credentials`, `Options` or `Bucket`. Deliberate exception:
+  `S3Client`, `S3Presigner` and `S3Exception` keep the same names as AWS SDK v2 types (owner
+  decision). The user docs tell code importing both libraries to use fully qualified names.
 
 ## Build tooling policy
 - The revamp is about the API. Change build tooling **only where a recorded decision requires
@@ -70,19 +83,29 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
    time and completes its Future ON THAT CONTEXT, whether the caller is an event loop, a
    worker, or a virtual-thread verticle. Never use an unbound `Promise.promise()` for a
    result that crosses an async boundary.
-3. **Streams:** `ReadStream`/`WriteStream` handlers (`handler`, `endHandler`,
+3. **Context-bound Futures only:** every Future returned by the public API comes from a
+   promise bound to the caller's context, captured at call time: `ContextInternal.promise()`
+   on the captured context, or a composition (`compose`/`map`/`transform`/`eventually`/
+   `recover`) of a Future that is itself bound to that context. Immediate results and
+   validation failures use the captured context's `succeededFuture(...)`/`failedFuture(...)`.
+   Never return a Future built on a context-less `Promise.promise()`, `Future.succeededFuture`
+   or `Future.failedFuture`. Combinators `Future.all`/`any`/`join` are context-less too
+   (verified in 5.2.3): complete a captured-context promise from them instead. That way,
+   which context a listener runs on never depends on response timing, i.e. on whether the
+   Future completed before or after the caller attached its listener.
+4. **Streams:** `ReadStream`/`WriteStream` handlers (`handler`, `endHandler`,
    `exceptionHandler`, `drainHandler`) run on the owning context, with real backpressure
    (`pause`/`resume`/`fetch`, `pipeTo`). Pause any user-supplied stream BEFORE the first
    async step. Never emit while paused.
-4. **Never block the event loop:** no blocking file I/O (use `FileSystem`/`AsyncFile`),
+5. **Never block the event loop:** no blocking file I/O (use `FileSystem`/`AsyncFile`),
    no `*Blocking` calls, no heavy inline CPU (see the payload-signing policy).
-5. **No own threads, executors, or static `Vertx`.** The client is bound to the `Vertx`
+6. **No own threads, executors, or static `Vertx`.** The client is bound to the `Vertx`
    passed in. `close()` returns `Future<Void>`. A client created inside a verticle is
    closed when that context closes (close hook).
-6. **Prefer Vert.x primitives:** `HttpClient`, `Buffer`, `Future` composition
+7. **Prefer Vert.x primitives:** `HttpClient`, `Buffer`, `Future` composition
    (`compose`, `transform`, `eventually`, `recover`), Vert.x timers for retries/timeouts,
    JsonObject-backed `@DataObject` options classes with a copy constructor plus `toJson`/`fromJson`.
-7. Public async methods never throw; validation failures return a failed Future.
+8. Public async methods never throw; validation failures return a failed Future.
 
 ## Vert.x internal API policy
 - `io.vertx.core.internal` (`ContextInternal`, `PromiseInternal`, close hooks) is allowed
@@ -151,6 +174,12 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   **worker verticle**, and a **virtual-thread verticle**, assert that
   `Vertx.currentContext()` inside every callback / Future completion is the same instance as
   the context captured before the call.
+- The harness complements the context-bound-Futures rule (Vert.x rule 3) but can't replace it.
+  It can't detect timing-dependent violations: if a Future is already complete when the harness
+  attaches its listener, the listener runs synchronously on the caller's thread and the check
+  passes, even if the implementation used a context-less promise. Review and the rule-3 guard
+  test in `PackagePolicyTest` enforce rule 3. The guard lands in Phase 2 step 4, together with
+  the single impl context helper that is allowlisted to use `ContextInternal`.
 - Virtual-thread tests are tagged `@Tag("virtual-threads")`. They are excluded only in the JDK 11 job.
 - Test code compiles with `--release 11`, same as main. Virtual-thread verticles are deployed
   through the Vert.x API only (`ThreadingModel.VIRTUAL_THREAD`), never through JDK
@@ -163,9 +192,17 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   failures, and abort.
 - Test data is generated at runtime: random bytes of exact sizes (e.g. 0, 1 byte, 5 MiB,
   n × 5 MiB, 5 MiB + 1). Never commit large binary fixtures.
-- The signer has unit tests against the AWS SigV4 test vectors (no Docker). Presigning has unit
-  tests against the AWS SigV4 published presign examples, using a fixed `Clock`. Integration tests
-  download and upload through presigned URLs against Silo, using a plain HTTP client.
+- `PackagePolicyTest` enforces the package layout on the compiled classes: everything is in
+  the API, `impl` or `examples` package; API types are public and `S3`-prefixed; no API
+  signature mentions an impl type; impl classes are package-private unless allowlisted; the
+  module exports only the API package; API names don't clash with JDK or Vert.x public types.
+- The signer has unit tests against the AWS SigV4 test suite, vendored from botocore under
+  `src/test/resources/aws4-testsuite` (Apache-2.0, with its LICENSE and NOTICE; don't edit the
+  vectors). S3-specific rules are unit-tested and verified against Silo, which checks signatures
+  server-side.
+- Presigning has unit tests against the AWS SigV4 published presign examples, using a fixed
+  `Clock`. Integration tests download and upload through presigned URLs against Silo, using a
+  plain HTTP client.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
   shared static client state across test classes).
@@ -194,6 +231,8 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   or static state.
 - Don't use WebClient, Jackson, or Vert.x `impl` packages outside `io.vertx.core.internal`.
 - Don't use Java 12+ language features or APIs in `src/main` or `src/test`.
+- Don't make an impl class public, or reference an impl type from an API signature, to "make
+  it work". Fix the design, or add an allowlist entry with a reason, after asking.
 - Don't remove, replace or restructure build, site or doc tooling (docgen, asciidoctor, javadoc,
   publishing) unless a recorded decision requires it or you are explicitly asked.
 - Don't commit, push, tag, or release unless explicitly asked.
