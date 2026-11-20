@@ -48,6 +48,10 @@ import io.vertx.core.streams.WriteStream;
  * unnoticed. Real operations perform I/O, so they complete after they return. Self-tests that
  * simulate wrong implementations must defer the wrong completion until after the current caller
  * task has finished.
+ * <p>
+ * This is why AGENTS.md (Vert.x rule 3) requires every Future returned by the public API to come
+ * from a promise bound to the caller's context. With that rule, correctness doesn't depend on
+ * timing. The harness complements the rule but can't prove it.
  */
 public final class CallerContext {
 

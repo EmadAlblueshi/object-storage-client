@@ -339,6 +339,36 @@ Steps 1 and 2 land as **one change**. Once web-client and Jackson are removed th
 - **TLS test fixture:** a committed self-signed certificate and key under `src/test/resources`, named as test-only (e.g. `test-only-minio-selfsigned.{crt,key}`), with a long expiry (~100 years) and SANs `localhost` and `127.0.0.1`. It's mounted into the Silo container for the HTTPS half of the payload-signing matrix.
 - The context-test harness (event-loop, worker and virtual-thread verticle fixtures plus an `assertSameContext` helper) is built first, with the VT fixture tagged `virtual-threads`.
 
+### Phase 1 — status
+Complete (2026-11-20): rename + skeleton, CI, Silo test backend with TLS, context-test harness.
+
+### Phase 2 — steps (recorded 2026-11-20; each step is reviewed, verified with `mvn verify`, and committed by the owner)
+Order rationale: options come before the transport, which consumes them (endpoint, addressing style, TLS, timeouts, payload policy), so no throw-away internal config types are needed. XML is split out of the transport because it is pure code with unit tests only. Every public method gets context-harness coverage for all four caller kinds. Each operation group (steps 4–9) adds docgen `Examples` snippets and an `index.adoc` section.
+
+| # | Step | Contents | Tests |
+|---|---|---|---|
+| 1 | SigV4 signer (`impl`, package-private) | Port `S3SignatureV4`/`HashUtil` from `b7dc1f2` with all audited fixes (decision 9); injectable `Clock`; the payload hash is an input. | Vendored AWS SigV4 suite (botocore copy, Apache-2.0, with LICENSE and NOTICE); S3 unit tests; Silo: the deferred wrong-region test, special-character keys, unsorted multi-parameter query. Plus `PackagePolicyTest` for the package layout rules. |
+| 2 | Options and credentials (public, `@DataObject` + codegen) | `S3ClientOptions` (endpoint URI, required region, path-style vs virtual-hosted, credentials, payload-signing policy + `executeBlocking` threshold, timeouts, `HttpClientOptions` passthrough); `S3Credentials` (access key, secret, session token); a synchronous credentials-provider interface; copy constructors, `toJson`/`fromJson`. | Defaults, copy semantics, JSON round trip, secret redaction, validation. |
+| 3 | XML (`impl`) | Hardened StAX reader (DTDs and external entities off), escaping writer, the S3 `Error` document parser. Operation model parsers land with their operations. | Escaping, XXE and entity-expansion rejection, error variants (AWS, MinIO, Spaces), unknown elements ignored. |
+| 4 | Transport, errors, client lifecycle | `S3Client.create`/`close()` on `HttpClientAgent`; the single impl context helper (the only `ContextInternal` user): context-bound promises and the close hook; request building; payload-signing policy; `Content-Length` always set; `S3Exception` hierarchy (bodiless and non-XML errors, 301 region redirects); ListBuckets as the first operation; the **rule-3 guard test** in `PackagePolicyTest`. | Error mapping against a local Vert.x `HttpServer` stub; ListBuckets against Silo; harness for `close()` and ListBuckets. |
+| 5 | Bucket ops | createBucket (with `LocationConstraint`), headBucket, deleteBucket. | NoSuchBucket, BucketAlreadyOwnedByYou, BucketNotEmpty; harness. |
+| 6 | Buffered object ops | putObject(Buffer) (`Content-Length` always set; content type, metadata, conditional headers), getObject → Buffer (ranges; 304/412), headObject, deleteObject. | The payload-signing matrix over HTTP and HTTPS; special-character keys; runtime-generated data; harness. |
+| 7 | More backends | SeaweedFS behind `S3TestBackend`; an opt-in DigitalOcean Spaces profile driven only by environment variables or CI secrets, never committed. | Steps 4–6 suites run against every backend. |
+| 8 | ListObjectsV2 | Prefix, delimiter, common prefixes, start-after, continuation tokens, paging helper. `encoding-type=url` with key decoding. | Multi-page listings; special-character keys; harness. |
+| 9 | CopyObject + DeleteObjects | Copy-source encoding; CopyObject's 200-with-`<Error>`-body case; DeleteObjects with the required `Content-MD5`, quiet mode, per-key errors. | Same pattern; per-key failure reporting. |
+
+### Phase 2 — answers recorded (2026-11-20)
+1. `toJson` leaves the secret out; `fromJson` still accepts it (JSON is therefore not a full round trip for credentials).
+2. `S3Client.create()` throws `IllegalArgumentException` on invalid options (a synchronous factory; configuration errors fail fast).
+3. A rule-3 guard test in `PackagePolicyTest` (scan `src/main` for context-less `Promise.promise()`, `Future.succeededFuture`/`failedFuture` and `Future.all`/`any`/`join`), with an explicit allowlist for the single impl helper that uses `ContextInternal`. It lands in step 4 with that helper. AGENTS.md: "review and the guard test enforce rule 3".
+4. Docgen `Examples` snippets and an `index.adoc` section with each operation group (steps 4–9).
+5. Name clash with AWS SDK v2 (`S3Client`, `S3Presigner`, `S3Exception`): keep our names. The user docs (Phase 6 README and the docgen manual) note that a file importing both libraries uses fully qualified names.
+6. The AWS S3 documentation examples are skipped: the page isn't fetchable by automated clients, and Silo's server-side signature verification is the S3-specific oracle.
+
+### Phase 2 — findings
+- **Backend difference: key segments.** Silo (like MinIO) rejects keys with empty, `.` or `..` segments (`a//b`, `a/./b`, `a/../b`) with `XMinioInvalidObjectName` / `XMinioInvalidResourceName`. They are valid on AWS. That the signer doesn't normalise paths is therefore unit-tested only (`S3SignatureV4Test`), not checked against Silo. Re-check with SeaweedFS in step 7.
+- **`encoding-type=url` encodes keys form-style.** A space comes back as `+` (verified against Silo). In step 8, ListObjectsV2 key decoding must treat `+` as a space.
+
 ## Decision questions for you (answer before Phase 1)
 1. **Coordinates/package:** keep groupId `io.github.emadalblueshi`, root package `io.github.emadalblueshi.vertx.s3`, module `io.github.emadalblueshi.vertx.s3`? (alt: `io.github.emadalblueshi.s3`)
 2. **Minimum Java:** 21 (I recommend it: needed for virtual-thread verticle tests, plus records, sealed exceptions, `HexFormat`) or 17? And should CI also test 25?
