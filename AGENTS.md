@@ -62,7 +62,9 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 
 ## Vert.x rules (NON-NEGOTIABLE)
 1. **Future-only public API** (Vert.x 5 style). No callback overloads, no
-   `CompletableFuture`, no blocking methods in the public API.
+   `CompletableFuture`, no blocking methods in the public API. The only exception is
+   presigning: it is pure computation with no I/O, so it is synchronous and returns
+   `URI`/`String` directly (see "Presigned URLs").
 2. **Context capture:** every public async method captures the caller's context at call
    time and completes its Future ON THAT CONTEXT, whether the caller is an event loop, a
    worker, or a virtual-thread verticle. Never use an unbound `Promise.promise()` for a
@@ -103,10 +105,28 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   (no magic defaults). A separate public endpoint is allowed for presigned URLs.
 - SigV4: sorted, RFC 3986-encoded canonical query; S3 single-encoded path; Host includes
   a non-default port; request options are immutable per call and never mutated by the client.
+- **One shared SigV4 signer** (in `impl`) serves both requests and presigning. It is **ported**
+  from the original `S3SignatureV4`/`HashUtil` (git history, `b7dc1f2`) and fixed, NOT rewritten
+  from scratch. The derived signing key is cached per (date, region, service, credentials), and
+  the cache holds only the current entry, so rotated-out secrets aren't kept in memory.
+- `Mac`/`MessageDigest` are not thread-safe: use per-thread instances or `clone()` a prototype per
+  use, and never share one instance.
 - Multipart: abort on every failure path; close every opened `AsyncFile`; an empty or small body
   uses a single PutObject.
 - Errors map to the library's `S3Exception` hierarchy (HTTP status, S3 code, requestId);
   handle bodiless (HEAD) and non-XML error responses.
+
+## Presigned URLs
+- A synchronous API returning `URI`/`String`, with no `Future`. It's usable standalone via
+  `S3Presigner.create(options)` without a `Vertx` instance, and is also exposed from the client.
+- Query-string auth with `UNSIGNED-PAYLOAD`, through the shared signer.
+- The presigner endpoint is configurable separately from the client endpoint (public host vs
+  internal Kubernetes address). Host is signed with the port when it's non-default.
+- GET and PUT. Expiry is validated (max 604800 s). Only `host` is signed by default; optional
+  extra signed headers (e.g. `Content-Type`) are allowed. `response-*` overrides,
+  `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved.
+- Time comes from an injectable `java.time.Clock` (default: the system UTC clock).
+- Presigned POST (browser form policy) is out of scope.
 
 ## XML
 - JDK StAX only. Parsers disable DTDs and external entities
@@ -142,7 +162,9 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   failures, and abort.
 - Test data is generated at runtime: random bytes of exact sizes (e.g. 0, 1 byte, 5 MiB,
   n × 5 MiB, 5 MiB + 1). Never commit large binary fixtures.
-- The signer has unit tests against the AWS SigV4 test vectors (no Docker).
+- The signer has unit tests against the AWS SigV4 test vectors (no Docker). Presigning has unit
+  tests against the AWS SigV4 published presign examples, using a fixed `Clock`. Integration tests
+  download and upload through presigned URLs against Silo, using a plain HTTP client.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
   shared static client state across test classes).

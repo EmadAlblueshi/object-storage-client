@@ -249,7 +249,7 @@ No own threads, executors, `CompletableFuture`, or static `Vertx` instances exis
 ## Step 3 — Revamp plan
 
 **Rewrite vs refactor (opinion):**
-- Signer → **rewrite** (test-vector driven).
+- Signer → **port + fix**: port the existing logic from git history, fix the audited bugs, and add test vectors. See the recorded decision "SigV4 signer" below. This supersedes the earlier "rewrite".
 - Client core → **rewrite** on HttpClient.
 - Upload streaming → **rewrite**.
 - Options and model → **rewrite**: immutable-ish request types, no header-bag inheritance.
@@ -268,9 +268,9 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 |---|---|---|---|
 | **0. Groundwork** (this step) | Rules in place | AGENTS.md + CLAUDE.md | — |
 | **1. Rename + skeleton** ⚠️BREAKING | New identity, green build | pom coordinates; delete `objectstorage` tree; new package + `module-info` + docgen-ready `package-info`; Vert.x 5.2.3 pinned; `--release 11`; JUnit 5.14.4 BOM; Testcontainers 2.0.5; codegen **and docgen** processors via `annotationProcessorPaths`; remove web-client and Jackson; `java11` surefire profile; CI: the two JDK jobs only; test TLS certificate + MinIO container; **context-test harness first** (event-loop / worker / virtual-thread verticle fixtures + `assertSameContext` helper). Everything else in build/site/docs stays as is. | Old code can't compile once web-client/Jackson are removed (see Phase 1 steps) |
-| **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy, timeouts) with copy ctor + toJson/fromJson; SigV4 signer (sorted/encoded query, RFC3986 path, canonical headers, host:port, session token) unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: head/get(Buffer)/put(Buffer)/delete/copy object, create/head/delete bucket, ListObjectsV2 (+ paging helper), DeleteObjects | Encoding edge cases; Spaces quirks |
-| **3. Streaming** | Backpressure-correct I/O | GetObject → `ReadStream<Buffer>` / `pipeTo(WriteStream)` / to file (AsyncFile); upload(ReadStream) with pause-before-async, incremental part hashing, configurable part size (≥5 MiB), single-PUT fallback for small/empty, **AbortMultipartUpload on every failure**, file close on all paths; uploadFile; public multipart ops (create/uploadPart/complete/abort/listParts) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
-| **4. Presigned URLs** | GET/PUT presign | Query-signed URLs, expiry 1s–7d, `UNSIGNED-PAYLOAD`, optional content-type/response-header overrides, **separate public endpoint** option; tests: presign then fetch via plain HttpClient against MinIO (including non-default port) | Host/port mismatch, clock skew |
+| **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy, timeouts) with copy ctor + toJson/fromJson; SigV4 signer **ported** from git history and fixed (sorted/encoded query, RFC3986 path, canonical headers, no options mutation, host:port, session token), unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: head/get(Buffer)/put(Buffer)/delete/copy object, create/head/delete bucket, ListObjectsV2 (+ paging helper), DeleteObjects | Encoding edge cases; Spaces quirks |
+| **3. Presigned URLs** (own phase, right after the core client) | GET/PUT presign | Synchronous `S3Presigner` (standalone via `S3Presigner.create(options)` without `Vertx`, also exposed from the client) returning `URI`/`String`; shared SigV4 signer (query auth, `UNSIGNED-PAYLOAD`, cached signing key); separate presigner endpoint; expiry ≤ 604800 s; optional extra signed headers; `response-*` overrides; `X-Amz-Security-Token`; injectable `Clock`; unit tests on AWS published examples; integration via plain HTTP client against Silo (including a non-default port). Presigned POST is out of scope. | Host/port mismatch, clock skew |
+| **4. Streaming** | Backpressure-correct I/O | GetObject → `ReadStream<Buffer>` / `pipeTo(WriteStream)` / to file (AsyncFile); upload(ReadStream) with pause-before-async, incremental part hashing, configurable part size (≥5 MiB), single-PUT fallback for small/empty, **AbortMultipartUpload on every failure**, file close on all paths; uploadFile; public multipart ops (create/uploadPart/complete/abort/listParts) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
 | **5. Hardening** | Production-ready | Retries with backoff via Vert.x timers (5xx, SlowDown, connection reset; idempotent only), per-op timeouts, RequestTimeTooSkewed handling, close hook + in-flight tracking (abort uploads on close), log redaction rules, optional bucket policy/ACL/tagging ops, opt-in Spaces smoke test in CI with secrets | Internal API drift on Vert.x bumps |
 | **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `0.5.0` (or `1.0.0-alpha1`) | — |
 
@@ -285,6 +285,24 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 6. JDK StAX replaces Jackson XML. The parser is hardened and writes are escaped.
 7. `HttpClient` directly. `vertx-core` is the only runtime dependency.
 8. Keep `@DataObject` plus generated JSON converters for options.
+
+### Recorded decisions (2026-11-20, continued)
+9. **SigV4 signer: port, don't rewrite.** Port the existing signing logic from git history (`src/main/java/io/github/emadalblueshi/objectstorage/client/s3/impl/S3SignatureV4.java` and `HashUtil.java` at commit `b7dc1f2`) into the new `impl` package. Then:
+   - Fix the four audited bugs: canonical query sorting; key (path) encoding; no mutation of request options/headers; Host signed with the port when it's non-default.
+   - Add tests against the AWS SigV4 test vectors.
+   - Build presigning on top of the same signer.
+   - Also fixed in the port (audit §5/C6, accepted):
+     - canonical headers (de-duplicate names, join multi-values, collapse whitespace);
+     - a fast hex encoder instead of per-byte `String.format`;
+     - no per-call `MessageDigest`/`Mac` provider lookup. `Mac` and `MessageDigest` are **not thread-safe**: use per-thread instances (e.g. a `ThreadLocal` of prototypes) or `clone()` a prototype per use, and never share one instance.
+10. **Presigned URLs: an own phase, Phase 3, right after the core client.** Streaming moves to Phase 4.
+    - Synchronous API returning `URI`/`String` (pure computation, no `Future`). Usable standalone via `S3Presigner.create(options)` without a `Vertx` instance, and also exposed from the client.
+    - One shared SigV4 signer for requests and presigning (query-string auth, `UNSIGNED-PAYLOAD`). The derived signing key is cached per (date, region, service), keyed by credentials too so rotation is safe. The cache holds **only the current entry**, so rotated-out secrets aren't kept in memory.
+    - The presigner endpoint is configurable separately from the client endpoint (public host vs internal Kubernetes address). Host is signed with the port when it's non-default.
+    - GET and PUT. Expiry is validated (max 604800 s). Optional extra signed headers (e.g. `Content-Type`); by default only `host` is signed. `response-*` overrides, `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved.
+    - Injectable `java.time.Clock`. Unit tests against the AWS SigV4 published examples. Integration tests download and upload via presigned URLs against Silo with a plain HTTP client.
+    - Presigned POST (browser form policy) is out of scope for now.
+    - *Consequence:* presigning needs credentials synchronously, so the credentials abstraction must expose the current credentials without a `Future`.
 
 ### Correction (2026-11-20): build tooling policy
 - **Keep docgen. Do not remove it.** The revamp is about the API. Build tooling changes only where a recorded decision requires it: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the processor wiring for codegen and docgen.
@@ -301,7 +319,7 @@ Steps 1 and 2 land as **one change**. Once web-client and Jackson are removed th
 
 ### Test backend and test plan (recorded 2026-11-20)
 - **Backend: Silo** (`docker.io/pgsty/silo:RELEASE.2026-09-03T13-18-01Z`), a maintained MinIO fork with the same S3 API, `MINIO_*` env vars and `/minio/health` routes. Upstream MinIO community edition is in maintenance mode and no longer publishes images. The tag is always an exact release (never `latest`) and only changes with the owner's approval.
-- **Old multipart path:** it hangs on Vert.x 5.2.3 (`testPutObjectAsStream` and `testPutObjectFileAsStream` time out, then `testGetObjectUpload` fails with NoSuchKey) but passes on 5.0.4. The old tests are removed with the old package. The new streaming tests (Phase 3) must cover the same scenarios: stream upload, file upload, an exact multiple of 5 MiB, an empty stream, and pause/backpressure. Test data is generated at runtime (random bytes of exact sizes: 0, 1 byte, 5 MiB, n × 5 MiB, 5 MiB + 1). No committed binary fixtures.
+- **Old multipart path:** it hangs on Vert.x 5.2.3 (`testPutObjectAsStream` and `testPutObjectFileAsStream` time out, then `testGetObjectUpload` fails with NoSuchKey) but passes on 5.0.4. The old tests are removed with the old package. The new streaming tests (Phase 4) must cover the same scenarios: stream upload, file upload, an exact multiple of 5 MiB, an empty stream, and pause/backpressure. Test data is generated at runtime (random bytes of exact sizes: 0, 1 byte, 5 MiB, n × 5 MiB, 5 MiB + 1). No committed binary fixtures.
 - **Step 4:** carry the Silo container over into the new test package, updating the tag to `RELEASE.2026-11-12T00-00-00Z` (approved by the owner). Make the integration tests backend-agnostic, with one abstraction for container, endpoint and credentials, so more backends can be added later.
 - **Phase 2 (not now):** a second backend, SeaweedFS, plus an optional DigitalOcean Spaces profile that runs only when credentials come from environment variables or CI secrets. Credentials are never committed.
 
