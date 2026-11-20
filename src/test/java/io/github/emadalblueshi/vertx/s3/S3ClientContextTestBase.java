@@ -128,6 +128,24 @@ abstract class S3ClientContextTestBase {
   }
 
   @Test
+  void listObjectsCompletesOnCallerContext(VertxTestContext testContext) {
+    caller.assertCompletesOnCallerContext(ctx -> client.listObjects(objectBucket, new S3ListObjectsOptions().setPrefix("stream-")))
+      .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+        assertEquals("stream-object", result.getObjects().get(0).getKey());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void listObjectsFailureCompletesOnCallerContext(VertxTestContext testContext) {
+    caller.assertCompletesOnCallerContext(ctx -> client.listObjects("ctx-missing-" + UUID.randomUUID().toString().substring(0, 8), null))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals("NoSuchBucket", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
   void getObjectFailureCompletesOnCallerContext(VertxTestContext testContext) {
     caller.assertCompletesOnCallerContext(ctx -> client.getObject(objectBucket, "no-such-key"))
       .onComplete(testContext.failing(e -> testContext.verify(() -> {

@@ -1,6 +1,7 @@
 package io.github.emadalblueshi.vertx.s3.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -26,7 +27,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 
 /**
- * Bucket operations and authentication errors end to end, against one {@link S3TestBackend} per
+ * Bucket operations (including listing an empty bucket) and authentication errors end to end, against one {@link S3TestBackend} per
  * subclass (Silo over HTTP and HTTPS, and the opt-in external backend).
  * <p>
  * Safe on a real account: exactly one bucket is created (with the client's region as its
@@ -66,7 +67,16 @@ abstract class S3ClientBucketTestBase {
     String bucket = resources.bucket(TestResources.uniqueBucketName());
     client.createBucket(bucket)
       .compose(v -> client.headBucket(bucket))
-      .compose(v -> client.listBuckets())
+      .compose(v -> client.listObjects(bucket, null))
+      .compose(empty -> {
+        testContext.verify(() -> {
+          assertTrue(empty.getObjects().isEmpty(), "a new bucket is empty: " + empty);
+          assertTrue(empty.getCommonPrefixes().isEmpty());
+          assertFalse(empty.isTruncated());
+          assertNull(empty.getNextContinuationToken());
+        });
+        return client.listBuckets();
+      })
       .compose(result -> {
         testContext.verify(() -> {
           S3Bucket listed = result.getBuckets().stream().filter(b -> b.getName().equals(bucket)).findFirst()

@@ -26,6 +26,9 @@ import org.junit.jupiter.params.provider.ValueSource;
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsResult;
+import io.github.emadalblueshi.vertx.s3.S3ListedObject;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
@@ -335,6 +338,119 @@ abstract class S3ClientObjectTestBase {
         assertEquals(8 * 1024 * 1024, head.getContentLength());
         testContext.completeNow();
       })));
+  }
+
+  // --- ListObjectsV2 (each test lists its own prefix: other tests' objects share the bucket) ---
+
+  @Test
+  void listObjectsPagesThroughSeveralPages(VertxTestContext testContext) {
+    List<String> keys = new java.util.ArrayList<>();
+    for (int i = 0; i < 7; i++) {
+      keys.add("paging/k" + i);
+    }
+    putAll(keys)
+      .compose(v -> listAllPages(new S3ListObjectsOptions().setPrefix("paging/").setMaxKeys(3), new java.util.ArrayList<>()))
+      .onComplete(testContext.succeeding(pages -> testContext.verify(() -> {
+        assertEquals(List.of(3, 3, 1), pages.stream().map(p -> p.getObjects().size()).collect(Collectors.toList()));
+        assertEquals(List.of(true, true, false), pages.stream().map(S3ListObjectsResult::isTruncated).collect(Collectors.toList()));
+        assertNotNull(pages.get(0).getNextContinuationToken());
+        assertNull(pages.get(2).getNextContinuationToken());
+        assertEquals(keys, pages.stream().flatMap(p -> p.getObjects().stream()).map(S3ListedObject::getKey)
+          .collect(Collectors.toList()));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void listObjectsStartAfter(VertxTestContext testContext) {
+    putAll(List.of("start/a", "start/b", "start/c", "start/d"))
+      .compose(v -> client.listObjects(bucket, new S3ListObjectsOptions().setPrefix("start/").setStartAfter("start/b")))
+      .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+        assertEquals(List.of("start/c", "start/d"), keysOf(result));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void listObjectsGroupsFoldersWithPrefixAndDelimiter(VertxTestContext testContext) {
+    putAll(List.of("folders/readme.txt", "folders/2025/a.txt", "folders/2026/b.txt", "folders/2026/deep/c.txt"))
+      .compose(v -> client.listObjects(bucket, new S3ListObjectsOptions().setPrefix("folders/").setDelimiter("/")))
+      .onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+        assertEquals(List.of("folders/readme.txt"), keysOf(result));
+        assertEquals(List.of("folders/2025/", "folders/2026/"), result.getCommonPrefixes());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void listObjectsDecodesSpecialCharacterKeysAndPrefixes(VertxTestContext testContext) {
+    String folder = "list-special/مجلد +%&?#/";
+    List<String> keys = List.of("list-special/a b+c=d&e.txt", "list-special/percent%20literal",
+      "list-special/question?mark#hash", "list-special/ünïcødé 文件", "list-special/مستند.txt",
+      "list-special/quote'single\"double", "list-special/tilde~star*(paren)!", folder + "inner.txt");
+    putAll(keys)
+      .compose(v -> client.listObjects(bucket, new S3ListObjectsOptions().setPrefix("list-special/").setDelimiter("/")))
+      .compose(top -> {
+        testContext.verify(() -> {
+          assertEquals(keys.subList(0, keys.size() - 1).stream().sorted().collect(Collectors.toList()),
+            keysOf(top).stream().sorted().collect(Collectors.toList()));
+          assertEquals(List.of(folder), top.getCommonPrefixes());
+        });
+        return client.listObjects(bucket, new S3ListObjectsOptions().setPrefix(folder));
+      })
+      .onComplete(testContext.succeeding(inner -> testContext.verify(() -> {
+        assertEquals(List.of(folder + "inner.txt"), keysOf(inner));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void listedObjectAgreesWithHeadObject(VertxTestContext testContext) {
+    String key = "listed/one.bin";
+    put(client, key, Buffer.buffer(random(1234)), null)
+      .compose(etag -> client.headObject(bucket, key).compose(head ->
+        client.listObjects(bucket, new S3ListObjectsOptions().setPrefix("listed/")).map(list -> {
+          testContext.verify(() -> {
+            S3ListedObject listed = list.getObjects().get(0);
+            assertEquals(key, listed.getKey());
+            assertEquals(1234, listed.getSize());
+            assertEquals(etag, listed.getEtag());
+            assertEquals(head.getLastModified().getEpochSecond(), listed.getLastModified().getEpochSecond());
+          });
+          return list;
+        })))
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  @Test
+  void listObjectsInMissingBucketGivesNoSuchBucket(VertxTestContext testContext) {
+    client.listObjects(TestResources.uniqueBucketName(), null).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      S3ServiceException service = assertInstanceOf(S3ServiceException.class, e);
+      assertEquals(404, service.getStatusCode());
+      assertEquals("NoSuchBucket", service.getErrorCode());
+      testContext.completeNow();
+    })));
+  }
+
+  private Future<List<S3ListObjectsResult>> listAllPages(S3ListObjectsOptions options, List<S3ListObjectsResult> pages) {
+    return client.listObjects(bucket, options).compose(page -> {
+      pages.add(page);
+      return page.isTruncated()
+        ? listAllPages(new S3ListObjectsOptions(options).setContinuationToken(page.getNextContinuationToken()), pages)
+        : Future.succeededFuture(pages);
+    });
+  }
+
+  private Future<Void> putAll(List<String> keys) {
+    Future<Void> chain = Future.succeededFuture();
+    for (String key : keys) {
+      chain = chain.compose(v -> put(client, key, Buffer.buffer(key), null).mapEmpty());
+    }
+    return chain;
+  }
+
+  private static List<String> keysOf(S3ListObjectsResult result) {
+    return result.getObjects().stream().map(S3ListedObject::getKey).collect(Collectors.toList());
   }
 
   /** Puts an object in the suite's bucket, registering the key for cleanup first. */

@@ -196,6 +196,9 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   (end, failure or cancellation). `cancel()` closes the connection and fails the stream with an
   `S3ClientException`, so pipes don't hang. Object streams must be consumed or cancelled; docs
   and examples always show the cancel on paths that don't consume.
+- ListObjectsV2 always sends `encoding-type=url`. Keys and prefixes are decoded (form-style:
+  `+` is a space) only when the response says `<EncodingType>url</EncodingType>`. There is no
+  paging helper: the caller pages with the continuation token.
 - Object keys are validated before any I/O (`impl.ObjectRequests`): 1 to 1024 bytes of valid
   UTF-8. So are ranges (a single `bytes=` range), content types and user metadata (token names,
   case-insensitive; printable US-ASCII values).

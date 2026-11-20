@@ -9,6 +9,8 @@ import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3ListBucketsResult;
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsResult;
 import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
@@ -74,6 +76,30 @@ public final class S3ClientImpl implements S3Client {
   @Override
   public Future<Void> deleteBucket(String bucket) {
     return bucketRequest(HttpMethod.DELETE, bucket, null);
+  }
+
+  @Override
+  public Future<S3ListObjectsResult> listObjects(String bucket, S3ListObjectsOptions options) {
+    ContextSupport.Caller caller = ContextSupport.capture(vertx);
+    String problem = BucketNames.problem(bucket, config);
+    if (problem == null) {
+      problem = ObjectRequests.listProblem(options);
+    }
+    return call(caller, problem, () -> transport.execute(caller,
+        new S3Request(HttpMethod.GET, bucket, null, ObjectRequests.listQuery(options), List.of(), null)))
+      .compose(response -> {
+        S3ListObjectsResult result;
+        try {
+          result = ResponseParsers.listObjects(response.body);
+        } catch (XmlParseException e) {
+          return caller.failed(new S3ClientException("Invalid ListObjectsV2 response: " + e.getMessage(), e));
+        }
+        if (result.isTruncated() && result.getNextContinuationToken() == null) {
+          // Returned as is, a "while (truncated)" paging loop would restart from page 1 forever
+          return caller.failed(new S3ClientException("ListObjectsV2 response is truncated but has no continuation token", null));
+        }
+        return caller.succeeded(result);
+      });
   }
 
   @Override

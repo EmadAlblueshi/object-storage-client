@@ -180,6 +180,33 @@ cancel it. A stream that is neither consumed nor cancelled never releases its co
 {@link examples.Examples#cancelObjectStream}
 ----
 
+=== Listing objects
+
+`listObjects` returns one page of a bucket's objects, in key order, optionally limited to a prefix:
+
+[source,$lang]
+----
+{@link examples.Examples#listObjects}
+----
+
+With a delimiter, keys below the next delimiter are grouped into common prefixes: the "folders"
+of a key hierarchy.
+
+[source,$lang]
+----
+{@link examples.Examples#listFolders}
+----
+
+A page holds at most `maxKeys` entries (1000 by default). There is no paging helper: while a page
+is truncated, ask for the next one with its continuation token.
+
+[source,$lang]
+----
+{@link examples.Examples#listAllKeys}
+----
+
+Keys of any characters (spaces, `+`, `%`, Arabic, ...) are returned decoded.
+
 === Metadata and deletion
 
 [source,$lang]
