@@ -31,7 +31,7 @@ public interface S3Client {
    * @param options the options (copied; later changes have no effect)
    * @return the client
    * @throws IllegalArgumentException if the options are invalid, e.g. a missing endpoint, region
-   *     or credentials, or {@code UNSIGNED} payload signing over {@code http://}
+   *     or credentials
    * @throws NullPointerException if {@code vertx} or {@code options} is {@code null}
    */
   static S3Client create(Vertx vertx, S3ClientOptions options) {

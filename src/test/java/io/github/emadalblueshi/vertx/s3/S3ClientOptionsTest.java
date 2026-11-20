@@ -32,8 +32,6 @@ class S3ClientOptionsTest {
     assertTrue(options.isPathStyleAccess());
     assertNull(options.getCredentials());
     assertNull(options.getCredentialsProvider());
-    assertEquals(S3PayloadSigning.AUTO, options.getPayloadSigning());
-    assertEquals(256 * 1024, options.getMaxInlinePayloadHashSize());
     assertEquals(new HttpClientOptions().toJson(), options.getHttpClientOptions().toJson());
     assertEquals(new PoolOptions().toJson(), options.getPoolOptions().toJson());
   }
@@ -69,9 +67,6 @@ class S3ClientOptionsTest {
     assertEquals("https://nyc3.digitaloceanspaces.com", parsed.getEndpoint());
     assertEquals("nyc3", parsed.getRegion());
     assertFalse(parsed.isPathStyleAccess());
-    assertEquals(S3PayloadSigning.SIGNED, parsed.getPayloadSigning());
-    assertEquals("SIGNED", json.getString("payloadSigning"));
-    assertEquals(1024, parsed.getMaxInlinePayloadHashSize());
     assertEquals(4321, parsed.getHttpClientOptions().getConnectTimeout());
     assertEquals(42, parsed.getPoolOptions().getHttp1MaxSize());
   }
@@ -96,8 +91,6 @@ class S3ClientOptionsTest {
   void fromJsonKeepsDefaultsForAbsentSettings() {
     S3ClientOptions options = new S3ClientOptions(new JsonObject().put("region", "test-west-1"));
     assertTrue(options.isPathStyleAccess());
-    assertEquals(S3PayloadSigning.AUTO, options.getPayloadSigning());
-    assertEquals(S3ClientOptions.DEFAULT_MAX_INLINE_PAYLOAD_HASH_SIZE, options.getMaxInlinePayloadHashSize());
     assertNotNull(options.getHttpClientOptions());
     assertNotNull(options.getPoolOptions());
   }
@@ -152,10 +145,8 @@ class S3ClientOptionsTest {
   @Test
   void invalidValuesAreRejectedBySetters() {
     S3ClientOptions options = new S3ClientOptions();
-    assertThrows(NullPointerException.class, () -> options.setPayloadSigning(null));
     assertThrows(NullPointerException.class, () -> options.setHttpClientOptions(null));
     assertThrows(NullPointerException.class, () -> options.setPoolOptions(null));
-    assertThrows(IllegalArgumentException.class, () -> options.setMaxInlinePayloadHashSize(-1));
   }
 
   private static S3ClientOptions sample() {
@@ -163,9 +154,7 @@ class S3ClientOptionsTest {
       .setEndpoint("https://nyc3.digitaloceanspaces.com")
       .setRegion("nyc3")
       .setPathStyleAccess(false)
-      .setCredentials(new S3Credentials("AKIAEXAMPLE", SECRET).setSessionToken(TOKEN))
-      .setPayloadSigning(S3PayloadSigning.SIGNED)
-      .setMaxInlinePayloadHashSize(1024);
+      .setCredentials(new S3Credentials("AKIAEXAMPLE", SECRET).setSessionToken(TOKEN));
     options.getHttpClientOptions().setConnectTimeout(4321);
     options.getPoolOptions().setHttp1MaxSize(42);
     return options;
