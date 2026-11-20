@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
 import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.vertx.core.MultiMap;
@@ -148,5 +149,29 @@ class ObjectRequestsTest {
     assertNull(metadata.getEtag());
     assertNull(metadata.getLastModified());
     assertEquals(Map.of(), metadata.getMetadata());
+  }
+
+  // --- ListObjectsV2 ---
+
+  @Test
+  void listQueryAlwaysAsksForUrlEncodingAndSkipsUnsetOptions() {
+    assertEquals(List.of(Map.entry("list-type", "2"), Map.entry("encoding-type", "url")), ObjectRequests.listQuery(null));
+    assertEquals(List.of(Map.entry("list-type", "2"), Map.entry("encoding-type", "url")),
+      ObjectRequests.listQuery(new S3ListObjectsOptions().setPrefix("").setDelimiter("")));
+    assertEquals(List.of(Map.entry("list-type", "2"), Map.entry("encoding-type", "url"), Map.entry("prefix", "a b/"),
+        Map.entry("delimiter", "/"), Map.entry("max-keys", "3"), Map.entry("continuation-token", "t+/="),
+        Map.entry("start-after", "k")),
+      ObjectRequests.listQuery(new S3ListObjectsOptions().setPrefix("a b/").setDelimiter("/").setMaxKeys(3)
+        .setContinuationToken("t+/=").setStartAfter("k")));
+  }
+
+  @Test
+  void listOptionsMustBeValidUnicode() {
+    assertNull(ObjectRequests.listProblem(null));
+    assertNull(ObjectRequests.listProblem(new S3ListObjectsOptions().setPrefix("\u0645\u062c\u0644\u062f/")));
+    assertEquals("The prefix is not valid Unicode (unpaired surrogate)",
+      ObjectRequests.listProblem(new S3ListObjectsOptions().setPrefix("a\uDC00")));
+    assertEquals("The startAfter is not valid Unicode (unpaired surrogate)",
+      ObjectRequests.listProblem(new S3ListObjectsOptions().setStartAfter("\uD800")));
   }
 }

@@ -1,11 +1,13 @@
 package examples;
 
+import java.util.List;
 import java.util.Map;
 
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.github.emadalblueshi.vertx.s3.S3CredentialsProvider;
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
@@ -148,6 +150,31 @@ public class Examples {
       } else {
         stream.handler(chunk -> System.out.println(chunk.length() + " bytes")).resume();
       }
+    });
+  }
+
+  public void listObjects(S3Client client) {
+    client.listObjects("my-bucket", new S3ListObjectsOptions().setPrefix("reports/2026/"))
+      .onSuccess(page -> page.getObjects().forEach(object ->
+        System.out.println(object.getKey() + " (" + object.getSize() + " bytes)")));
+  }
+
+  public void listFolders(S3Client client) {
+    client.listObjects("my-bucket", new S3ListObjectsOptions().setPrefix("reports/").setDelimiter("/"))
+      .onSuccess(page -> {
+        page.getCommonPrefixes().forEach(folder -> System.out.println("folder " + folder));
+        page.getObjects().forEach(object -> System.out.println("file " + object.getKey()));
+      });
+  }
+
+  public Future<List<String>> listAllKeys(S3Client client, S3ListObjectsOptions options, List<String> keys) {
+    return client.listObjects("my-bucket", options).compose(page -> {
+      page.getObjects().forEach(object -> keys.add(object.getKey()));
+      if (!page.isTruncated()) {
+        return Future.succeededFuture(keys);
+      }
+      // Same prefix and delimiter, next page
+      return listAllKeys(client, new S3ListObjectsOptions(options).setContinuationToken(page.getNextContinuationToken()), keys);
     });
   }
 

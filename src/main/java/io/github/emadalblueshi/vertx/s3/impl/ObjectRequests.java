@@ -1,6 +1,5 @@
 package io.github.emadalblueshi.vertx.s3.impl;
 
-import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -17,6 +16,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
 import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.vertx.core.MultiMap;
@@ -46,19 +46,66 @@ final class ObjectRequests {
     if (key.isEmpty()) {
       return "The object key must not be empty";
     }
-    ByteBuffer utf8;
-    try {
-      utf8 = StandardCharsets.UTF_8.newEncoder()
-        .onMalformedInput(CodingErrorAction.REPORT)
-        .onUnmappableCharacter(CodingErrorAction.REPORT)
-        .encode(CharBuffer.wrap(key));
-    } catch (CharacterCodingException e) {
+    int utf8 = utf8Length(key);
+    if (utf8 < 0) {
       return "The object key is not valid Unicode (unpaired surrogate)";
     }
-    if (utf8.remaining() > MAX_KEY_BYTES) {
+    if (utf8 > MAX_KEY_BYTES) {
       return "The object key is longer than " + MAX_KEY_BYTES + " bytes in UTF-8";
     }
     return null;
+  }
+
+  /** Checks the ListObjectsV2 options ({@code null} means none): text values must be valid Unicode. */
+  static String listProblem(S3ListObjectsOptions options) {
+    if (options == null) {
+      return null;
+    }
+    String[][] values = {{"prefix", options.getPrefix()}, {"delimiter", options.getDelimiter()},
+      {"startAfter", options.getStartAfter()}, {"continuationToken", options.getContinuationToken()}};
+    for (String[] value : values) {
+      if (value[1] != null && utf8Length(value[1]) < 0) {
+        return "The " + value[0] + " is not valid Unicode (unpaired surrogate)";
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The ListObjectsV2 query: always {@code list-type=2} and {@code encoding-type=url} (so keys
+   * of any characters survive the XML response), plus the options that are set and non-empty.
+   */
+  static List<Map.Entry<String, String>> listQuery(S3ListObjectsOptions options) {
+    List<Map.Entry<String, String>> query = new ArrayList<>();
+    query.add(Map.entry("list-type", "2"));
+    query.add(Map.entry("encoding-type", "url"));
+    if (options != null) {
+      addIfSet(query, "prefix", options.getPrefix());
+      addIfSet(query, "delimiter", options.getDelimiter());
+      addIfSet(query, "max-keys", options.getMaxKeys() == null ? null : options.getMaxKeys().toString());
+      addIfSet(query, "continuation-token", options.getContinuationToken());
+      addIfSet(query, "start-after", options.getStartAfter());
+    }
+    return query;
+  }
+
+  private static void addIfSet(List<Map.Entry<String, String>> query, String name, String value) {
+    if (value != null && !value.isEmpty()) {
+      query.add(Map.entry(name, value));
+    }
+  }
+
+  /** The UTF-8 length of {@code value}, or {@code -1} if it isn't valid Unicode. */
+  private static int utf8Length(String value) {
+    try {
+      return StandardCharsets.UTF_8.newEncoder()
+        .onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT)
+        .encode(CharBuffer.wrap(value))
+        .remaining();
+    } catch (CharacterCodingException e) {
+      return -1;
+    }
   }
 
   /** A single HTTP byte range: {@code bytes=first-last}, {@code bytes=first-} or {@code bytes=-suffixLength}. */

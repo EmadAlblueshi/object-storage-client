@@ -27,6 +27,7 @@ import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
 import io.vertx.core.Future;
@@ -411,6 +412,53 @@ class TransportStubTest {
   }
 
   // --- objects: wire format, size limits, streams ---------------------------------------------------
+
+  @Test
+  void listObjectsSendsASortedEncodedQueryAndDecodesTheResult(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "<ListBucketResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated>"
+      + "<Contents><Key>a+b/%D9%85%D9%84%D9%81.txt</Key><Size>5</Size></Contents>"
+      + "<CommonPrefixes><Prefix>a+b/sub%2B/</Prefix></CommonPrefixes>"
+      + "<NextContinuationToken>next+/=</NextContinuationToken></ListBucketResult>"));
+    S3ListObjectsOptions list = new S3ListObjectsOptions().setPrefix("a b/").setDelimiter("/").setMaxKeys(3)
+      .setContinuationToken("t+/=").setStartAfter("a b/0");
+    client.listObjects("bucket", list).eventually(client::close).onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+      Captured c = last.get();
+      assertEquals(HttpMethod.GET, c.method);
+      assertEquals("/bucket?continuation-token=t%2B%2F%3D&delimiter=%2F&encoding-type=url&list-type=2&max-keys=3"
+        + "&prefix=a%20b%2F&start-after=a%20b%2F0", c.uri);
+      assertEquals("a b/\u0645\u0644\u0641.txt", result.getObjects().get(0).getKey());
+      assertEquals(List.of("a b/sub+/"), result.getCommonPrefixes());
+      assertTrue(result.isTruncated());
+      assertEquals("next+/=", result.getNextContinuationToken());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void truncatedListWithoutContinuationTokenFails(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "<ListBucketResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated>"
+      + "<Contents><Key>k</Key><Size>1</Size></Contents></ListBucketResult>"));
+    client.listObjects("bucket", null).eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertEquals("ListObjectsV2 response is truncated but has no continuation token", e.getMessage());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void invalidListResponseIsAClientError(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "<ListBucketResult><EncodingType>url</EncodingType><Contents><Key>%zz</Key>"
+      + "</Contents></ListBucketResult>"));
+    client.listObjects("bucket", null).eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertTrue(e.getMessage().startsWith("Invalid ListObjectsV2 response"), e.getMessage());
+      assertEquals("/bucket?encoding-type=url&list-type=2", last.get().uri);
+      testContext.completeNow();
+    })));
+  }
 
   @Test
   void putObjectSendsContentTypeAndMetadataAndReturnsTheEtag(VertxTestContext testContext) {

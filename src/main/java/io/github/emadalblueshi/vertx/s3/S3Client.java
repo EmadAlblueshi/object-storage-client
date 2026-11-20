@@ -84,6 +84,27 @@ public interface S3Client {
   Future<Void> deleteBucket(String bucket);
 
   /**
+   * Lists one page of the objects in a bucket (ListObjectsV2), in key order.
+   * <p>
+   * A page holds at most {@link S3ListObjectsOptions#getMaxKeys() maxKeys} entries (server
+   * default 1000). If the result is {@linkplain S3ListObjectsResult#isTruncated() truncated},
+   * call again with its {@linkplain S3ListObjectsResult#getNextContinuationToken() next
+   * continuation token}; there is no paging helper. With a delimiter (usually {@code "/"}), keys
+   * below the next delimiter are grouped into {@linkplain S3ListObjectsResult#getCommonPrefixes()
+   * common prefixes}, i.e. "folders".
+   * <p>
+   * Keys and prefixes of any characters are returned decoded: the request always asks for
+   * URL-encoded keys ({@code encoding-type=url}) and the client decodes them.
+   *
+   * @param bucket the bucket name
+   * @param options prefix, delimiter, page size, continuation token, start key; {@code null} for none
+   * @return one page of results; it fails with an {@link S3ServiceException} such as
+   *     {@code NoSuchBucket}, and with an {@link S3ClientException} if the server reports a
+   *     truncated page without a continuation token (it couldn't be paged)
+   */
+  Future<S3ListObjectsResult> listObjects(String bucket, S3ListObjectsOptions options);
+
+  /**
    * Uploads an object from a buffer (PutObject), replacing any existing object with that key.
    * <p>
    * Object keys are 1 to 1024 bytes of UTF-8 (any characters; they are encoded on the wire). An

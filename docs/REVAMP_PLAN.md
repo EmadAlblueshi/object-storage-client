@@ -299,7 +299,7 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 | **3. Presigned URLs** (own phase, right after the core client) | GET/PUT presign | Synchronous `S3Presigner` (standalone via `S3Presigner.create(options)` without `Vertx`, also exposed from the client) returning `URI`/`String`; shared SigV4 signer (query auth, `UNSIGNED-PAYLOAD`, cached signing key); separate presigner endpoint; expiry ≤ 604800 s; optional extra signed headers; `response-*` overrides; `X-Amz-Security-Token`; injectable `Clock`; unit tests on AWS published examples; integration via plain HTTP client against Silo (including a non-default port). Presigned POST is out of scope. | Host/port mismatch, clock skew |
 | **4. Streaming uploads** | Backpressure-correct uploads | `putObject` from a `ReadStream<Buffer>` and from a file (AsyncFile): pause-before-async, payload hashing per the payload-signing policy, single PUT for small/empty bodies, multipart **internally and only when required** (part size internal, no public option), **AbortMultipartUpload on every failure**, file close on all paths. No public multipart API. (`getObjectStream` moved to Phase 2 step 6.) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
 | **5. Hardening** (lean) | Production-ready on DOKS | Closing the client aborts in-flight internal multipart uploads; log-redaction audit. The external backend profile stays local (the owner runs it); a CI job only if the owner asks. No retry framework and no per-operation timeout settings (non-goals). | Internal API drift on Vert.x bumps |
-| **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `0.5.0` (or `1.0.0-alpha1`) | — |
+| **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `0.5.0` (or `1.0.0-alpha1`); see the Phase 6 release checklist below | — |
 
 ---
 
@@ -437,7 +437,18 @@ Order rationale: options come before the transport, which consumes them (endpoin
 - **Abandoned streams (owner answer).** An abandoned `getObjectStream` stream must not leak a pooled connection. The returned stream type gets one small cancel method that resets the request and releases the connection. The docs say the stream must be consumed or cancelled. The exact shape is proposed in the step 6 diff.
 
 ### Phase 2 — step 7: external backend profile (2026-11-20)
-- **External backend used by the owner:** the owner runs the external profile against DigitalOcean Spaces, which is built on Ceph RGW. That covers Ceph-specific behaviour, so no Ceph or SeaweedFS container is planned.
+- **PENDING (owner has no Spaces account yet, 2026-11-20):** Run the external profile against real Spaces before the first release, in both addressing styles:
+  ```
+  export S3_ENDPOINT=https://<region>.digitaloceanspaces.com
+  export S3_REGION=<region>
+  export S3_ACCESS_KEY=<key>
+  read -rs S3_SECRET_KEY && export S3_SECRET_KEY
+  mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false
+  S3_PATH_STYLE=false mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false
+  unset S3_ENDPOINT S3_REGION S3_ACCESS_KEY S3_SECRET_KEY
+  ```
+  Unverified until then: LocationConstraint, UNSIGNED-PAYLOAD on Spaces, virtual-hosted addressing, dot-segment and leading-slash key behavior.
+- **External backend used by the owner:** the owner will run the external profile against DigitalOcean Spaces, which is built on Ceph RGW. That covers Ceph-specific behaviour, so no Ceph or SeaweedFS container is planned.
 - **Running it:** set `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY` and `S3_SECRET_KEY`, then `mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false`. Optional, test-only `S3_PATH_STYLE=false` runs the same suites with virtual-hosted-style addressing (owner decision; the default stays path-style). No Docker is needed: the external suites don't start containers. A full `mvn verify` with the variables set runs them too.
 - **What the external suites expect:** AWS semantics. Keys with empty, `.` or `..` segments round-trip, and `/x` and `x` are distinct objects. A backend that behaves otherwise fails exactly those tests, naming the server's error. That is how differences are reported.
 - **New finding: Silo strips a leading `/` from keys** (verified): `/x` and `x` are the same object. On AWS they are distinct. The Silo subclasses expect this (`stripsLeadingSlash`).
@@ -471,9 +482,45 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
 - The same commit updates AGENTS.md's payload-signing section and decision 4.
 
 ### GitHub issues (checked 2026-11-20)
-- #31 "Supports list buckets": done in step 4 (`599917f`), which didn't reference it. Close it by hand.
-- #32 "Supports list objects": in scope, Phase 2 step 8 (ListObjectsV2). That commit says "Closes #32".
-- #36 "Supports get object as stream": in scope, Phase 2 step 6 (`getObjectStream`). That commit says "Closes #36".
+- #31 "Supports list buckets": implemented in step 4 (`599917f`). Closed by the step 8 commit message ("Closes #31").
+- #32 "Supports list objects": implemented by step 8 (`listObjects`, ListObjectsV2). Closed by the step 8 commit message ("Closes #32").
+- #36 "Supports get object as stream": implemented by step 6 (`eda398c`, `getObjectStream`), whose commit closed it.
+
+### Phase 2 — step 8: ListObjectsV2 (2026-11-20)
+- **API:** one method, `listObjects(bucket, S3ListObjectsOptions)`, which returns one page as `S3ListObjectsResult`. `null` options means none.
+  - **Options** (`S3ListObjectsOptions`): `prefix`, `delimiter`, `maxKeys` (1–1000, `null` for the server default), `continuationToken` and `startAfter`. Unset or empty values are not sent.
+  - **Result:** `objects` (`S3ListedObject`: key, size, ETag as sent, last modified), `commonPrefixes`, `truncated` and `nextContinuationToken`.
+  - No owner, storage class or paging helper: the caller pages with the continuation token.
+  - `S3ListedObject` is named so it doesn't clash with AWS SDK v1's `S3ObjectSummary`.
+- **Encoding:** every request sends `encoding-type=url`. Keys and prefixes are decoded only when the response says `<EncodingType>url</EncodingType>`: form-style (`+` is a space, `%XX` is UTF-8), via `URLDecoder`. A server that ignores the parameter therefore can't have keys mangled.
+- **Finding:** without `encoding-type=url`, Silo returns keys raw, and the special-character tests (Arabic, space, `+`, `%`, `?`, `#`, `&`, quotes) still pass. The encoding is what protects keys containing characters XML 1.0 can't carry (e.g. control characters). Sending it is pinned by the query tests.
+- **Truncated without a token fails** (owner decision): `truncated=true` with no `NextContinuationToken` fails with `S3ClientException("ListObjectsV2 response is truncated but has no continuation token")`. Returned as is, a standard `while (truncated)` paging loop would restart from page 1 forever. A stub test pins it.
+- **Response limit:** the fixed 4 MiB XML limit (`Transport.execute`). An undecodable key fails with `S3ClientException("Invalid ListObjectsV2 response: …")`.
+- **Tests:**
+  - Shared suite (Silo HTTP/HTTPS and external):
+    - paging across 3 pages (7 keys, `maxKeys` 3);
+    - `startAfter`;
+    - prefix and delimiter "folders";
+    - special-character keys and a special-character folder prefix (including Arabic);
+    - listed objects agree with `headObject`;
+    - `NoSuchBucket`.
+  - The bucket suite's single lifecycle bucket also checks that a new bucket lists empty, so no extra bucket is created.
+  - Context harness: success and failure for all four caller kinds.
+  - Stub: the exact sorted, encoded query.
+  - The external suites were also run against a pinned-tag Silo stand-in: all listing tests passed.
+
+### Phase 6 — release checklist
+- [ ] Run the external profile against real Spaces before the first release, in both addressing styles:
+  ```
+  export S3_ENDPOINT=https://<region>.digitaloceanspaces.com
+  export S3_REGION=<region>
+  export S3_ACCESS_KEY=<key>
+  read -rs S3_SECRET_KEY && export S3_SECRET_KEY
+  mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false
+  S3_PATH_STYLE=false mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false
+  unset S3_ENDPOINT S3_REGION S3_ACCESS_KEY S3_SECRET_KEY
+  ```
+  Unverified until then: LocationConstraint, UNSIGNED-PAYLOAD on Spaces, virtual-hosted addressing, dot-segment and leading-slash key behavior.
 
 ## Decision questions for you (answer before Phase 1)
 1. **Coordinates/package:** keep groupId `io.github.emadalblueshi`, root package `io.github.emadalblueshi.vertx.s3`, module `io.github.emadalblueshi.vertx.s3`? (alt: `io.github.emadalblueshi.s3`)
