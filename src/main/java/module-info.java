@@ -6,6 +6,7 @@
  */
 module io.github.emadalblueshi.vertx.s3 {
   requires transitive io.vertx.core;
+  requires java.xml; // JDK StAX for S3 XML (impl only)
 
   // Annotations only (provided scope): codegen data objects / JSON converters and docgen.
   requires static io.vertx.codegen.api;
