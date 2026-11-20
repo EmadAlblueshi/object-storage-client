@@ -321,6 +321,12 @@ Steps 1 and 2 land as **one change**. Once web-client and Jackson are removed th
 - **Backend: Silo** (`docker.io/pgsty/silo:RELEASE.2026-09-03T13-18-01Z`), a maintained MinIO fork with the same S3 API, `MINIO_*` env vars and `/minio/health` routes. Upstream MinIO community edition is in maintenance mode and no longer publishes images. The tag is always an exact release (never `latest`) and only changes with the owner's approval.
 - **Old multipart path:** it hangs on Vert.x 5.2.3 (`testPutObjectAsStream` and `testPutObjectFileAsStream` time out, then `testGetObjectUpload` fails with NoSuchKey) but passes on 5.0.4. The old tests are removed with the old package. The new streaming tests (Phase 4) must cover the same scenarios: stream upload, file upload, an exact multiple of 5 MiB, an empty stream, and pause/backpressure. Test data is generated at runtime (random bytes of exact sizes: 0, 1 byte, 5 MiB, n × 5 MiB, 5 MiB + 1). No committed binary fixtures.
 - **Step 4:** carry the Silo container over into the new test package, updating the tag to `RELEASE.2026-11-12T00-00-00Z` (approved by the owner). Make the integration tests backend-agnostic, with one abstraction for container, endpoint and credentials, so more backends can be added later.
+- **Region enforcement (step 4, verified 2026-11-20):** Silo is configured with `MINIO_SITE_REGION=test-west-1`, which makes the server enforce the region. Verified manually with `curl --aws-sigv4` against `RELEASE.2026-11-12T00-00-00Z`:
+  - A bucket-level request (ListObjects) signed for `us-east-1` is rejected with 400 `AuthorizationHeaderMalformed` ("the region is wrong; expecting 'test-west-1'").
+  - ListBuckets and GetBucketLocation accept any region, by S3 design.
+  - `MINIO_REGION` is a legacy alias that behaves the same.
+  - `MINIO_REGION_NAME` does **not** set the region; it is accepted silently.
+- **Deferred to Phase 2 (needs the signer):** an automated smoke test proving that a request signed for a different region is rejected. Use a bucket-level operation (e.g. ListObjects or HeadBucket on a bucket created with the correct region), not ListBuckets or GetBucketLocation. Assert 400 `AuthorizationHeaderMalformed`, plus success for the same request signed for `test-west-1`.
 - **Phase 2 (not now):** a second backend, SeaweedFS, plus an optional DigitalOcean Spaces profile that runs only when credentials come from environment variables or CI secrets. Credentials are never committed.
 
 ### Phase 1 — additional concrete items
