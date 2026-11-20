@@ -153,12 +153,14 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
   context test suite on all three threading models) before merging.
 
 ## Payload-signing policy
-- Configurable on the client options. The defaults are:
-  - Streaming/multipart over HTTPS: `UNSIGNED-PAYLOAD`.
-  - Small buffered requests: signed SHA-256. Above a configurable size threshold, the
-    hash is computed via `executeBlocking`, never inline on the event loop.
-  - Over plain HTTP: payloads are always signed. `UNSIGNED` with an `http://` endpoint is
-    rejected by `create()` (`IllegalArgumentException`).
+- **Not configurable**: there is no public setting. The endpoint scheme decides
+  (`impl.PayloadMode`, decision 4 revised as Option A):
+  - HTTPS: `UNSIGNED-PAYLOAD` for every request, buffered or streamed. Nothing is hashed.
+  - Plain HTTP: payloads are always signed with SHA-256. Buffers above a fixed internal
+    threshold (256 KiB) are hashed via `executeBlocking`, never inline on the event loop.
+    Upload parts are hashed incrementally as their chunks arrive.
+- Don't reintroduce a payload-signing option unless the owner asks (e.g. for a backend that
+  demands signed payloads over HTTPS, or a TLS-terminating proxy).
 - Never send AWS-only trailing checksums (`aws-chunked`, `x-amz-checksum-*` trailers) by
   default.
 
@@ -244,10 +246,10 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - Test code compiles with `--release 11`, same as main. Virtual-thread verticles are deployed
   through the Vert.x API only (`ThreadingModel.VIRTUAL_THREAD`), never through JDK
   virtual-thread APIs.
-- The payload-signing matrix is covered against Silo: HTTPS (unsigned streaming/multipart,
-  signed small requests, signed above the `executeBlocking` threshold) and plain HTTP
-  (signed only, unsigned rejected). HTTPS uses a committed, test-only self-signed certificate
-  with a long expiry under `src/test/resources` (named so it is obviously test-only).
+- Payload signing is covered against Silo: HTTPS (unsigned, buffered and streamed) and plain
+  HTTP (signed: inline, and above the `executeBlocking` threshold). HTTPS uses a committed,
+  test-only self-signed certificate with a long expiry under `src/test/resources` (named so it
+  is obviously test-only).
 - Streaming tests cover backpressure (slow consumer), empty stream, exact part-size multiples,
   failures, and abort.
 - Test data is generated at runtime: random bytes of exact sizes (e.g. 0, 1 byte, 5 MiB,

@@ -27,7 +27,6 @@ import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
-import io.github.emadalblueshi.vertx.s3.S3PayloadSigning;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
@@ -141,16 +140,16 @@ class TransportStubTest {
   }
 
   @Test
-  void largeBodyIsHashedOffTheCallerThreadAndStillCorrect(VertxTestContext testContext) {
-    byte[] data = new byte[100_000];
+  void largeBodyOverHttpIsHashedOffTheCallerThreadAndStillCorrect(VertxTestContext testContext) {
+    byte[] data = new byte[PayloadMode.MAX_INLINE_HASH_SIZE + 1];
     new Random(42).nextBytes(data);
-    Transport transport = transport(options(http.actualPort(), false).setMaxInlinePayloadHashSize(16));
+    Transport transport = transport(options(http.actualPort(), false));
     responder.set(c -> new Stub(200, ""));
     transport.execute(ContextSupport.capture(vertx), new S3Request(HttpMethod.PUT, "bucket", "big.bin", List.of(), List.of(),
         Buffer.buffer(data))).eventually(transport::close)
       .onComplete(testContext.succeeding(response -> testContext.verify(() -> {
         assertEquals(HashUtil.sha256Hex(data), last.get().headers.get("x-amz-content-sha256"));
-        assertEquals("100000", last.get().headers.get("Content-Length"));
+        assertEquals(Integer.toString(data.length), last.get().headers.get("Content-Length"));
         testContext.completeNow();
       })));
   }
@@ -170,8 +169,8 @@ class TransportStubTest {
   }
 
   @Test
-  void unsignedPayloadOverTls(VertxTestContext testContext) {
-    Transport transport = transport(options(https.actualPort(), true).setPayloadSigning(S3PayloadSigning.UNSIGNED));
+  void bodiesAreUnsignedOverTls(VertxTestContext testContext) {
+    Transport transport = transport(options(https.actualPort(), true));
     responder.set(c -> new Stub(200, ""));
     transport.execute(ContextSupport.capture(vertx), new S3Request(HttpMethod.PUT, "bucket", "k", List.of(), List.of(),
         Buffer.buffer("data"))).eventually(transport::close)
@@ -180,6 +179,16 @@ class TransportStubTest {
         assertEquals("localhost:" + https.actualPort(), last.get().headers.get("Host"));
         testContext.completeNow();
       })));
+  }
+
+  @Test
+  void bodilessRequestsAreUnsignedOverTls(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(https.actualPort(), true));
+    client.listBuckets().eventually(client::close).onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+      assertEquals(S3SignatureV4.UNSIGNED_PAYLOAD, last.get().headers.get("x-amz-content-sha256"));
+      assertTrue(last.get().headers.get("Authorization").contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date,"));
+      testContext.completeNow();
+    })));
   }
 
   @Test

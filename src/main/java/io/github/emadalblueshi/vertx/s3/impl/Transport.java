@@ -21,8 +21,8 @@ import io.vertx.core.net.HostAndPort;
  *   <li>The wire path and query are produced by the same helpers the signer uses, so what is sent
  *   is exactly what is signed. The Host header (authority) is set explicitly and matches the
  *   signed value: the port is included only when it isn't the scheme default.</li>
- *   <li>Payload signing follows {@link PayloadMode}. Large signed bodies are hashed via
- *   {@code executeBlocking}.</li>
+ *   <li>Payload signing follows {@link PayloadMode}: {@code UNSIGNED-PAYLOAD} over HTTPS, signed
+ *   over HTTP, where large bodies are hashed via {@code executeBlocking}.</li>
  *   <li>{@code Content-Length} is always set when a body is sent (and as {@code 0} for PUT/POST
  *   without a body). Redirects are never followed.</li>
  *   <li>Every request carries {@code User-Agent: vertx-s3-client/<version>}, unsigned.</li>
@@ -64,10 +64,10 @@ final class Transport {
     return http.close();
   }
 
-  private Future<String> payloadHash(ContextSupport.Caller caller, S3Request request) {
+  /** The {@code x-amz-content-sha256} value for {@code request}. Package-private for tests. */
+  Future<String> payloadHash(ContextSupport.Caller caller, S3Request request) {
     Buffer body = request.body;
-    switch (PayloadMode.decide(config.payloadSigning, config.tls, body == null ? -1 : body.length(),
-      config.maxInlinePayloadHashSize)) {
+    switch (PayloadMode.decide(config.tls, body == null ? -1 : body.length())) {
       case EMPTY:
         return caller.succeeded(S3SignatureV4.EMPTY_PAYLOAD_SHA256);
       case UNSIGNED:

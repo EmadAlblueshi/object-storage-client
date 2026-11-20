@@ -23,7 +23,11 @@ and a local MinIO-compatible server:
 ----
 
 `S3Client.create` validates the options and throws `IllegalArgumentException` if they are invalid
-(missing endpoint, region or credentials, `UNSIGNED` payload signing over `http://`, ...).
+(missing endpoint, region or credentials, ...).
+
+Payload signing isn't configurable. Over HTTPS, request bodies are sent as `UNSIGNED-PAYLOAD`:
+TLS protects them, and the signature still covers the method, path, query and headers. Over plain
+HTTP, every body is signed with its SHA-256.
 
 === Addressing style
 

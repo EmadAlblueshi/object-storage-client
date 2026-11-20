@@ -10,7 +10,6 @@ import java.util.regex.Pattern;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.github.emadalblueshi.vertx.s3.S3CredentialsProvider;
-import io.github.emadalblueshi.vertx.s3.S3PayloadSigning;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.PoolOptions;
 
@@ -32,8 +31,6 @@ final class ClientConfig {
   final String region;
   final boolean pathStyleAccess;
   final S3CredentialsProvider credentialsProvider;
-  final S3PayloadSigning payloadSigning;
-  final int maxInlinePayloadHashSize;
   final HttpClientOptions httpClientOptions;
   final PoolOptions poolOptions;
   final Clock clock;
@@ -47,8 +44,6 @@ final class ClientConfig {
     this.region = options.getRegion().trim();
     this.pathStyleAccess = options.isPathStyleAccess();
     this.credentialsProvider = credentialsProvider;
-    this.payloadSigning = options.getPayloadSigning();
-    this.maxInlinePayloadHashSize = options.getMaxInlinePayloadHashSize();
     this.httpClientOptions = new HttpClientOptions(options.getHttpClientOptions())
       .setDefaultHost(host).setDefaultPort(port).setSsl(tls);
     this.poolOptions = new PoolOptions(options.getPoolOptions());
@@ -73,11 +68,6 @@ final class ClientConfig {
     }
 
     S3CredentialsProvider provider = credentials(options);
-
-    if (options.getPayloadSigning() == S3PayloadSigning.UNSIGNED && !tls) {
-      throw new IllegalArgumentException("payloadSigning UNSIGNED requires an https endpoint; payloads are always "
-        + "signed over plain HTTP");
-    }
 
     HttpClientOptions http = Objects.requireNonNull(options.getHttpClientOptions(), "httpClientOptions");
     if (!HttpClientOptions.DEFAULT_DEFAULT_HOST.equals(http.getDefaultHost())

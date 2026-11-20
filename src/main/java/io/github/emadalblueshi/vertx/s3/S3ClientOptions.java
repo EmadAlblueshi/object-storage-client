@@ -25,6 +25,9 @@ import io.vertx.core.json.JsonObject;
  * {@link #setCredentialsProvider(S3CredentialsProvider)} (not serialised). Exactly one must be
  * set. Required values (endpoint, region, credentials) are validated by {@code S3Client.create},
  * which throws {@link IllegalArgumentException} for invalid options.
+ * <p>
+ * Payload signing is not configurable: the endpoint scheme decides. Over HTTPS, payloads are sent
+ * as {@code UNSIGNED-PAYLOAD} (TLS protects them); over plain HTTP, they are always signed.
  */
 @DataObject
 @JsonGen(publicConverter = false)
@@ -38,12 +41,6 @@ public class S3ClientOptions {
    */
   public static final boolean DEFAULT_PATH_STYLE_ACCESS = true;
 
-  /** Default payload signing policy: {@link S3PayloadSigning#AUTO}. */
-  public static final S3PayloadSigning DEFAULT_PAYLOAD_SIGNING = S3PayloadSigning.AUTO;
-
-  /** Default: bodies up to 256 KiB are hashed inline; larger ones via {@code executeBlocking}. */
-  public static final int DEFAULT_MAX_INLINE_PAYLOAD_HASH_SIZE = 256 * 1024;
-
   // Keys Vert.x writes in clear inside HttpClientOptions JSON (key/trust store passwords, proxy auth).
   private static final Set<String> SECRET_JSON_KEYS = Set.of("password", "aliasPassword");
 
@@ -52,15 +49,11 @@ public class S3ClientOptions {
   private boolean pathStyleAccess;
   private S3Credentials credentials;
   private S3CredentialsProvider credentialsProvider;
-  private S3PayloadSigning payloadSigning;
-  private int maxInlinePayloadHashSize;
   private HttpClientOptions httpClientOptions;
   private PoolOptions poolOptions;
 
   public S3ClientOptions() {
     pathStyleAccess = DEFAULT_PATH_STYLE_ACCESS;
-    payloadSigning = DEFAULT_PAYLOAD_SIGNING;
-    maxInlinePayloadHashSize = DEFAULT_MAX_INLINE_PAYLOAD_HASH_SIZE;
     httpClientOptions = new HttpClientOptions();
     poolOptions = new PoolOptions();
   }
@@ -72,8 +65,6 @@ public class S3ClientOptions {
     pathStyleAccess = other.pathStyleAccess;
     credentials = other.credentials == null ? null : new S3Credentials(other.credentials);
     credentialsProvider = other.credentialsProvider;
-    payloadSigning = other.payloadSigning;
-    maxInlinePayloadHashSize = other.maxInlinePayloadHashSize;
     httpClientOptions = new HttpClientOptions(other.httpClientOptions);
     poolOptions = new PoolOptions(other.poolOptions);
   }
@@ -144,31 +135,6 @@ public class S3ClientOptions {
     return this;
   }
 
-  public S3PayloadSigning getPayloadSigning() {
-    return payloadSigning;
-  }
-
-  public S3ClientOptions setPayloadSigning(S3PayloadSigning payloadSigning) {
-    this.payloadSigning = Objects.requireNonNull(payloadSigning, "payloadSigning");
-    return this;
-  }
-
-  /**
-   * The largest body (in bytes) whose SHA-256 is computed inline on the caller's thread. Larger
-   * signed bodies are hashed via {@code executeBlocking}.
-   */
-  public int getMaxInlinePayloadHashSize() {
-    return maxInlinePayloadHashSize;
-  }
-
-  public S3ClientOptions setMaxInlinePayloadHashSize(int maxInlinePayloadHashSize) {
-    if (maxInlinePayloadHashSize < 0) {
-      throw new IllegalArgumentException("maxInlinePayloadHashSize must be >= 0");
-    }
-    this.maxInlinePayloadHashSize = maxInlinePayloadHashSize;
-    return this;
-  }
-
   /**
    * Transport settings for the underlying HTTP client (TLS trust, timeouts, keep-alive, ...).
    * Default host, default port and {@code ssl} must be left at their defaults: they are
@@ -226,8 +192,6 @@ public class S3ClientOptions {
       + ", region=" + region
       + ", pathStyleAccess=" + pathStyleAccess
       + ", credentials=" + credentials
-      + ", credentialsProvider=" + (credentialsProvider == null ? null : credentialsProvider.getClass().getName())
-      + ", payloadSigning=" + payloadSigning
-      + ", maxInlinePayloadHashSize=" + maxInlinePayloadHashSize + '}';
+      + ", credentialsProvider=" + (credentialsProvider == null ? null : credentialsProvider.getClass().getName()) + '}';
   }
 }

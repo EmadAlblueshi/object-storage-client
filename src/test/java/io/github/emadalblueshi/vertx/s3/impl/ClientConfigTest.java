@@ -14,7 +14,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
-import io.github.emadalblueshi.vertx.s3.S3PayloadSigning;
 
 /** Validation in {@code S3Client.create}: every invalid option fails fast with IllegalArgumentException. */
 class ClientConfigTest {
@@ -91,12 +90,6 @@ class ClientConfigTest {
     ClientConfig config = ClientConfig.from(valid().setCredentials(credentials));
     credentials.setSecretKey("changed");
     assertEquals("secret", config.credentialsProvider.credentials().getSecretKey());
-  }
-
-  @Test
-  void unsignedPayloadsNeedHttps() {
-    assertInvalid(o -> o.setEndpoint("http://localhost:9000").setPayloadSigning(S3PayloadSigning.UNSIGNED));
-    ClientConfig.from(valid().setEndpoint("https://s3.example.com").setPayloadSigning(S3PayloadSigning.UNSIGNED));
   }
 
   @Test
