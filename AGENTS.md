@@ -2,12 +2,15 @@
 
 ## Purpose
 Asynchronous, idiomatic Vert.x 5 client for Amazon S3 and S3-compatible storage
-(DigitalOcean Spaces in production, MinIO for local dev/tests). Consumed by a pure
+(DigitalOcean Spaces in production; MinIO-compatible servers for local dev and tests). Consumed by a pure
 Vert.x 5.2.x backend running on Kubernetes.
 
 **Rename in progress:** formerly `object-storage-client`
 (`io.github.emadalblueshi.objectstorage.client`). The old API is being replaced, not
 migrated; backward compatibility is NOT a goal. Do not add code to the old package.
+
+**Roadmap:** [`docs/REVAMP_PLAN.md`](docs/REVAMP_PLAN.md) is the source of truth for the
+revamp roadmap, phases and recorded decisions. Follow it; when it and this file disagree, ask.
 
 ## Tech stack
 - Maven, single module.
@@ -18,9 +21,14 @@ migrated; backward compatibility is NOT a goal. Do not add code to the old packa
 - **`vertx-core` is the only runtime dependency.** XML uses JDK StAX (`java.xml`); no Jackson
   XML, no other libraries.
 - `vertx-codegen` (provided scope): `@DataObject` + generated JSON converters for options classes.
+- `vertx-docgen` (provided scope): generates the Asciidoc manual from `src/main/asciidoc/*.adoc`
+  and the `examples` package. Both processors run via `annotationProcessorPaths`.
 - Tests: JUnit Jupiter **5.14.4** (`junit-bom` imported BEFORE `vertx-dependencies`; don't
   take the JUnit 6 that the Vert.x BOM manages, because it needs Java 17), `vertx-junit5`,
-  Testcontainers **2.0.5** (works with Docker 29), MinIO.
+  Testcontainers **2.0.5** (works with Docker 29).
+- Test backend: **Silo** (`docker.io/pgsty/silo`), a maintained MinIO fork with the same S3 API,
+  `MINIO_*` env vars and `/minio/health` routes. Upstream MinIO community edition no longer
+  publishes images.
 
 ## Coordinates & layout
 - Maven: `io.github.emadalblueshi:vertx-s3-client`
@@ -28,6 +36,15 @@ migrated; backward compatibility is NOT a goal. Do not add code to the old packa
 - `io.github.emadalblueshi.vertx.s3` — public API (client interface, options, results, exceptions)
 - `io.github.emadalblueshi.vertx.s3.impl` (and sub-packages) — internals (signer, transport,
   XML, streams). Never exported.
+- `examples` — docgen snippets referenced from `src/main/asciidoc`. Compiled, but excluded
+  from the jar, sources and javadoc.
+
+## Build tooling policy
+- The revamp is about the API. Change build tooling **only where a recorded decision requires
+  it**: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the
+  processor wiring for codegen and docgen.
+- Leave the rest of the existing build, site and doc setup as it is: docgen, the asciidoctor
+  site, javadoc, the source and test jars, Central publishing and the gpg profile.
 
 ## Commands
 - Compile: `mvn -q -DskipTests compile`
@@ -35,7 +52,7 @@ migrated; backward compatibility is NOT a goal. Do not add code to the old packa
 - JDK 11 check: `mvn verify` on JDK 11. The `java11` profile auto-activates and only excludes
   the `virtual-threads` tag; it changes nothing else.
 - Single test: `mvn test -Dtest=ClassName#method`
-- Format check: `mvn spotless:check` (once configured)
+- Site/docs: `mvn -DskipTests package site` (docgen output: `target/asciidoc/java`)
 
 ## Java 11 rules (`src/main` and `src/test`)
 - No records, sealed types, switch expressions, text blocks, or pattern matching for `instanceof`.
@@ -104,7 +121,12 @@ migrated; backward compatibility is NOT a goal. Do not add code to the old packa
 - No default credentials; fail fast when they are missing.
 
 ## Testing rules
-- vertx-junit5. Integration tests run against MinIO via Testcontainers (pinned image tag).
+- vertx-junit5. Integration tests run against Silo via Testcontainers. The image is pinned to an
+  exact release tag (never `latest`); don't change the tag without asking.
+- Integration tests are backend-agnostic: one abstraction supplies the container, endpoint and
+  credentials, so more backends can be added (planned: SeaweedFS, and an optional DigitalOcean
+  Spaces profile that runs only when credentials come from environment variables or CI secrets).
+  Backend credentials are never committed.
 - Every public async operation has a context test: from an **event-loop verticle**, a
   **worker verticle**, and a **virtual-thread verticle**, assert that
   `Vertx.currentContext()` inside every callback / Future completion is the same instance as
@@ -113,12 +135,14 @@ migrated; backward compatibility is NOT a goal. Do not add code to the old packa
 - Test code compiles with `--release 11`, same as main. Virtual-thread verticles are deployed
   through the Vert.x API only (`ThreadingModel.VIRTUAL_THREAD`), never through JDK
   virtual-thread APIs.
-- The payload-signing matrix is covered against MinIO: HTTPS (unsigned streaming/multipart,
+- The payload-signing matrix is covered against Silo: HTTPS (unsigned streaming/multipart,
   signed small requests, signed above the `executeBlocking` threshold) and plain HTTP
   (signed only, unsigned rejected). HTTPS uses a committed, test-only self-signed certificate
   with a long expiry under `src/test/resources` (named so it is obviously test-only).
 - Streaming tests cover backpressure (slow consumer), empty stream, exact part-size multiples,
   failures, and abort.
+- Test data is generated at runtime: random bytes of exact sizes (e.g. 0, 1 byte, 5 MiB,
+  n × 5 MiB, 5 MiB + 1). Never commit large binary fixtures.
 - The signer has unit tests against the AWS SigV4 test vectors (no Docker).
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
@@ -148,6 +172,8 @@ migrated; backward compatibility is NOT a goal. Do not add code to the old packa
   or static state.
 - Don't use WebClient, Jackson, or Vert.x `impl` packages outside `io.vertx.core.internal`.
 - Don't use Java 12+ language features or APIs in `src/main` or `src/test`.
+- Don't remove, replace or restructure build, site or doc tooling (docgen, asciidoctor, javadoc,
+  publishing) unless a recorded decision requires it or you are explicitly asked.
 - Don't commit, push, tag, or release unless explicitly asked.
 - Don't commit secrets, real endpoints, or large binary fixtures. Generate test data at runtime.
 - Don't edit generated sources (`*Converter.java`).

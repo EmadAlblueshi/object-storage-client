@@ -42,8 +42,8 @@ Environment: JDK 25.0.5.1, Maven 3.10.1, Docker Engine 29.9.3 (API 1.56, min 1.4
   - `close()` → `Future<Void>`.
   - Add a context close hook.
   - Align Jackson versions or drop Jackson (see §6).
-  - Remove `@VertxGen` and docgen.
-  - Keep `@DataObject`/`@JsonGen` only for options, run through `annotationProcessorPaths` instead of maven-processor-plugin.
+  - Remove `@VertxGen`. **Keep docgen** (see the build tooling policy correction below).
+  - Keep `@DataObject`/`@JsonGen` only for options. Run the codegen and docgen processors through `annotationProcessorPaths` instead of maven-processor-plugin.
 
 ### 3. Context audit (top-priority finding)
 **Verdict:** single-shot calls are correct *by accident*. Vert.x 5's WebClient/HttpClient captures `vertx.getOrCreateContext()` when the request is made and completes its future there, and `compose` keeps that context. The library itself captures and enforces nothing. Multipart, stream handling and blocking work violate the rules:
@@ -267,12 +267,12 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 | Phase | Goals | Concrete changes | Risks |
 |---|---|---|---|
 | **0. Groundwork** (this step) | Rules in place | AGENTS.md + CLAUDE.md | — |
-| **1. Rename + skeleton** ⚠️BREAKING | New identity, green build | pom coordinates; delete `objectstorage` tree; new package + `module-info`; Vert.x 5.2.x BOM; Java baseline; Testcontainers 2.x; drop processor-plugin/docgen/asciidoctor/test-jar; codegen-json via `annotationProcessorPaths`; enforcer + spotless; CI: setup-java v4, cache, matrix on the chosen JDK(s), tag pattern `v*`, permissions; **context-test harness first** (event-loop / worker / virtual-thread verticle fixtures + `assertSameContext` helper) | Internal-API choice must be settled first |
+| **1. Rename + skeleton** ⚠️BREAKING | New identity, green build | pom coordinates; delete `objectstorage` tree; new package + `module-info` + docgen-ready `package-info`; Vert.x 5.2.3 pinned; `--release 11`; JUnit 5.14.4 BOM; Testcontainers 2.0.5; codegen **and docgen** processors via `annotationProcessorPaths`; remove web-client and Jackson; `java11` surefire profile; CI: the two JDK jobs only; test TLS certificate + MinIO container; **context-test harness first** (event-loop / worker / virtual-thread verticle fixtures + `assertSameContext` helper). Everything else in build/site/docs stays as is. | Old code can't compile once web-client/Jackson are removed (see Phase 1 steps) |
 | **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy, timeouts) with copy ctor + toJson/fromJson; SigV4 signer (sorted/encoded query, RFC3986 path, canonical headers, host:port, session token) unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: head/get(Buffer)/put(Buffer)/delete/copy object, create/head/delete bucket, ListObjectsV2 (+ paging helper), DeleteObjects | Encoding edge cases; Spaces quirks |
 | **3. Streaming** | Backpressure-correct I/O | GetObject → `ReadStream<Buffer>` / `pipeTo(WriteStream)` / to file (AsyncFile); upload(ReadStream) with pause-before-async, incremental part hashing, configurable part size (≥5 MiB), single-PUT fallback for small/empty, **AbortMultipartUpload on every failure**, file close on all paths; uploadFile; public multipart ops (create/uploadPart/complete/abort/listParts) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
 | **4. Presigned URLs** | GET/PUT presign | Query-signed URLs, expiry 1s–7d, `UNSIGNED-PAYLOAD`, optional content-type/response-header overrides, **separate public endpoint** option; tests: presign then fetch via plain HttpClient against MinIO (including non-default port) | Host/port mismatch, clock skew |
 | **5. Hardening** | Production-ready on DOKS | Retries with backoff via Vert.x timers (5xx, SlowDown, connection reset; idempotent only), per-op timeouts, RequestTimeTooSkewed handling, close hook + in-flight tracking (abort uploads on close), log redaction rules, optional bucket policy/ACL/tagging ops, opt-in Spaces smoke test in CI with secrets | Internal API drift on Vert.x bumps |
-| **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), javadoc with doclint on, CHANGELOG, Central release `0.5.0` (or `1.0.0-alpha1`) | — |
+| **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `0.5.0` (or `1.0.0-alpha1`) | — |
 
 ---
 
@@ -286,14 +286,33 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 7. `HttpClient` directly. `vertx-core` is the only runtime dependency.
 8. Keep `@DataObject` plus generated JSON converters for options.
 
+### Correction (2026-11-20): build tooling policy
+- **Keep docgen. Do not remove it.** The revamp is about the API. Build tooling changes only where a recorded decision requires it: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the processor wiring for codegen and docgen.
+- The rest of the existing build, site and doc setup stays as it is: docgen, the asciidoctor site, javadoc, the source and test jars, Central publishing and the gpg profile. This **replaces** the earlier suggestions to drop processor-plugin output, docgen, asciidoctor or the test-jar, to add enforcer/spotless, and to rework CI beyond the two JDK jobs (setup-java v4, caching, permissions, tag pattern, job names). Those suggestions are withdrawn unless you request them.
+
+### Phase 1 — steps (each one is reviewed, verified with `mvn verify`, and committed by the owner)
+Steps 1 and 2 land as **one change**. Once web-client and Jackson are removed the old package can't compile, and on Vert.x 5.2.3 the old multipart tests hang anyway (see the test plan below).
+
+1. Build: new coordinates, Vert.x 5.2.3, junit-bom 5.14.4 before `vertx-dependencies`, Testcontainers 2.0.5, `--release 11`, codegen + docgen via `annotationProcessorPaths`, remove web-client and Jackson, `java11` surefire profile.
+2. Package skeleton `io.github.emadalblueshi.vertx.s3` (+ `module-info`, + docgen-ready `package-info`). The old package is deleted in the same change.
+3. CI: two jobs (JDK 21 full suite, JDK 11 without the `virtual-threads` tag).
+4. Test certificate + MinIO Testcontainers setup.
+5. Context-test harness (event-loop, worker, virtual-thread verticles) before any client code.
+
+### Test backend and test plan (recorded 2026-11-20)
+- **Backend: Silo** (`docker.io/pgsty/silo:RELEASE.2026-09-03T13-18-01Z`), a maintained MinIO fork with the same S3 API, `MINIO_*` env vars and `/minio/health` routes. Upstream MinIO community edition is in maintenance mode and no longer publishes images. The tag is always an exact release (never `latest`) and only changes with the owner's approval.
+- **Old multipart path:** it hangs on Vert.x 5.2.3 (`testPutObjectAsStream` and `testPutObjectFileAsStream` time out, then `testGetObjectUpload` fails with NoSuchKey) but passes on 5.0.4. The old tests are removed with the old package. The new streaming tests (Phase 3) must cover the same scenarios: stream upload, file upload, an exact multiple of 5 MiB, an empty stream, and pause/backpressure. Test data is generated at runtime (random bytes of exact sizes: 0, 1 byte, 5 MiB, n × 5 MiB, 5 MiB + 1). No committed binary fixtures.
+- **Step 4:** carry the Silo container over into the new test package, updating the tag to `RELEASE.2026-11-12T00-00-00Z` (approved by the owner). Make the integration tests backend-agnostic, with one abstraction for container, endpoint and credentials, so more backends can be added later.
+- **Phase 2 (not now):** a second backend, SeaweedFS, plus an optional DigitalOcean Spaces profile that runs only when credentials come from environment variables or CI secrets. Credentials are never committed.
+
 ### Phase 1 — additional concrete items
-- **Testcontainers 2.0.5.** Verified 2026-11-20: the current suite passes against Docker 29 without `-Dapi.version`. Java 8 bytecode, so it works on the JDK 11 job.
+- **Testcontainers 2.0.5** (the latest stable release; the owner already upgraded it in `df34dc8`). The existing suite passes against Docker 29 with plain `mvn test`. Java 8 bytecode, so it works on the JDK 11 job.
 - **JUnit:** import `junit-bom` **5.14.4** in `dependencyManagement` *before* `vertx-dependencies`. The Vert.x 5.2.3 BOM manages JUnit Jupiter 6.0.0, which is Java 17 bytecode and would break the JDK 11 job. vertx-junit5 5.2.3 (Java 11 bytecode) is built against JUnit 5.14.0.
-- **Pin Vert.x** to an exact version (5.2.3). The only runtime dependency is `vertx-core`. Remove `vertx-web-client`, Jackson (databind, dataformat-xml, jsr310) and `vertx-docgen-processor`.
-- **Compiler:** `maven.compiler.release=11` for main and test. Codegen-json runs via `annotationProcessorPaths`, replacing maven-processor-plugin.
+- **Pin Vert.x** to an exact version (5.2.3). The only runtime dependency is `vertx-core`. Remove `vertx-web-client` and Jackson (databind, dataformat-xml, jsr310). **Keep docgen**: `vertx-docgen-processor`/`-api` at the BOM-managed 0.9.9.
+- **Compiler:** `maven.compiler.release=11` for main and test. Codegen and docgen processors run via `annotationProcessorPaths`, replacing maven-processor-plugin. The processors are listed explicitly, because the docgen processor jar has no `META-INF/services` entry.
 - **Surefire:** a `java11` profile (`<activation><jdk>11</jdk></activation>`) sets `excludedGroups=virtual-threads`, and nothing else.
-- **CI:** two jobs. JDK 21 runs `mvn -B verify` (full suite). JDK 11 runs `mvn -B verify` (the profile excludes the VT tag). Also: setup-java v4 with the maven cache, `permissions: contents: read`, a release tag pattern `v*`, job names without "OSSRH". No `-Dapi.version` anywhere.
-- **TLS test fixture:** a committed self-signed certificate and key under `src/test/resources`, named as test-only (e.g. `test-only-minio-selfsigned.{crt,key}`), with a long expiry (~100 years) and SANs `localhost` and `127.0.0.1`. It's mounted into the MinIO container for the HTTPS half of the payload-signing matrix.
+- **CI:** two jobs. JDK 21 runs `mvn -B verify` (full suite). JDK 11 runs `mvn -B verify` (the profile excludes the VT tag). No `-Dapi.version` anywhere. The Deploy/Release jobs and other CI settings stay as they are.
+- **TLS test fixture:** a committed self-signed certificate and key under `src/test/resources`, named as test-only (e.g. `test-only-minio-selfsigned.{crt,key}`), with a long expiry (~100 years) and SANs `localhost` and `127.0.0.1`. It's mounted into the Silo container for the HTTPS half of the payload-signing matrix.
 - The context-test harness (event-loop, worker and virtual-thread verticle fixtures plus an `assertSameContext` helper) is built first, with the VT fixture tagged `virtual-threads`.
 
 ## Decision questions for you (answer before Phase 1)
