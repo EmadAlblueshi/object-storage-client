@@ -509,6 +509,16 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
   - Stub: the exact sorted, encoded query.
   - The external suites were also run against a pinned-tag Silo stand-in: all listing tests passed.
 
+### Deprecation fix (2026-11-20, after step 8)
+- **`ContextInternal.addCloseHook(Closeable)` is `@Deprecated` in Vert.x 5.2.3** ("instead use `registerResource(CloseableResource)`"). `ContextSupport.registerResource` now does what `HttpClientBuilderInternal` does for Vert.x's own `HttpClient`: `VertxInternal.registerResource(CloseableResource.of(resource))`. The owner is the current context's close future inside a verticle, otherwise the `Vertx` instance's, the same resolution as before.
+- **Explicit `close()` unregisters.** It goes through the returned `ResourceHook`, whose `shutdown()` removes it from the owner and is memoized, so a closed client is no longer referenced by its context until undeploy. A new test checks the owner's `CloseFuture` directly (`remove` reports whether the registration was still there). The existing close-hook tests pass unchanged, and they wouldn't catch a missing unregistration (verified by mutation).
+- **`create()` on a closed owner** (the context of an already undeployed verticle) now throws `IllegalStateException`, because `registerResource` returns `null` and nothing could close the client. Vert.x's own `HttpClient` is silently left unregistered in that case. On a closed `Vertx`, creation already fails earlier, in Vert.x's HTTP client constructor (`RejectedExecutionException`).
+- **No deprecated APIs in `src/main`, enforced by `NoDeprecatedApiTest`** (no pom change). The test compiles `src/main` plus the generated converters with the JDK's `javac` in a child process (`--release 11 -proc:none -Xlint:deprecation`). It fails on every `[deprecation]`/`[removal]` warning, naming file and line. Verified: it fails on the old `addCloseHook` call and passes after the fix, on JDK 25 and 21; JDK 11 is covered by CI.
+- **Alternatives evaluated:**
+  - `-Werror` on the main compile: impossible. The docgen processor always warns "Supported source version 'RELEASE_8' … less than -source '11'", and no `-Xlint` switch silences it. With `-Werror`, javac even stops after annotation processing, before reporting the deprecation.
+  - A second `maven-compiler-plugin` execution (no processors, its own output and generated-sources directories, `-Xlint:deprecation -Xlint:-module`, `failOnWarning`): works. But the `compile` goal unconditionally re-points the project artifact at its output directory, which logs "Overwriting artifact's file" on every build. Sharing the default generated-sources directory also cleared default-compile's converters.
+  - The in-process compiler API (`javax.tools`) in a test: the tests run inside the library's module, which doesn't read `java.compiler`; surefire would need extra flags.
+
 ### Phase 6 — release checklist
 - [ ] Run the external profile against real Spaces before the first release, in both addressing styles:
   ```

@@ -140,22 +140,40 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
    no `*Blocking` calls, no heavy inline CPU (see the payload-signing policy).
 6. **No own threads, executors, or static `Vertx`.** The client is bound to the `Vertx`
    passed in. `close()` returns `Future<Void>`. A client created inside a verticle is
-   closed when that context closes (close hook).
+   closed when that context closes (a registered resource, as for Vert.x's own clients).
 7. **Prefer Vert.x primitives:** `HttpClient`, `Buffer`, `Future` composition
    (`compose`, `transform`, `eventually`, `recover`), Vert.x timers when timing is needed,
    JsonObject-backed `@DataObject` options classes with a copy constructor plus `toJson`/`fromJson`.
 8. Public async methods never throw; validation failures return a failed Future.
 
 ## Vert.x internal API policy
-- `io.vertx.core.internal` (`ContextInternal`, `PromiseInternal`, close hooks) is allowed
-  **only inside `impl` packages**, never in the public API's signatures.
-- Use it for context-bound promises (`ContextInternal.promise()`) and
-  `addCloseHook`/`removeCloseHook`, **only inside `impl.ContextSupport`**, the single class that
-  may import `io.vertx.core.internal` (enforced by the rule-3 guard). Everything else goes through
-  `ContextSupport.Caller` (`bind`, `succeeded`, `failed`, `executeBlocking`). Any other internal
-  API needs explicit approval.
+- `io.vertx.core.internal` (`ContextInternal`, `PromiseInternal`, `VertxInternal`,
+  `CloseableResource`) is allowed **only inside `impl` packages**, never in the public API's
+  signatures.
+- Use it for context-bound promises (`ContextInternal.promise()`) and resource registration
+  (`VertxInternal.registerResource`, exactly as Vert.x's own `HttpClient` registers itself),
+  **only inside `impl.ContextSupport`**, the single class that may import `io.vertx.core.internal`
+  (enforced by the rule-3 guard). Everything else goes through `ContextSupport.Caller` (`bind`,
+  `succeeded`, `failed`, `executeBlocking`, `promise`, `onContext`, `runOnContext`) and
+  `ContextSupport.Registration`. An explicit `close()` goes through the registration, which
+  unregisters, so a closed client isn't referenced by its context until undeploy. Any other
+  internal API needs explicit approval.
 - **On every Vert.x version bump, re-verify every internal API usage** (compile, plus the
   context test suite on all three threading models) before merging.
+
+## No deprecated APIs
+- No deprecated Vert.x or JDK APIs in `src/main` (including `forRemoval` ones). When an API is
+  deprecated, move to its documented replacement in a small, separate commit.
+- Enforced mechanically by `NoDeprecatedApiTest`: it compiles `src/main` (plus the generated
+  converters) again with the JDK's `javac`, in a child process, with `-Xlint:deprecation` and
+  `-proc:none`, and fails on every `[deprecation]` or `[removal]` warning. Other warnings aren't
+  its concern, and tests aren't checked. No build configuration is involved.
+- Why not `-Werror` on the build's own compile: it always fails on the third-party docgen
+  processor's own warning ("Supported source version 'RELEASE_8' … less than -source '11'"),
+  which no lint switch silences. A second `maven-compiler-plugin` execution works, but the
+  `compile` goal always re-points the project artifact at its own output directory (a Maven
+  warning on every build). The check runs `javac` as a child process because the tests run inside
+  the library's module, which doesn't read `java.compiler`.
 
 ## Payload-signing policy
 - **Not configurable**: there is no public setting. The endpoint scheme decides

@@ -14,7 +14,6 @@ import io.github.emadalblueshi.vertx.s3.S3ListObjectsResult;
 import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
-import io.vertx.core.Completable;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -39,15 +38,23 @@ public final class S3ClientImpl implements S3Client {
   private final Vertx vertx;
   private final ClientConfig config;
   private final Transport transport;
-  private final Runnable removeCloseHook;
-  /** The shutdown Future, set by the first close (explicit or close hook); non-null means closed. */
+  /** Registration with the creating context (or the Vertx instance), which closes the client when it closes. */
+  private final ContextSupport.Registration registration;
+  /** The shutdown Future, set by the first close (explicit or by the owner); non-null means closed. */
   private volatile Future<Void> shutdown;
 
   public S3ClientImpl(Vertx vertx, S3ClientOptions options) {
     this.vertx = Objects.requireNonNull(vertx, "vertx");
     this.config = ClientConfig.from(options);
     this.transport = new Transport(vertx, config);
-    this.removeCloseHook = ContextSupport.addCloseHook(vertx, this::closeFromHook);
+    ContextSupport.Registration registered;
+    try {
+      registered = ContextSupport.registerResource(vertx, this::shutdown);
+    } catch (IllegalStateException e) {
+      transport.close();
+      throw e;
+    }
+    this.registration = registered;
   }
 
   @Override
@@ -175,8 +182,13 @@ public final class S3ClientImpl implements S3Client {
   @Override
   public Future<Void> close() {
     ContextSupport.Caller caller = ContextSupport.capture(vertx);
-    removeCloseHook.run();
-    return caller.bind(shutdown());
+    // Unregisters first, so the owner no longer references a closed client until it closes
+    return caller.bind(registration.close());
+  }
+
+  /** The registration with the owner's close future. For tests. */
+  ContextSupport.Registration registration() {
+    return registration;
   }
 
   /** Whether the client is closed (explicitly or by the close hook). For tests. */
@@ -226,11 +238,6 @@ public final class S3ClientImpl implements S3Client {
       return caller.failed(new S3ClientException(problem, null));
     }
     return caller.bind(operation.get());
-  }
-
-  /** Called by Vert.x when the creating context closes (verticle undeploy or Vert.x close). */
-  private void closeFromHook(Completable<Void> completion) {
-    shutdown().onComplete(completion);
   }
 
   /** Closes the transport exactly once; every caller gets the same shutdown Future. */

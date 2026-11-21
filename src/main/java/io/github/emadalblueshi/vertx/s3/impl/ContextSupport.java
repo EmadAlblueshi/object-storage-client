@@ -1,15 +1,17 @@
 package io.github.emadalblueshi.vertx.s3.impl;
 
+import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
 
-import io.vertx.core.Closeable;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.internal.CloseableResource;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.internal.PromiseInternal;
+import io.vertx.core.internal.VertxInternal;
 
 /**
  * The single place that uses Vert.x internal APIs ({@code io.vertx.core.internal}), as
@@ -19,8 +21,10 @@ import io.vertx.core.internal.PromiseInternal;
  *   <li>{@link Caller}: the caller's context, captured at call time. Every Future the public API
  *   returns is created from it (Vert.x rule 3), so listeners always run on that context,
  *   regardless of when the Future completes or where the work finished.</li>
- *   <li>{@link #addCloseHook}: closes a client when the context it was created on closes (e.g.
- *   verticle undeploy), resolved exactly like Vert.x's own {@code HttpClient}.</li>
+ *   <li>{@link #registerResource}: closes a client when the context it was created on closes
+ *   (e.g. verticle undeploy), registered exactly like Vert.x's own {@code HttpClient}
+ *   ({@code VertxInternal.registerResource}, which replaces the deprecated
+ *   {@code ContextInternal.addCloseHook}).</li>
  * </ul>
  */
 final class ContextSupport {
@@ -37,17 +41,46 @@ final class ContextSupport {
   }
 
   /**
-   * Registers {@code hook} to run when the current context closes. That is the deployment's
-   * context inside a verticle (undeploy), otherwise the {@code Vertx} instance (close), the same
-   * resolution Vert.x uses for its own clients.
+   * Registers a resource that is shut down when its owner closes: the current context's close
+   * future inside a verticle (undeploy), otherwise the {@code Vertx} instance's (close). This is
+   * how Vert.x 5.2.3 registers its own {@code HttpClient}.
    *
-   * @return a handle that removes the hook again (call it on explicit close)
+   * @param shutdown shuts the resource down; called at most once through the registration
+   * @return the registration; {@link Registration#close()} unregisters and shuts down
+   * @throws IllegalStateException if the owner is already closed (e.g. the context of an
+   *     undeployed verticle; on a closed {@code Vertx}, creating the HTTP client already fails)
    */
-  static Runnable addCloseHook(Vertx vertx, Closeable hook) {
-    Objects.requireNonNull(hook, "hook");
-    ContextInternal context = (ContextInternal) vertx.getOrCreateContext();
-    context.addCloseHook(hook);
-    return () -> context.removeCloseHook(hook);
+  static Registration registerResource(Vertx vertx, Supplier<Future<Void>> shutdown) {
+    Objects.requireNonNull(shutdown, "shutdown");
+    io.vertx.core.internal.Closeable resource = timeout -> shutdown.get();
+    CloseableResource<io.vertx.core.internal.Closeable> hook = ((VertxInternal) vertx).registerResource(resource);
+    if (hook == null) {
+      throw new IllegalStateException("The Vert.x instance or the creating context is already closed");
+    }
+    return new Registration(hook);
+  }
+
+  /** A resource registered with its owner's close future. */
+  static final class Registration {
+
+    private final CloseableResource<io.vertx.core.internal.Closeable> hook;
+
+    private Registration(CloseableResource<io.vertx.core.internal.Closeable> hook) {
+      this.hook = hook;
+    }
+
+    /**
+     * Unregisters the resource from its owner, so the owner no longer references it, and shuts
+     * it down. Idempotent; the owner closing first is fine too (the shutdown is memoized).
+     */
+    Future<Void> close() {
+      return hook.shutdown(Duration.ZERO);
+    }
+
+    /** The object registered with the owner's close future. For tests. */
+    Object registered() {
+      return hook;
+    }
   }
 
   /** The caller's context. All Futures handed back to the caller are created through it. */
