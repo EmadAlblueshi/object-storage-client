@@ -1,147 +1,218 @@
 package examples;
 
-import io.github.emadalblueshi.objectstorage.client.s3.*;
+import java.util.List;
+
+import io.github.emadalblueshi.vertx.s3.S3Client;
+import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
+import io.github.emadalblueshi.vertx.s3.S3Credentials;
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
+import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
+import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
+import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
+import io.github.emadalblueshi.vertx.s3.S3ServiceException;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.file.AsyncFile;
 import io.vertx.core.file.OpenOptions;
-import io.vertx.ext.web.client.WebClientOptions;
+import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.json.JsonObject;
+import io.vertx.core.net.PemTrustOptions;
 
+/**
+ * Code snippets referenced from {@code src/main/asciidoc/index.adoc} through docgen
+ * ({@code {@link examples.Examples#method}}). Snippets are added together with the operations
+ * they document.
+ */
 @SuppressWarnings("unused")
 public class Examples {
 
-  void example1() {
-    var authOptions = new S3AuthOptions()
-        .setSignatureVersion(S3SignatureVersion.V4)
-        .setAccessKey("access-key")
-        .setSecretKey("secret-key");
+  public void createForSpaces(Vertx vertx) {
+    S3ClientOptions options = new S3ClientOptions()
+      .setEndpoint("https://nyc3.digitaloceanspaces.com")
+      .setRegion("nyc3")
+      .setCredentials(new S3Credentials("ACCESS_KEY", "SECRET_KEY"));
+
+    S3Client client = S3Client.create(vertx, options);
   }
 
-  void example2(S3AuthOptions authOptions, Vertx vertx) {
-    var clientOptions = new S3ClientOptions()
-        .setAuthOptions(authOptions)
-        .setRegion("region")
-        .setWebClientOptions(new WebClientOptions()
-            .setDefaultHost("s3.example.com")
-            .setDefaultPort(443)
-            .setSsl(true));
+  public void createForLocalMinio(Vertx vertx) {
+    S3ClientOptions options = new S3ClientOptions()
+      .setEndpoint("http://localhost:9000")
+      .setRegion("us-east-1")
+      .setCredentials(new S3Credentials("minioadmin", "minioadmin"));
 
-    // Create the client
-    var client = S3Client.create(vertx, clientOptions);
+    S3Client client = S3Client.create(vertx, options);
   }
 
-  void example3(S3Client client) {
-    client.putBucket(new S3BucketOptions(), "/my-bucket").onComplete(r -> {
-      if (r.succeeded()) {
-        System.out.println("Put bucket succeeded");
+  public void virtualHostedStyle(Vertx vertx) {
+    S3ClientOptions options = new S3ClientOptions()
+      .setEndpoint("https://s3.eu-west-1.amazonaws.com")
+      .setRegion("eu-west-1")
+      // Path-style is the default here; the AWS SDK defaults to virtual-hosted-style
+      .setPathStyleAccess(false)
+      .setCredentials(new S3Credentials("ACCESS_KEY", "SECRET_KEY"));
+  }
+
+  public void transportOptions(Vertx vertx) {
+    S3ClientOptions options = new S3ClientOptions()
+      .setEndpoint("https://minio.internal:9000")
+      .setRegion("us-east-1")
+      .setCredentials(new S3Credentials("ACCESS_KEY", "SECRET_KEY"));
+    // TLS trust, timeouts and pool sizes; scheme, host and port always come from the endpoint
+    options.getHttpClientOptions()
+      .setTrustOptions(new PemTrustOptions().addCertPath("/etc/ssl/internal-ca.pem"))
+      .setConnectTimeout(5_000);
+    options.getPoolOptions().setHttp1MaxSize(32);
+  }
+
+  public void createFromJsonConfig(Vertx vertx, JsonObject config) {
+    // e.g. {"s3": {"endpoint": "https://nyc3.digitaloceanspaces.com", "region": "nyc3",
+    //              "credentials": {"accessKey": "...", "secretKey": "..."}}}
+    S3ClientOptions options = new S3ClientOptions(config.getJsonObject("s3"));
+
+    S3Client client = S3Client.create(vertx, options);
+  }
+
+  public void createBucket(S3Client client) {
+    client.createBucket("my-bucket")
+      .onSuccess(v -> System.out.println("created"));
+  }
+
+  public void bucketExists(S3Client client) {
+    // headBucket fails with HTTP 404 if the bucket doesn't exist (HEAD responses have no error code)
+    Future<Boolean> exists = client.headBucket("my-bucket")
+      .map(true)
+      .recover(err -> err instanceof S3ServiceException && ((S3ServiceException) err).getStatusCode() == 404
+        ? Future.succeededFuture(false)
+        : Future.failedFuture(err));
+  }
+
+  public void deleteBucket(S3Client client) {
+    // The bucket must be empty
+    client.deleteBucket("my-bucket")
+      .onSuccess(v -> System.out.println("deleted"));
+  }
+
+  public void putObject(S3Client client) {
+    client.putObject("my-bucket", "reports/2026/summary.txt", Buffer.buffer("hello"))
+      .onSuccess(etag -> System.out.println("stored, ETag " + etag));
+  }
+
+  public void putObjectWithOptions(S3Client client, Buffer png) {
+    S3PutObjectOptions options = new S3PutObjectOptions()
+      .setContentType("image/png")
+      .putUserMetadata("uploaded-by", "user-42");
+    client.putObject("my-bucket", "avatars/user-42.png", png, options);
+  }
+
+  public void getObject(S3Client client) {
+    client.getObject("my-bucket", "reports/2026/summary.txt")
+      .onSuccess(body -> System.out.println(body.toString()));
+  }
+
+  public void getObjectStreamToFile(Vertx vertx, S3Client client) {
+    // Open the file first: once you have the stream, it must be consumed or cancelled
+    vertx.fileSystem().open("/tmp/big.mp4", new OpenOptions().setWrite(true).setTruncateExisting(true))
+      .compose(file -> client.getObjectStream("my-bucket", "videos/big.mp4").compose(
+        // pipeTo closes the file; if writing fails, cancel the stream instead of draining it
+        stream -> stream.pipeTo(file).onFailure(err -> stream.cancel()),
+        // no stream (e.g. NoSuchKey): just close the file
+        err -> file.close().compose(v -> Future.failedFuture(err))))
+      .onSuccess(v -> System.out.println("downloaded"));
+  }
+
+  public void getObjectStreamToHttpResponse(S3Client client, HttpServerRequest request) {
+    HttpServerResponse response = request.response();
+    client.getObjectStream("my-bucket", "videos/big.mp4").onComplete(ar -> {
+      if (ar.failed()) {
+        boolean missing = ar.cause() instanceof S3ServiceException
+          && ((S3ServiceException) ar.cause()).getStatusCode() == 404;
+        response.setStatusCode(missing ? 404 : 502).end();
+        return;
+      }
+      S3ObjectStream stream = ar.result();
+      S3ObjectMetadata metadata = stream.metadata();
+      if (metadata.getContentType() != null) {
+        response.putHeader("Content-Type", metadata.getContentType());
+      }
+      if (metadata.getContentLength() >= 0) {
+        response.putHeader("Content-Length", Long.toString(metadata.getContentLength()));
+      }
+      // If the HTTP client goes away, cancel the stream: otherwise it keeps its S3 connection,
+      // and Vert.x may download the rest of the object for nothing (cancel is a no-op once done)
+      response.closeHandler(v -> stream.cancel());
+      response.send(stream).onFailure(err -> stream.cancel());
+    });
+  }
+
+  public void getObjectRange(S3Client client) {
+    client.getObjectStream("my-bucket", "videos/big.mp4", "bytes=0-1048575")
+      .onSuccess(stream -> System.out.println("first MiB: " + stream.metadata().getContentLength() + " bytes"));
+  }
+
+  public void cancelObjectStream(S3Client client) {
+    client.getObjectStream("my-bucket", "videos/big.mp4").onSuccess(stream -> {
+      if (stream.metadata().getContentLength() > 100 * 1024 * 1024) {
+        stream.cancel();
       } else {
-        System.out.println("Put bucket failed!");
+        stream.handler(chunk -> System.out.println(chunk.length() + " bytes")).resume();
       }
     });
   }
 
-  void example4() {
-    // Create object request options with content type
-    S3ObjectOptions s3ObjectOptions = new S3ObjectOptions()
-        .contentType("text/plain");
+  public void listObjects(S3Client client) {
+    client.listObjects("my-bucket", new S3ListObjectsOptions().setPrefix("reports/2026/"))
+      .onSuccess(page -> page.getObjects().forEach(object ->
+        System.out.println(object.getKey() + " (" + object.getSize() + " bytes)")));
   }
 
-  void example5(Vertx vertx) {
-    Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
+  public void listFolders(S3Client client) {
+    client.listObjects("my-bucket", new S3ListObjectsOptions().setPrefix("reports/").setDelimiter("/"))
+      .onSuccess(page -> {
+        page.getCommonPrefixes().forEach(folder -> System.out.println("folder " + folder));
+        page.getObjects().forEach(object -> System.out.println("file " + object.getKey()));
+      });
   }
 
-  void example6(S3Client client, S3ObjectOptions s3ObjectOptions, Buffer fileBuffer) {
-    client.putObject(s3ObjectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
-      if (r.succeeded()) {
-        System.out.println("Put object succeeded");
+  public Future<List<String>> listAllKeys(S3Client client, S3ListObjectsOptions options, List<String> keys) {
+    return client.listObjects("my-bucket", options).compose(page -> {
+      page.getObjects().forEach(object -> keys.add(object.getKey()));
+      if (!page.isTruncated()) {
+        return Future.succeededFuture(keys);
+      }
+      // Same prefix and delimiter, next page
+      return listAllKeys(client, new S3ListObjectsOptions(options).setContinuationToken(page.getNextContinuationToken()), keys);
+    });
+  }
+
+  public void headObject(S3Client client) {
+    client.headObject("my-bucket", "avatars/user-42.png").onSuccess(metadata -> System.out.println(
+      metadata.getContentLength() + " bytes, " + metadata.getContentType() + ", " + metadata.getUserMetadata()));
+  }
+
+  public void deleteObject(S3Client client) {
+    client.deleteObject("my-bucket", "avatars/user-42.png");
+  }
+
+  public void listBuckets(S3Client client) {
+    client.listBuckets().onSuccess(result -> result.getBuckets()
+      .forEach(bucket -> System.out.println(bucket.getName() + " created " + bucket.getCreationDate())));
+  }
+
+  public void handleErrors(S3Client client) {
+    client.listBuckets().onFailure(err -> {
+      if (err instanceof S3ServiceException) {
+        S3ServiceException e = (S3ServiceException) err;
+        System.out.println("S3 error " + e.getErrorCode() + " (HTTP " + e.getStatusCode()
+          + "), request id " + e.getRequestId());
       } else {
-        System.out.println("Put object failed!");
+        System.out.println("Request failed: " + err.getMessage());
       }
     });
   }
 
-  void example7(S3Client client) {
-    client.getObject(new S3ObjectOptions(), "/my-bucket/my-object.txt").onComplete(r -> {
-      if (r.succeeded()) {
-        System.out.println(r.result().bodyAsString());
-      } else {
-        System.out.println("Get object failed!");
-      }
-    });
+  public void close(S3Client client) {
+    client.close().onSuccess(v -> System.out.println("closed"));
   }
-
-  void example8(Vertx vertx, S3Client client) {
-    AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
-    // Object content type
-    S3ObjectOptions options = new S3ObjectOptions().contentType("image/png");
-    // Upload large object as ReadStream<Buffer>
-    client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
-      if(res.succeeded()) {
-        System.out.println("Put large object as stream succeeded");
-      } else {
-        System.out.println("Put large object as stream failed!");
-      }
-    });
-  }
-
-  void all(Vertx vertx) {
-
-    // Create auth options
-    var authOptions = new S3AuthOptions()
-        .setSignatureVersion(S3SignatureVersion.V4)
-        .setAccessKey("access-key")
-        .setSecretKey("secret-key");
-
-    // Create client options
-    var clientOptions = new S3ClientOptions()
-        .setAuthOptions(authOptions)
-        .setRegion("region")
-        .setWebClientOptions(new WebClientOptions()
-            .setDefaultHost("s3.example.com")
-            .setDefaultPort(443)
-            .setSsl(true));
-
-    // Create the client
-    var client = S3Client.create(vertx, clientOptions);
-
-    // Create new bucket
-    client.putBucket(new S3BucketOptions(), "/my-bucket").onComplete(r -> {
-      if (r.succeeded()) {
-        System.out.println("Put bucket succeeded");
-      } else {
-        System.out.println("Put bucket failed!");
-      }
-    });
-
-    // Create object request options with content type
-    var objectOptions = new S3ObjectOptions()
-        .contentType("text/plain");
-
-    // Read existing text file
-    Buffer fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
-
-    // Create new object
-    client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
-      if (r.succeeded()) {
-        System.out.println("Put object succeeded");
-      } else {
-        System.out.println("Put object failed!");
-      }
-    });
-
-    // The S3 Client now supports streaming for large objects
-    AsyncFile asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
-    // Object content type
-    S3ObjectOptions options = new S3ObjectOptions().contentType("image/png");
-    // Upload large object as ReadStream<Buffer>
-    client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
-      if(res.succeeded()) {
-        System.out.println("Put large object as stream succeeded");
-      } else {
-        System.out.println("Put large object as stream failed!");
-      }
-    });
-
-  }
-
 }

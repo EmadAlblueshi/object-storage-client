@@ -4,16 +4,17 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>io.github.emadalblueshi</groupId>
-  <artifactId>object-storage-client</artifactId>
-  <version>0.4.0-SNAPSHOT</version>
+  <artifactId>vertx-s3-client</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-  <name>Object Storage Client</name>
-  <description>Object storage client based on Vert.x</description>
-  <url>https://github.com/EmadAlblueshi/object-storage-client</url>
+  <name>Vert.x S3 Client</name>
+  <description>S3 client for Amazon S3 and S3-compatible storage, based on Vert.x</description>
+  <url>https://github.com/EmadAlblueshi/vertx-s3-client</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>11</maven.compiler.release>
     <maven-gpg-plugin.version>3.2.4</maven-gpg-plugin.version>
     <maven-resources-plugin.version>3.3.1</maven-resources-plugin.version>
     <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
@@ -24,19 +25,25 @@
     <maven-javadoc-plugin.version>3.7.0</maven-javadoc-plugin.version>
     <maven-clean-plugin.version>3.3.2</maven-clean-plugin.version>
     <maven-project-info-reports-plugin.version>3.5.0</maven-project-info-reports-plugin.version>
-    <maven-processor-plugin.version>5.1</maven-processor-plugin.version>
     <build-helper-maven-plugin.version>3.6.0</build-helper-maven-plugin.version>
     <asciidoctor-maven-plugin>2.2.6</asciidoctor-maven-plugin>
-    <junit-jupiter.version>5.10.2</junit-jupiter.version>
-    <jackson-dataformat-xml.version>2.16.1</jackson-dataformat-xml.version>
-    <testcontainers.version>1.21.3</testcontainers.version>
-    <vertx.version>5.0.4</vertx.version>
+    <junit.version>5.14.4</junit.version>
+    <testcontainers.version>2.0.5</testcontainers.version>
+    <vertx.version>5.2.3</vertx.version>
     <asciidoc.dir>${project.basedir}/src/main/asciidoc</asciidoc.dir>
     <jar.manifest>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</jar.manifest>
   </properties>
 
   <dependencyManagement>
     <dependencies>
+      <!-- Must stay BEFORE vertx-dependencies: the Vert.x BOM manages JUnit 6 (Java 17+) -->
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
       <dependency>
         <groupId>io.vertx</groupId>
         <artifactId>vertx-dependencies</artifactId>
@@ -54,10 +61,6 @@
     </dependency>
     <dependency>
       <groupId>io.vertx</groupId>
-      <artifactId>vertx-web-client</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>io.vertx</groupId>
       <artifactId>vertx-junit5</artifactId>
       <scope>test</scope>
     </dependency>
@@ -69,22 +72,9 @@
     </dependency>
     <dependency>
       <groupId>io.vertx</groupId>
-      <artifactId>vertx-docgen-processor</artifactId>
-      <version>0.9.8</version>
+      <artifactId>vertx-docgen-api</artifactId>
       <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.dataformat</groupId>
-      <artifactId>jackson-dataformat-xml</artifactId>
-      <version>${jackson-dataformat-xml.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.datatype</groupId>
-      <artifactId>jackson-datatype-jsr310</artifactId>
+      <optional>true</optional>
     </dependency>
     <dependency>
       <groupId>org.testcontainers</groupId>
@@ -94,14 +84,7 @@
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-engine</artifactId>
-      <version>${junit-jupiter.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-api</artifactId>
-      <version>${junit-jupiter.version}</version>
+      <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -114,43 +97,13 @@
           <include>**/*</include>
         </includes>
       </resource>
+      <!-- Filtered: version.properties for the User-Agent header (see impl.UserAgent) -->
+      <resource>
+        <directory>${project.basedir}/src/main/resources-filtered</directory>
+        <filtering>true</filtering>
+      </resource>
     </resources>
     <plugins>
-      <plugin>
-        <groupId>org.bsc.maven</groupId>
-        <artifactId>maven-processor-plugin</artifactId>
-        <version>${maven-processor-plugin.version}</version>
-        <executions>
-          <execution>
-            <id>generate-sources</id>
-            <goals>
-              <goal>process</goal>
-            </goals>
-            <phase>generate-sources</phase>
-            <configuration>
-              <systemProperties>
-                <java.util.logging.SimpleFormatter.format>%4$s: %3$s - %5$s %6$s%n
-                </java.util.logging.SimpleFormatter.format>
-              </systemProperties>
-              <processors>
-                <processor>io.vertx.codegen.CodeGenProcessor</processor>
-                <processor>io.vertx.docgen.processor.JavaDocGenProcessor</processor>
-              </processors>
-              <optionMap>
-                <codegen.output>${project.basedir}/src/main</codegen.output>
-                <!-- Data object converters are placed in src/main/generated -->
-                <codegen.output.data_object_converters>generated</codegen.output.data_object_converters>
-                <docgen.source>${asciidoc.dir}/*.adoc</docgen.source>
-                <docgen.output>${project.build.directory}/asciidoc/java</docgen.output>
-                <maven.groupId>${project.groupId}</maven.groupId>
-                <maven.artifactId>${project.artifactId}</maven.artifactId>
-                <maven.version>${project.version}</maven.version>
-              </optionMap>
-              <defaultOutputDirectory>${project.build.directory}/generated-sources/codegen</defaultOutputDirectory>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
       <plugin>
         <artifactId>maven-clean-plugin</artifactId>
         <version>${maven-clean-plugin.version}</version>
@@ -268,7 +221,7 @@
             <sourceFileInclude>io/github/emadalblueshi/**/*.java</sourceFileInclude>
           </sourceFileIncludes>
           <doclint>none</doclint>
-          <source>8</source>
+          <release>11</release>
           <reportOutputDirectory>${project.build.directory}/docs</reportOutputDirectory>
         </configuration>
         <executions>
@@ -297,8 +250,45 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>${maven-compiler-plugin.version}</version>
         <configuration>
-          <release>11</release>
+          <annotationProcessorPathsUseDepMgmt>true</annotationProcessorPathsUseDepMgmt>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>io.vertx</groupId>
+              <artifactId>vertx-codegen</artifactId>
+              <classifier>processor</classifier>
+            </path>
+            <path>
+              <groupId>io.vertx</groupId>
+              <artifactId>vertx-docgen-processor</artifactId>
+            </path>
+          </annotationProcessorPaths>
+          <!-- Explicit list: vertx-docgen-processor has no META-INF/services entry -->
+          <annotationProcessors>
+            <annotationProcessor>io.vertx.codegen.CodeGenProcessor</annotationProcessor>
+            <annotationProcessor>io.vertx.docgen.processor.JavaDocGenProcessor</annotationProcessor>
+          </annotationProcessors>
         </configuration>
+        <executions>
+          <execution>
+            <id>default-compile</id>
+            <configuration>
+              <compilerArgs>
+                <arg>-Adocgen.source=${asciidoc.dir}/*.adoc</arg>
+                <arg>-Adocgen.output=${project.build.directory}/asciidoc/java</arg>
+                <!-- ${maven.*} in the manual (the dependency snippet), as in the official Vert.x manuals -->
+                <arg>-Amaven.groupId=${project.groupId}</arg>
+                <arg>-Amaven.artifactId=${project.artifactId}</arg>
+                <arg>-Amaven.version=${project.version}</arg>
+              </compilerArgs>
+            </configuration>
+          </execution>
+          <execution>
+            <id>default-testCompile</id>
+            <configuration>
+              <proc>none</proc>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -347,6 +337,16 @@
   </reporting>
 
   <profiles>
+    <!-- JDK 11: virtual threads unavailable; only exclude the virtual-thread tests -->
+    <profile>
+      <id>java11</id>
+      <activation>
+        <jdk>11</jdk>
+      </activation>
+      <properties>
+        <excludedGroups>virtual-threads</excludedGroups>
+      </properties>
+    </profile>
     <profile>
       <id>release</id>
       <build>
@@ -377,9 +377,9 @@
   </profiles>
 
   <scm>
-    <connection>scm:git:git@github.com:EmadAlblueshi/object-storage-client.git</connection>
-    <developerConnection>scm:git:git@github.com:EmadAlblueshi/object-storage-client.git</developerConnection>
-    <url>https://github.com/EmadAlblueshi/object-storage-client</url>
+    <connection>scm:git:git@github.com:EmadAlblueshi/vertx-s3-client.git</connection>
+    <developerConnection>scm:git:git@github.com:EmadAlblueshi/vertx-s3-client.git</developerConnection>
+    <url>https://github.com/EmadAlblueshi/vertx-s3-client</url>
     <tag>HEAD</tag>
   </scm>
 
