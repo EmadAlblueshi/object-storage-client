@@ -47,7 +47,10 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   `io.vertx.core.http.HttpClient`. No WebClient.
 - **`vertx-core` is the only runtime dependency.** XML uses JDK StAX (`java.xml`); no Jackson
   XML, no other libraries.
-- `vertx-codegen` (provided scope): `@DataObject` + generated JSON converters for options classes.
+- `vertx-codegen` (provided scope): `@DataObject` + generated JSON converters for options classes,
+  and `@VertxGen` on every API interface, so the processor rejects codegen-illegal signatures at
+  compile time (no `Instant`, `Duration`, `URI`, `Clock` or own functional interfaces in method
+  signatures). Use codegen's `@Nullable`, `@Fluent` and `@CacheReturn` as Vert.x's own clients do.
 - `vertx-docgen` (provided scope): generates the Asciidoc manual from `src/main/asciidoc/*.adoc`
   and the `examples` package. Both processors run via `annotationProcessorPaths`.
 - Tests: JUnit Jupiter **5.14.4** (`junit-bom` imported BEFORE `vertx-dependencies`; don't
@@ -241,7 +244,9 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - Errors map to the library's `S3Exception` hierarchy: `S3ServiceException` for error responses
   (HTTP status, S3 code, request ids, details; bodiless and non-XML responses included) and
   `S3ClientException` for everything else (connection, TLS, unreadable response, credentials,
-  closed client). Redirects are never followed.
+  closed client). Redirects are never followed. `S3Exception` extends `VertxException`;
+  `S3ServiceException` carries no stack trace (as Vert.x's server-reported errors), while
+  `S3ClientException` keeps it.
 
 ## Presigned URLs
 - A synchronous API returning `URI`/`String`, with no `Future`. It's usable standalone via
@@ -325,7 +330,8 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - `PackagePolicyTest` enforces the package layout on the compiled classes: everything is in
   the API, `impl` or `examples` package; API types are public and `S3`-prefixed; no API
   signature mentions an impl type; impl classes are package-private unless allowlisted; the
-  module exports only the API package; API names don't clash with JDK or Vert.x public types.
+  module exports only the API package; API names don't clash with JDK or Vert.x public types;
+  every public API interface is `@VertxGen`.
 - The signer has unit tests against the AWS SigV4 test suite, vendored from botocore under
   `src/test/resources/aws4-testsuite` (Apache-2.0, with its LICENSE and NOTICE; don't edit the
   vectors). S3-specific rules are unit-tested and verified against Silo, which checks signatures

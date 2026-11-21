@@ -38,6 +38,7 @@ import java.util.zip.ZipFile;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import io.vertx.codegen.annotations.VertxGen;
 import io.vertx.core.Vertx;
 
 /**
@@ -51,6 +52,7 @@ import io.vertx.core.Vertx;
  *   included) mentions an impl type.</li>
  *   <li>Impl classes are package-private unless listed in {@link #PUBLIC_IMPL_ALLOWLIST}.</li>
  *   <li>{@code module-info} exports only the API package, unqualified, and opens nothing.</li>
+ *   <li>Every public API interface is {@code @VertxGen}.</li>
  * </ul>
  */
 class PackagePolicyTest {
@@ -127,6 +129,28 @@ class PackagePolicyTest {
       }
     }
     assertTrue(violations.isEmpty(), () -> String.join("\n", violations));
+  }
+
+  /**
+   * API interfaces that are not {@code @VertxGen}, by simple name. {@code S3CredentialsProvider}
+   * is a functional interface that codegen doesn't accept as a parameter type; it is removed with
+   * the static-credentials change (audit R3), and this entry with it.
+   */
+  private static final Set<String> VERTX_GEN_EXEMPT = Set.of("S3CredentialsProvider");
+
+  /**
+   * Every API interface is {@code @VertxGen}, as in Vert.x's own clients, so the codegen processor
+   * checks at compile time that its signatures only use codegen-legal types.
+   */
+  @Test
+  void apiInterfacesAreVertxGen() {
+    List<String> missing = apiTopLevelTypes(true).stream()
+      .filter(Class::isInterface)
+      .filter(c -> !c.isAnnotationPresent(VertxGen.class))
+      .map(Class::getSimpleName)
+      .filter(n -> !VERTX_GEN_EXEMPT.contains(n))
+      .collect(Collectors.toList());
+    assertTrue(missing.isEmpty(), () -> "API interfaces without @VertxGen: " + missing);
   }
 
   /**
