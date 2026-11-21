@@ -61,12 +61,18 @@ final class ObjectStreamImpl implements S3ObjectStream {
     }
     // Delivered later on the stream's context, never from inside cancel()
     owner.runOnContext(() -> fail(cancelledException()));
-    // Closes the connection if the response is still in flight; resuming drains anything already
-    // received, so the connection is released in every case. Our handlers ignore what follows.
-    Future<Boolean> cancelling = response.request().cancel();
+    // Best-effort: closes the connection if the response is still in flight. If it has already
+    // ended, the cancellation may fail or find nothing to cancel; that is ignored, because resuming
+    // drains anything already received, so the connection is released in every case. Our handlers
+    // ignore what follows.
+    Future<Boolean> cancelling;
+    try {
+      cancelling = response.request().cancel();
+    } catch (RuntimeException e) {
+      cancelling = owner.succeeded(false);
+    }
     response.resume();
-    return caller.bind(cancelling.<Void>mapEmpty()
-      .recover(e -> caller.failed(new S3ClientException("Cancelling the object stream failed: " + e.getMessage(), e))));
+    return caller.bind(cancelling.<Void>mapEmpty().otherwiseEmpty());
   }
 
   @Override

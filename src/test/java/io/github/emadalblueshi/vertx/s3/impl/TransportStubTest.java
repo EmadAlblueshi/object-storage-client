@@ -63,7 +63,8 @@ class TransportStubTest {
   private final AtomicReference<Function<Captured, Stub>> responder = new AtomicReference<>();
   private final AtomicReference<Captured> last = new AtomicReference<>();
   private final AtomicInteger requests = new AtomicInteger();
-  private final AtomicInteger connectionCloses = new AtomicInteger();
+  /** Completed when the stub sees a connection close; replaced before each test. */
+  private final AtomicReference<Promise<Void>> connectionClosed = new AtomicReference<>(Promise.promise());
 
   @BeforeAll
   void startStubs(Vertx vertx, VertxTestContext testContext) {
@@ -86,11 +87,12 @@ class TransportStubTest {
     responder.set(c -> new Stub(200, LIST_BUCKETS));
     last.set(null);
     requests.set(0);
-    connectionCloses.set(0);
+    connectionClosed.set(Promise.promise());
   }
 
   private void handle(io.vertx.core.http.HttpServerRequest request) {
-    request.connection().closeHandler(v -> connectionCloses.incrementAndGet());
+    Promise<Void> closed = connectionClosed.get();
+    request.connection().closeHandler(v -> closed.tryComplete());
     request.body().onSuccess(body -> {
       Captured captured = new Captured(request.method(), request.uri(),
         MultiMap.caseInsensitiveMultiMap().addAll(request.headers()), body);
@@ -107,7 +109,9 @@ class TransportStubTest {
         for (int i = 0; i < out.length(); i += 8192) {
           response.write(out.slice(i, Math.min(out.length(), i + 8192)));
         }
-        response.end();
+        if (!stub.withholdEnd) {
+          response.end();
+        } // else: the response stays open until the client closes the connection
       } else {
         response.end(out);
       }
@@ -537,6 +541,12 @@ class TransportStubTest {
     })));
   }
 
+  /**
+   * The stub sends the whole response at once, so the end may reach the client before or after it
+   * abandons the download. Either way the limit error wins and the client keeps working. (Whether
+   * the connection is closed depends on that order, so it is checked by the next test, where the
+   * order is fixed.)
+   */
   @Test
   void getObjectOverTheLimitWithoutContentLengthIsAbandonedAtTheLimit(VertxTestContext testContext) {
     S3ClientOptions options = options(http.actualPort(), false).setMaxBufferedObjectSize(10_000);
@@ -550,7 +560,34 @@ class TransportStubTest {
             + "or raise S3ClientOptions.maxBufferedObjectSize", ar.cause().getMessage());
         });
         responder.set(c -> new Stub(200, "small"));
-        // the abandoned download's connection is closed, and the client still works
+        return client.getObject("bucket", "small");
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeeding(body -> testContext.verify(() -> {
+        assertEquals("small", body.toString());
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * The stub sends more than the limit and withholds the end until the client closes the
+   * connection, so the client always abandons the download while it is in flight.
+   */
+  @Test
+  void getObjectOverTheLimitWithTheEndWithheldClosesTheConnection(VertxTestContext testContext) {
+    S3ClientOptions options = options(http.actualPort(), false).setMaxBufferedObjectSize(10_000);
+    S3Client client = S3Client.create(vertx, options);
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    client.getObject("bucket", "big")
+      .transform(ar -> {
+        testContext.verify(() -> {
+          assertTrue(ar.failed());
+          assertEquals("The object is larger than the getObject limit of 10000 bytes: use getObjectStream, "
+            + "or raise S3ClientOptions.maxBufferedObjectSize", ar.cause().getMessage());
+        });
+        responder.set(c -> new Stub(200, "small"));
+        // the abandoned download's connection is closed (the end never comes otherwise), and the
+        // client still works
         return connectionClosed().compose(v -> client.getObject("bucket", "small"));
       })
       .eventually(client::close)
@@ -583,7 +620,8 @@ class TransportStubTest {
   void errorBodiesOverTheInternalLimitAreTruncated(VertxTestContext testContext) {
     byte[] huge = new byte[Transport.MAX_BUFFERED_RESPONSE_SIZE + 100_000];
     java.util.Arrays.fill(huge, (byte) 'x');
-    responder.set(c -> new Stub(500, Buffer.buffer(huge)).chunked());
+    // the end is withheld, so the only way the exchange finishes is the client closing the connection
+    responder.set(c -> new Stub(500, Buffer.buffer(huge)).chunked().withholdEnd());
     S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
     client.listBuckets()
       .transform(ar -> {
@@ -716,20 +754,9 @@ class TransportStubTest {
       })));
   }
 
-  /** Succeeds once the stub has seen a connection close (within 5 s). */
+  /** Succeeds once the stub has seen a connection close; no timer involved. */
   private Future<Void> connectionClosed() {
-    Promise<Void> closed = Promise.promise();
-    long start = System.nanoTime();
-    vertx.setPeriodic(10, id -> {
-      if (connectionCloses.get() > 0) {
-        vertx.cancelTimer(id);
-        closed.tryComplete();
-      } else if (System.nanoTime() - start > 5_000_000_000L) {
-        vertx.cancelTimer(id);
-        closed.tryFail("the connection was not closed");
-      }
-    });
-    return closed.future();
+    return connectionClosed.get().future();
   }
 
   private Transport transport(S3ClientOptions options) {
@@ -790,6 +817,14 @@ class TransportStubTest {
     /** Sends the body with chunked transfer encoding, i.e. without Content-Length. */
     Stub chunked() {
       chunked = true;
+      return this;
+    }
+
+    boolean withholdEnd;
+
+    /** With {@link #chunked()}: sends the body but never ends the response. */
+    Stub withholdEnd() {
+      withholdEnd = true;
       return this;
     }
 
