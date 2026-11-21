@@ -34,6 +34,8 @@ public interface S3Client {
    * @throws IllegalArgumentException if the options are invalid, e.g. a missing endpoint, region
    *     or credentials
    * @throws NullPointerException if {@code vertx} or {@code options} is {@code null}
+   * @throws IllegalStateException if the verticle context creating the client is already closed
+   *     (undeployed): nothing could close the client then
    */
   static S3Client create(Vertx vertx, S3ClientOptions options) {
     return new S3ClientImpl(vertx, options);
