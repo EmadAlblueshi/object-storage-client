@@ -52,15 +52,20 @@ TLS trust, timeouts and connection pool sizes are configured on the composed Ver
 
 === Credentials
 
-Static credentials are set with `setCredentials`. For credentials that rotate (e.g. a watched
-Kubernetes secret), set a `S3CredentialsProvider` instead:
+Credentials are static: an access key and a secret key, plus a session token for temporary
+credentials, set with `setCredentials`. Like every other option, they can come from JSON
+configuration:
 
 [source,$lang]
 ----
-{@link examples.Examples#rotatingCredentials}
+{@link examples.Examples#createFromJsonConfig}
 ----
 
-Secrets never appear in `toJson()` or `toString()` of the options.
+The client copies the credentials when it is created. To use other keys, create a new client and
+close the old one.
+
+Secrets are read from JSON, but never appear in `toJson()` or `toString()` of the options:
+`toJson()` is for logging and inspection, not for copying options with their credentials.
 
 == Contexts and threading
 
@@ -229,7 +234,7 @@ Deleting a key that doesn't exist succeeds.
 Failures are `S3Exception` instances. An `S3ServiceException` means the server answered with an
 error response: it carries the HTTP status, the S3 error code (when the response has an error
 document), and the request id to quote in support requests. Any other failure (connection, TLS,
-an unreadable response, failing credentials, a closed client) is an `S3ClientException`.
+an unreadable response, an invalid argument, a closed client) is an `S3ClientException`.
 
 [source,$lang]
 ----

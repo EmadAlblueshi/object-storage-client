@@ -4,7 +4,6 @@ import java.util.Objects;
 import java.util.Set;
 
 import io.vertx.codegen.annotations.DataObject;
-import io.vertx.codegen.annotations.GenIgnore;
 import io.vertx.codegen.json.annotations.JsonGen;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.PoolOptions;
@@ -20,11 +19,12 @@ import io.vertx.core.json.JsonObject;
  * host, default port and {@code ssl} flag are derived from the endpoint, so a conflicting value
  * there is rejected when the client is created.
  * <p>
- * Credentials come either from {@link #setCredentials(S3Credentials)} (serialisable, but secrets
- * are never written by {@link #toJson()}) or from a programmatic
- * {@link #setCredentialsProvider(S3CredentialsProvider)} (not serialised). Exactly one must be
- * set. Required values (endpoint, region, credentials) are validated by {@code S3Client.create},
- * which throws {@link IllegalArgumentException} for invalid options.
+ * Credentials are static, set with {@link #setCredentials(S3Credentials)}, and can come from JSON
+ * like every other option, e.g. {@code new S3ClientOptions(config.getJsonObject("s3"))}. Secrets
+ * are read from JSON but never written by {@link #toJson()}. The client copies them when it is
+ * created; to use other keys, create a new client. Required values (endpoint, region,
+ * credentials) are validated by {@code S3Client.create}, which throws
+ * {@link IllegalArgumentException} for invalid options.
  * <p>
  * Payload signing is not configurable: the endpoint scheme decides. Over HTTPS, payloads are sent
  * as {@code UNSIGNED-PAYLOAD} (TLS protects them); over plain HTTP, they are always signed.
@@ -54,7 +54,6 @@ public class S3ClientOptions {
   private String region;
   private boolean pathStyleAccess;
   private S3Credentials credentials;
-  private S3CredentialsProvider credentialsProvider;
   private int maxBufferedObjectSize;
   private HttpClientOptions httpClientOptions;
   private PoolOptions poolOptions;
@@ -66,13 +65,12 @@ public class S3ClientOptions {
     poolOptions = new PoolOptions();
   }
 
-  /** Deep copy: nested options and credentials are copied; the credentials provider is shared. */
+  /** Deep copy: nested options and credentials are copied. */
   public S3ClientOptions(S3ClientOptions other) {
     endpoint = other.endpoint;
     region = other.region;
     pathStyleAccess = other.pathStyleAccess;
     credentials = other.credentials == null ? null : new S3Credentials(other.credentials);
-    credentialsProvider = other.credentialsProvider;
     maxBufferedObjectSize = other.maxBufferedObjectSize;
     httpClientOptions = new HttpClientOptions(other.httpClientOptions);
     poolOptions = new PoolOptions(other.poolOptions);
@@ -121,26 +119,17 @@ public class S3ClientOptions {
     return this;
   }
 
-  /** Static credentials, or {@code null} when a {@linkplain #getCredentialsProvider() provider} is used. */
+  /** The credentials. Required; there are no default credentials. */
   public S3Credentials getCredentials() {
     return credentials;
   }
 
+  /**
+   * Sets the credentials (an access key and a secret key, plus a session token for temporary
+   * credentials). They are copied when the client is created: later changes have no effect.
+   */
   public S3ClientOptions setCredentials(S3Credentials credentials) {
     this.credentials = credentials;
-    return this;
-  }
-
-  /** The credentials provider, or {@code null}. Not serialised to or from JSON. */
-  @GenIgnore
-  public S3CredentialsProvider getCredentialsProvider() {
-    return credentialsProvider;
-  }
-
-  /** Sets a provider for rotating credentials. Mutually exclusive with {@link #setCredentials}. */
-  @GenIgnore
-  public S3ClientOptions setCredentialsProvider(S3CredentialsProvider credentialsProvider) {
-    this.credentialsProvider = credentialsProvider;
     return this;
   }
 
@@ -186,10 +175,11 @@ public class S3ClientOptions {
   }
 
   /**
-   * JSON form, without secrets. Credentials appear without the secret key and session token
-   * (see {@link S3Credentials#toJson()}), and the credentials provider is omitted. In the nested
-   * HTTP client options, every {@code password}/{@code aliasPassword} entry (key and trust store
-   * passwords, proxy credentials) is removed: Vert.x itself writes those in clear.
+   * JSON form, without secrets, for logging and inspection: it can't be used to copy options with
+   * their credentials. Credentials appear without the secret key and session token (see
+   * {@link S3Credentials#toJson()}). In the nested HTTP client options, every
+   * {@code password}/{@code aliasPassword} entry (key and trust store passwords, proxy
+   * credentials) is removed: Vert.x itself writes those in clear.
    */
   public JsonObject toJson() {
     JsonObject json = new JsonObject();
@@ -218,7 +208,6 @@ public class S3ClientOptions {
       + ", region=" + region
       + ", pathStyleAccess=" + pathStyleAccess
       + ", credentials=" + credentials
-      + ", credentialsProvider=" + (credentialsProvider == null ? null : credentialsProvider.getClass().getName())
       + ", maxBufferedObjectSize=" + maxBufferedObjectSize + '}';
   }
 }

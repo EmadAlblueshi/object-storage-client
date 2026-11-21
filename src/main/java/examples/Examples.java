@@ -1,12 +1,10 @@
 package examples;
 
 import java.util.List;
-import java.util.Map;
 
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
-import io.github.emadalblueshi.vertx.s3.S3CredentialsProvider;
 import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
@@ -17,6 +15,7 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.file.OpenOptions;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.PemTrustOptions;
 
 /**
@@ -66,14 +65,12 @@ public class Examples {
     options.getPoolOptions().setHttp1MaxSize(32);
   }
 
-  public void rotatingCredentials(Vertx vertx, RotatingSecret secret) {
-    // Called for every request, possibly on an event loop: return a value held in memory, never block
-    S3CredentialsProvider provider = () -> new S3Credentials(secret.accessKey(), secret.secretKey());
+  public void createFromJsonConfig(Vertx vertx, JsonObject config) {
+    // e.g. {"s3": {"endpoint": "https://nyc3.digitaloceanspaces.com", "region": "nyc3",
+    //              "credentials": {"accessKey": "...", "secretKey": "..."}}}
+    S3ClientOptions options = new S3ClientOptions(config.getJsonObject("s3"));
 
-    S3ClientOptions options = new S3ClientOptions()
-      .setEndpoint("https://nyc3.digitaloceanspaces.com")
-      .setRegion("nyc3")
-      .setCredentialsProvider(provider);
+    S3Client client = S3Client.create(vertx, options);
   }
 
   public void createBucket(S3Client client) {
@@ -104,7 +101,7 @@ public class Examples {
   public void putObjectWithOptions(S3Client client, Buffer png) {
     S3PutObjectOptions options = new S3PutObjectOptions()
       .setContentType("image/png")
-      .setMetadata(Map.of("uploaded-by", "user-42"));
+      .putUserMetadata("uploaded-by", "user-42");
     client.putObject("my-bucket", "avatars/user-42.png", png, options);
   }
 
@@ -180,7 +177,7 @@ public class Examples {
 
   public void headObject(S3Client client) {
     client.headObject("my-bucket", "avatars/user-42.png").onSuccess(metadata -> System.out.println(
-      metadata.getContentLength() + " bytes, " + metadata.getContentType() + ", " + metadata.getMetadata()));
+      metadata.getContentLength() + " bytes, " + metadata.getContentType() + ", " + metadata.getUserMetadata()));
   }
 
   public void deleteObject(S3Client client) {
@@ -206,12 +203,5 @@ public class Examples {
 
   public void close(S3Client client) {
     client.close().onSuccess(v -> System.out.println("closed"));
-  }
-
-  /** Placeholder for an application-managed secret (e.g. a watched Kubernetes secret). */
-  public interface RotatingSecret {
-    String accessKey();
-
-    String secretKey();
   }
 }

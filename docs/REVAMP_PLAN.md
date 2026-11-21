@@ -370,7 +370,7 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
     - GET and PUT. Expiry is validated (max 604800 s). Optional extra signed headers (e.g. `Content-Type`); by default only `host` is signed. `response-*` overrides, `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved.
     - Injectable `java.time.Clock`. Unit tests against the AWS SigV4 published examples. Integration tests download and upload via presigned URLs against Silo with a plain HTTP client.
     - Presigned POST (browser form policy) is out of scope for now.
-    - *Consequence:* presigning needs credentials synchronously, so the credentials abstraction must expose the current credentials without a `Future`.
+    - ~~*Consequence:* presigning needs credentials synchronously, so the credentials abstraction must expose the current credentials without a `Future`.~~ **Superseded (2026-11-21, audit R3):** credentials are static (`S3ClientOptions.setCredentials`, fully JSON) and there is no credentials provider. The presigner signs with the static credentials of its options.
 
 ### Correction (2026-11-20): build tooling policy
 - **Keep docgen. Do not remove it.** The revamp is about the API. Build tooling changes only where a recorded decision requires it: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the processor wiring for codegen and docgen.
@@ -567,6 +567,11 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
   exceptions), R3 + R6 (static JSON credentials only, `userMetadata`), R5 (manual), R4 (Phase 3
   presigner signatures).
 - Step 9 (CopyObject, DeleteObjects) stays on hold until the owner decides.
+- **R3 + R6 applied:** `S3CredentialsProvider` and the `credentialsProvider` option are gone;
+  `metadata` is `userMetadata` in `S3ObjectMetadata` and `S3PutObjectOptions` (still
+  `Map<String, String>`), and `S3PutObjectOptions.putUserMetadata(name, value)` adds or replaces
+  one entry, matching names case-insensitively. Codegen doesn't treat it as a JSON adder: the
+  generated converter reads and writes only the `userMetadata` map, so no `@GenIgnore` is needed.
 
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds

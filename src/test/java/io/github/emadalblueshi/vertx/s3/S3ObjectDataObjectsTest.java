@@ -20,32 +20,49 @@ class S3ObjectDataObjectsTest {
   void objectMetadataDefaultsCopyAndJson() {
     S3ObjectMetadata empty = new S3ObjectMetadata();
     assertEquals(-1, empty.getContentLength());
-    assertEquals(Map.of(), empty.getMetadata());
+    assertEquals(Map.of(), empty.getUserMetadata());
 
     S3ObjectMetadata metadata = new S3ObjectMetadata().setContentLength(10).setContentType("text/plain").setEtag("\"e\"")
-      .setLastModified(Instant.parse("2026-11-20T10:15:30Z")).setMetadata(Map.of("k", "v"));
+      .setLastModified(Instant.parse("2026-11-20T10:15:30Z")).setUserMetadata(Map.of("k", "v"));
     JsonObject json = metadata.toJson();
     assertEquals(new JsonObject().put("contentLength", 10L).put("contentType", "text/plain").put("etag", "\"e\"")
-      .put("lastModified", "2026-11-20T10:15:30Z").put("metadata", new JsonObject().put("k", "v")), json);
+      .put("lastModified", "2026-11-20T10:15:30Z").put("userMetadata", new JsonObject().put("k", "v")), json);
     assertEquals(json, new S3ObjectMetadata(json).toJson());
     assertEquals(json, new S3ObjectMetadata(metadata).toJson());
-    assertThrows(UnsupportedOperationException.class, () -> metadata.getMetadata().put("x", "y"));
+    assertThrows(UnsupportedOperationException.class, () -> metadata.getUserMetadata().put("x", "y"));
   }
 
   @Test
   void putObjectOptionsCopyAndJson() {
     Map<String, String> source = new HashMap<>(Map.of("k", "v"));
-    S3PutObjectOptions options = new S3PutObjectOptions().setContentType("image/png").setMetadata(source);
+    S3PutObjectOptions options = new S3PutObjectOptions().setContentType("image/png").setUserMetadata(source);
     source.put("later", "ignored");
-    assertEquals(Map.of("k", "v"), options.getMetadata(), "the map is copied");
+    assertEquals(Map.of("k", "v"), options.getUserMetadata(), "the map is copied");
 
     JsonObject json = options.toJson();
-    assertEquals(new JsonObject().put("contentType", "image/png").put("metadata", new JsonObject().put("k", "v")), json);
+    assertEquals(new JsonObject().put("contentType", "image/png").put("userMetadata", new JsonObject().put("k", "v")), json);
     assertEquals(json, new S3PutObjectOptions(json).toJson());
     assertEquals(json, new S3PutObjectOptions(options).toJson());
     assertNull(new S3PutObjectOptions().getContentType());
-    assertEquals(Map.of(), new S3PutObjectOptions().getMetadata());
-    assertThrows(UnsupportedOperationException.class, () -> options.getMetadata().put("x", "y"));
+    assertEquals(Map.of(), new S3PutObjectOptions().getUserMetadata());
+    assertThrows(UnsupportedOperationException.class, () -> options.getUserMetadata().put("x", "y"));
+  }
+
+  @Test
+  void putUserMetadataAddsOrReplacesCaseInsensitively() {
+    S3PutObjectOptions options = new S3PutObjectOptions()
+      .putUserMetadata("Camera", "front")
+      .putUserMetadata("owner-id", "42")
+      .putUserMetadata("camera", "back");
+    assertEquals(Map.of("owner-id", "42", "camera", "back"), options.getUserMetadata());
+    assertEquals(java.util.List.of("owner-id", "camera"), new java.util.ArrayList<>(options.getUserMetadata().keySet()),
+      "a replaced entry takes the new name and goes last");
+    assertThrows(NullPointerException.class, () -> options.putUserMetadata(null, "v"));
+    assertThrows(NullPointerException.class, () -> options.putUserMetadata("n", null));
+    // putUserMetadata is not a JSON property of its own: only the map is written and read
+    JsonObject json = options.toJson();
+    assertEquals(java.util.Set.of("userMetadata"), json.fieldNames());
+    assertEquals(options.getUserMetadata(), new S3PutObjectOptions(json).getUserMetadata());
   }
 
   @Test

@@ -9,7 +9,6 @@ import java.util.regex.Pattern;
 
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
-import io.github.emadalblueshi.vertx.s3.S3CredentialsProvider;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.PoolOptions;
 
@@ -30,21 +29,22 @@ final class ClientConfig {
   final boolean defaultPort;
   final String region;
   final boolean pathStyleAccess;
-  final S3CredentialsProvider credentialsProvider;
+  /** A copy of the options' credentials, validated. */
+  final S3Credentials credentials;
   final int maxBufferedObjectSize;
   final HttpClientOptions httpClientOptions;
   final PoolOptions poolOptions;
   final Clock clock;
 
   private ClientConfig(boolean tls, String host, int port, boolean defaultPort, S3ClientOptions options,
-                       S3CredentialsProvider credentialsProvider) {
+                       S3Credentials credentials) {
     this.tls = tls;
     this.host = host;
     this.port = port;
     this.defaultPort = defaultPort;
     this.region = options.getRegion().trim();
     this.pathStyleAccess = options.isPathStyleAccess();
-    this.credentialsProvider = credentialsProvider;
+    this.credentials = credentials;
     this.maxBufferedObjectSize = options.getMaxBufferedObjectSize();
     this.httpClientOptions = new HttpClientOptions(options.getHttpClientOptions())
       .setDefaultHost(host).setDefaultPort(port).setSsl(tls);
@@ -69,7 +69,7 @@ final class ClientConfig {
       throw new IllegalArgumentException("region is required (e.g. us-east-1, nyc3)");
     }
 
-    S3CredentialsProvider provider = credentials(options);
+    S3Credentials credentials = credentials(options);
 
     HttpClientOptions http = Objects.requireNonNull(options.getHttpClientOptions(), "httpClientOptions");
     if (!HttpClientOptions.DEFAULT_DEFAULT_HOST.equals(http.getDefaultHost())
@@ -84,7 +84,7 @@ final class ClientConfig {
         + "; use pathStyleAccess = true");
     }
 
-    return new ClientConfig(tls, host, port, defaultPort, options, provider);
+    return new ClientConfig(tls, host, port, defaultPort, options, credentials);
   }
 
   private static URI parseEndpoint(String endpoint) {
@@ -114,19 +114,15 @@ final class ClientConfig {
     return uri;
   }
 
-  private static S3CredentialsProvider credentials(S3ClientOptions options) {
+  private static S3Credentials credentials(S3ClientOptions options) {
     S3Credentials credentials = options.getCredentials();
-    S3CredentialsProvider provider = options.getCredentialsProvider();
-    if ((credentials == null) == (provider == null)) {
-      throw new IllegalArgumentException("set exactly one of credentials or credentialsProvider");
-    }
-    if (provider != null) {
-      return provider;
+    if (credentials == null) {
+      throw new IllegalArgumentException("credentials are required");
     }
     if (isBlank(credentials.getAccessKey()) || isBlank(credentials.getSecretKey())) {
       throw new IllegalArgumentException("credentials need an accessKey and a secretKey");
     }
-    return S3CredentialsProvider.of(credentials);
+    return new S3Credentials(credentials);
   }
 
   private static boolean isIpOrLocalhost(String host) {

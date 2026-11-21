@@ -9,7 +9,7 @@ import io.vertx.core.VertxException;
  *   <li>{@link S3ServiceException}: the server answered with an error response (HTTP status,
  *   S3 error code, request id).</li>
  *   <li>{@link S3ClientException}: anything else, such as connection or TLS failures, an
- *   unreadable response, failing credentials, or a closed client.</li>
+ *   unreadable response, an invalid argument, or a closed client.</li>
  * </ul>
  * It is a {@link VertxException}, like the exceptions of Vert.x's own clients.
  */
