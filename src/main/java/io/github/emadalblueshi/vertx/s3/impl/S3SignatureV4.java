@@ -15,9 +15,10 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * AWS Signature Version 4 ({@code AWS4-HMAC-SHA256}) for S3, using the {@code Authorization}
- * header. Presigning (query-string auth) will be built on the same canonicalisation and
- * signing-key derivation in Phase 3.
+ * AWS Signature Version 4 ({@code AWS4-HMAC-SHA256}) for S3: requests signed with the
+ * {@code Authorization} header ({@link #sign}) and presigned URLs signed with query parameters
+ * ({@link #presign}). Both share the canonical request, the string to sign and the signing-key
+ * derivation and cache.
  * <p>
  * Ported from {@code objectstorage.client.s3.impl.S3SignatureV4} (commit {@code b7dc1f2}), with the audited
  * fixes:
@@ -53,10 +54,23 @@ final class S3SignatureV4 {
   static final String X_AMZ_DATE = "X-Amz-Date";
   static final String X_AMZ_CONTENT_SHA256 = "X-Amz-Content-Sha256";
   static final String X_AMZ_SECURITY_TOKEN = "X-Amz-Security-Token";
+  static final String X_AMZ_ALGORITHM = "X-Amz-Algorithm";
+  static final String X_AMZ_CREDENTIAL = "X-Amz-Credential";
+  static final String X_AMZ_EXPIRES = "X-Amz-Expires";
+  static final String X_AMZ_SIGNED_HEADERS = "X-Amz-SignedHeaders";
+  static final String X_AMZ_SIGNATURE = "X-Amz-Signature";
+
+  /** The longest expiry S3 accepts for a presigned URL: 7 days. */
+  static final long MAX_PRESIGN_EXPIRY_SECONDS = 7L * 24 * 60 * 60;
 
   /** Headers the signer computes itself; callers must not pass them in. */
   private static final Set<String> MANAGED_HEADERS = Set.of(
     "host", "authorization", "x-amz-date", "x-amz-content-sha256", "x-amz-security-token");
+
+  /** Query parameters {@link #presign} computes itself (compared ignoring case); callers must not pass them in. */
+  private static final Set<String> MANAGED_PRESIGN_PARAMS = Set.of(
+    "x-amz-algorithm", "x-amz-credential", "x-amz-date", "x-amz-expires", "x-amz-signedheaders",
+    "x-amz-security-token", "x-amz-signature");
 
   private static final String AWS4 = "AWS4";
   private static final String AWS4_REQUEST = "aws4_request";
@@ -112,23 +126,98 @@ final class S3SignatureV4 {
 
     TreeMap<String, String> canonicalHeaders = canonicalHeaders(request, added);
     String signedHeaders = String.join(";", canonicalHeaders.keySet());
+    String canonicalRequest = canonicalRequest(request, canonicalQuery(request.query), canonicalHeaders, signedHeaders);
 
-    StringBuilder canonical = new StringBuilder(256)
-      .append(request.method).append('\n')
-      .append(encodePath(request.path)).append('\n')
-      .append(canonicalQuery(request.query)).append('\n');
-    canonicalHeaders.forEach((name, value) -> canonical.append(name).append(':').append(value).append('\n'));
-    canonical.append('\n').append(signedHeaders).append('\n').append(request.payloadHash);
-    String canonicalRequest = canonical.toString();
-
-    String scope = dateStamp + "/" + region + "/" + service + "/" + AWS4_REQUEST;
-    String stringToSign = ALGORITHM + "\n" + amzDate + "\n" + scope + "\n" + HashUtil.sha256Hex(canonicalRequest);
-    String signature = HashUtil.hex(HashUtil.hmacSha256(signingKey(dateStamp, secretKey), stringToSign));
+    String scope = scope(dateStamp);
+    String stringToSign = stringToSign(amzDate, scope, canonicalRequest);
+    String signature = signature(dateStamp, secretKey, stringToSign);
     String authorization = ALGORITHM + " Credential=" + accessKey + "/" + scope
       + ", SignedHeaders=" + signedHeaders + ", Signature=" + signature;
     added.add(Map.entry(AUTHORIZATION, authorization));
 
     return new Signed(canonicalRequest, stringToSign, signature, authorization, added);
+  }
+
+  /**
+   * Presigns {@code request} with query-string auth: the authentication values travel as query
+   * parameters ({@code X-Amz-Algorithm}, {@code X-Amz-Credential}, {@code X-Amz-Date},
+   * {@code X-Amz-Expires}, {@code X-Amz-SignedHeaders}, plus {@code X-Amz-Security-Token} for a
+   * session token, which S3 requires to be signed), and the signature is appended as
+   * {@code X-Amz-Signature}. Only {@code host} and the request's headers are signed; nothing is
+   * added as a header. The request's payload hash must be {@link #UNSIGNED_PAYLOAD}: a presigned
+   * URL doesn't know the body it will be used with.
+   *
+   * @param expiresSeconds how long the URL is valid, 1 to {@link #MAX_PRESIGN_EXPIRY_SECONDS}
+   * @param sessionToken temporary-credentials session token, or {@code null}
+   * @return the signature and the URL's query string
+   * @throws IllegalArgumentException if the request carries signer-managed parameters or headers,
+   *     isn't {@code UNSIGNED-PAYLOAD}, or the expiry is out of range
+   */
+  Presigned presign(Request request, long expiresSeconds, String accessKey, String secretKey, String sessionToken) {
+    Objects.requireNonNull(request, "request");
+    requireNonBlank(accessKey, "accessKey");
+    requireNonBlank(secretKey, "secretKey");
+    if (!UNSIGNED_PAYLOAD.equals(request.payloadHash)) {
+      throw new IllegalArgumentException("A presigned request must use " + UNSIGNED_PAYLOAD);
+    }
+    if (expiresSeconds < 1 || expiresSeconds > MAX_PRESIGN_EXPIRY_SECONDS) {
+      throw new IllegalArgumentException("The expiry must be 1 to " + MAX_PRESIGN_EXPIRY_SECONDS + " seconds: "
+        + expiresSeconds);
+    }
+    for (Map.Entry<String, String> param : request.query) {
+      if (MANAGED_PRESIGN_PARAMS.contains(param.getKey().toLowerCase(Locale.ROOT))) {
+        throw new IllegalArgumentException("Query parameter '" + param.getKey()
+          + "' is managed by the signer and must not be set");
+      }
+    }
+
+    String amzDate = AMZ_DATE.format(clock.instant().truncatedTo(ChronoUnit.SECONDS));
+    String dateStamp = amzDate.substring(0, 8);
+    String scope = scope(dateStamp);
+
+    TreeMap<String, String> canonicalHeaders = canonicalHeaders(request, List.of());
+    String signedHeaders = String.join(";", canonicalHeaders.keySet());
+
+    List<Map.Entry<String, String>> query = new ArrayList<>(request.query);
+    query.add(Map.entry(X_AMZ_ALGORITHM, ALGORITHM));
+    query.add(Map.entry(X_AMZ_CREDENTIAL, accessKey + "/" + scope));
+    query.add(Map.entry(X_AMZ_DATE, amzDate));
+    query.add(Map.entry(X_AMZ_EXPIRES, Long.toString(expiresSeconds)));
+    query.add(Map.entry(X_AMZ_SIGNED_HEADERS, signedHeaders));
+    if (sessionToken != null && !sessionToken.isEmpty()) {
+      query.add(Map.entry(X_AMZ_SECURITY_TOKEN, sessionToken));
+    }
+    String canonicalQuery = canonicalQuery(query);
+
+    String canonicalRequest = canonicalRequest(request, canonicalQuery, canonicalHeaders, signedHeaders);
+    String stringToSign = stringToSign(amzDate, scope, canonicalRequest);
+    String signature = signature(dateStamp, secretKey, stringToSign);
+
+    return new Presigned(canonicalRequest, stringToSign, signature,
+      canonicalQuery + "&" + X_AMZ_SIGNATURE + "=" + signature);
+  }
+
+  private static String canonicalRequest(Request request, String canonicalQuery, TreeMap<String, String> canonicalHeaders,
+                                         String signedHeaders) {
+    StringBuilder canonical = new StringBuilder(256)
+      .append(request.method).append('\n')
+      .append(encodePath(request.path)).append('\n')
+      .append(canonicalQuery).append('\n');
+    canonicalHeaders.forEach((name, value) -> canonical.append(name).append(':').append(value).append('\n'));
+    canonical.append('\n').append(signedHeaders).append('\n').append(request.payloadHash);
+    return canonical.toString();
+  }
+
+  private String scope(String dateStamp) {
+    return dateStamp + "/" + region + "/" + service + "/" + AWS4_REQUEST;
+  }
+
+  private static String stringToSign(String amzDate, String scope, String canonicalRequest) {
+    return ALGORITHM + "\n" + amzDate + "\n" + scope + "\n" + HashUtil.sha256Hex(canonicalRequest);
+  }
+
+  private String signature(String dateStamp, String secretKey, String stringToSign) {
+    return HashUtil.hex(HashUtil.hmacSha256(signingKey(dateStamp, secretKey), stringToSign));
   }
 
   /** Canonical headers: lower-case names, sorted, with repeated names merged and values normalised. */
@@ -305,6 +394,25 @@ final class S3SignatureV4 {
       this.signature = signature;
       this.authorization = authorization;
       this.headers = Collections.unmodifiableList(headers);
+    }
+  }
+
+  /** Result of {@link #presign}: intermediate values (for tests and diagnostics) and the URL's query string. */
+  static final class Presigned {
+    final String canonicalRequest;
+    final String stringToSign;
+    final String signature;
+    /**
+     * The encoded query string for the URL, without the leading {@code ?}: the canonical query
+     * that was signed, followed by {@code &X-Amz-Signature=<signature>}.
+     */
+    final String query;
+
+    private Presigned(String canonicalRequest, String stringToSign, String signature, String query) {
+      this.canonicalRequest = canonicalRequest;
+      this.stringToSign = stringToSign;
+      this.signature = signature;
+      this.query = query;
     }
   }
 

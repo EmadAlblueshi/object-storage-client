@@ -413,6 +413,33 @@ public interface S3Presigner {
   codegen-legal data object overload, designed in Phase 3. Every other public signature stays
   codegen-legal as well (no `URI`, `Instant`, `Clock`, `Duration`).
 
+### Phase 3 — design decisions and steps (owner decisions, 2026-11-21)
+- **D1, options:** the presigner reuses `S3ClientOptions` (endpoint, region, path-style, static
+  credentials). One new optional field, `publicEndpoint`, is the endpoint presigned URLs point to
+  (e.g. the client talks to an in-cluster address, the URLs point to the public Spaces host); it
+  defaults to `endpoint` and is validated like it. The presigner ignores the transport settings.
+- **D2, factory and accessor:** `S3Presigner.create(S3ClientOptions)` needs no `Vertx`, validates
+  like `S3Client.create` and throws `IllegalArgumentException`. `S3Client.presigner()` is a
+  `@CacheReturn` accessor, built once from the client's options, sharing the client's signer, and
+  still usable after `close()`. `impl.S3PresignerImpl` joins the public-impl allowlist, for the
+  same reason as `S3ClientImpl`.
+- **D3, deferred to 1.x:** extra signed headers (e.g. `Content-Type`) and `response-*` overrides
+  (e.g. `response-content-disposition`). If added, they come as a codegen-legal
+  `S3PresignOptions` data object and overloads of the `TimeUnit` methods, which breaks nothing.
+  Until then, a presigned PUT accepts any `Content-Type` the uploader sends (unsigned headers are
+  allowed), and S3 stores it.
+- **D4:** session tokens are covered by unit tests only; no STS setup against Silo.
+- **Steps** (each diff first, verified, committed by the owner):
+  1. Signer: query-string `presign` in `S3SignatureV4`, sharing the canonical request, string to
+     sign and signing-key cache with `sign`. Unit tests against the AWS published presign example
+     and the S3 rules it doesn't exercise. No public API.
+  2. Public API: `publicEndpoint`, `S3Presigner` (`@VertxGen`) with `S3PresignerImpl`,
+     `S3Client.presigner()`, expiry, bucket and key validation, unit tests.
+  3. Integration suite (Silo, Silo-TLS, External) with a plain HTTP client: PUT then GET round
+     trip, expired URL (signed in the past through the `Clock` hook, no waiting), tampered URLs,
+     special-character and Arabic keys, `publicEndpoint`, HTTPS, non-default port.
+  4. Manual "Presigned URLs" section and examples; `AGENTS.md` and plan updates.
+
 ### Correction (2026-11-20): build tooling policy
 - **Keep docgen. Do not remove it.** The revamp is about the API. Build tooling changes only where a recorded decision requires it: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the processor wiring for codegen and docgen.
 - The rest of the existing build, site and doc setup stays as it is: docgen, the asciidoctor site, javadoc, the source and test jars, Central publishing and the gpg profile. This **replaces** the earlier suggestions to drop processor-plugin output, docgen, asciidoctor or the test-jar, to add enforcer/spotless, and to rework CI beyond the two JDK jobs (setup-java v4, caching, permissions, tag pattern, job names). Those suggestions are withdrawn unless you request them.
