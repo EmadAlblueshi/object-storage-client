@@ -164,6 +164,13 @@ The program creates a client from JSON config, uploads, lists a prefix, streams 
      release the connection in the end; it's parity with core's `HttpClientResponse`, but costly.
      - Fix: `resp.send(stream).onFailure(e -> stream.cancel())`, with `Content-Length` set from
        `metadata()` when it is known (`>= 0`).
+     - **Correction (2026-11-21, found while applying R5):** that fix is incomplete. Vert.x's pipe
+       registers no handler on the destination (`PipeImpl` constructor and `to()`), so `send`
+       fails only when a write fails. While S3 sends data, the next write to the closed
+       connection fails, and the cancel then stops the drain. While no data arrives, `send`
+       never fails and the stream keeps its S3 connection. Cancel on the response's close
+       handler as well: `resp.closeHandler(v -> stream.cancel())`. A stub test that withholds
+       the rest of the object proves it, and fails (times out) without the close handler.
      - The manual's example has neither, and uses `pipeTo` where `HttpServerResponse.send(ReadStream)`
        is the Vert.x 5 idiom. Its file example opens the file after getting the stream, which
        forces a cancel when the open fails; opening the file first avoids that. Docs fix (R5).

@@ -275,6 +275,10 @@
               <compilerArgs>
                 <arg>-Adocgen.source=${asciidoc.dir}/*.adoc</arg>
                 <arg>-Adocgen.output=${project.build.directory}/asciidoc/java</arg>
+                <!-- ${maven.*} in the manual (the dependency snippet), as in the official Vert.x manuals -->
+                <arg>-Amaven.groupId=${project.groupId}</arg>
+                <arg>-Amaven.artifactId=${project.artifactId}</arg>
+                <arg>-Amaven.version=${project.version}</arg>
               </compilerArgs>
             </configuration>
           </execution>

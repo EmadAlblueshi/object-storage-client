@@ -5,6 +5,31 @@ MinIO-compatible servers), based on Vert.x.
 
 WARNING: The module is being rewritten. The API is incomplete and will change between versions.
 
+NOTE: `S3Client`, `S3Presigner` and `S3Exception` have the same simple names as AWS SDK v2 types.
+In a file that uses both libraries, refer to one of them by its fully qualified name.
+
+== Using the client
+
+Add the dependency to your build. It needs Vert.x 5.2 and Java 11 or later.
+
+* Maven (in your `pom.xml`):
+
+[source,xml]
+----
+<dependency>
+  <groupId>${maven.groupId}</groupId>
+  <artifactId>${maven.artifactId}</artifactId>
+  <version>${maven.version}</version>
+</dependency>
+----
+
+* Gradle (in your `build.gradle` file):
+
+[source,groovy]
+----
+implementation '${maven.groupId}:${maven.artifactId}:${maven.version}'
+----
+
 == Creating a client
 
 A client is configured with `S3ClientOptions`. The endpoint URI is the single source of scheme,
@@ -155,19 +180,30 @@ pointing to `getObjectStream`, without its body being read.
 an error such as `NoSuchKey` fails it before any data is streamed. On success you get an
 `S3ObjectStream`, a `ReadStream<Buffer>` with real backpressure that also carries the object's
 metadata. It is handed out *paused*, and its handlers run on the context that called
-`getObjectStream`. Pipe it to a file:
+`getObjectStream`.
+
+To save it to a file, open the file first, so that a failure to open it doesn't leave a stream
+behind that you would have to cancel:
 
 [source,$lang]
 ----
 {@link examples.Examples#getObjectStreamToFile}
 ----
 
-or to an HTTP response:
+To send it as an HTTP response, set the `Content-Length` from the metadata when the server reports
+it, and use `send`. Cancel the stream when the HTTP client disconnects (the response's close
+handler) and when `send` fails. `send` alone doesn't notice a disconnect: it fails only when a write
+fails, and then Vert.x resumes the stream without a handler, so the rest of the object is
+downloaded for nothing. While no data arrives, it doesn't fail at all and the stream keeps its
+connection:
 
 [source,$lang]
 ----
 {@link examples.Examples#getObjectStreamToHttpResponse}
 ----
+
+The same applies to any pipe: when a write fails, Vert.x stops writing and resumes the source.
+Cancel the stream when `pipeTo` fails.
 
 A single byte range can be requested with an HTTP `Range` value (`bytes=0-99`, `bytes=100-` or
 `bytes=-100`):
@@ -184,6 +220,11 @@ cancel it. A stream that is neither consumed nor cancelled never releases its co
 ----
 {@link examples.Examples#cancelObjectStream}
 ----
+
+NOTE: With Mutiny, cancelling the subscription of a `Multi` made from the stream (with
+`MultiHelper.toMulti`, or `toMulti()` on generated bindings) detaches its handlers and resumes the
+stream instead of cancelling it, so the rest of the object is still downloaded. Call `cancel()` on
+the stream yourself when you cancel the subscription, e.g. in `onCancellation()`.
 
 === Listing objects
 
@@ -247,8 +288,3 @@ an unreadable response, an invalid argument, a closed client) is an `S3ClientExc
 ----
 {@link examples.Examples#close}
 ----
-
-== Using it next to the AWS SDK
-
-`S3Client`, `S3Presigner` and `S3Exception` have the same simple names as AWS SDK v2 types. In a
-file that uses both libraries, refer to one of them by its fully qualified name.
