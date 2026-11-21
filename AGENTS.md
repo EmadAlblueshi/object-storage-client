@@ -53,7 +53,11 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   compile time (no `Instant`, `Duration`, `URI`, `Clock` or own functional interfaces in method
   signatures). Use codegen's `@Nullable`, `@Fluent` and `@CacheReturn` as Vert.x's own clients do.
 - `vertx-docgen` (provided scope): generates the Asciidoc manual from `src/main/asciidoc/*.adoc`
-  and the `examples` package. Both processors run via `annotationProcessorPaths`.
+  and the `examples` package. Both processors run via `annotationProcessorPaths`. The manual's
+  `${maven.groupId}`, `${maven.artifactId}` and `${maven.version}` are filled in by docgen from
+  `-Amaven.*` processor options in the pom, as in the official Vert.x manuals. Docgen reads these
+  options without declaring them, so javac's "The following options were not recognized by any
+  processor" warning is expected (owner decision, 2026-11-21); don't remove the options to silence it.
 - Tests: JUnit Jupiter **5.14.4** (`junit-bom` imported BEFORE `vertx-dependencies`; don't
   take the JUnit 6 that the Vert.x BOM manages, because it needs Java 17), `vertx-junit5`,
   Testcontainers **2.0.5** (works with Docker 29).
@@ -230,7 +234,10 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   (Vert.x drops chunks that arrive with no handler set). It delivers at most one terminal event
   (end, failure or cancellation). `cancel()` closes the connection and fails the stream with an
   `S3ClientException`, so pipes don't hang. Object streams must be consumed or cancelled; docs
-  and examples always show the cancel on paths that don't consume.
+  and examples always show the cancel on paths that don't consume. That includes a failed
+  `pipeTo` and, for an `HttpServerResponse`, the response's close handler: `send(stream)` doesn't
+  notice a disconnected HTTP client until a write fails (Vert.x's pipe doesn't watch the
+  destination), and on a write failure Vert.x resumes the stream and drains the object.
 - ListObjectsV2 always sends `encoding-type=url`. Keys and prefixes are decoded (form-style:
   `+` is a space) only when the response says `<EncodingType>url</EncodingType>`. There is no
   paging helper: the caller pages with the continuation token.

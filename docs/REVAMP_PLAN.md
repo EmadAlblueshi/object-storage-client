@@ -573,10 +573,21 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
   `Map<String, String>`), and `S3PutObjectOptions.putUserMetadata(name, value)` adds or replaces
   one entry, matching names case-insensitively. Codegen doesn't treat it as a JSON adder: the
   generated converter reads and writes only the `userMetadata` map, so no `@GenIgnore` is needed.
+- **R5 applied:** the manual has a Maven/Gradle dependency block, with coordinates and version
+  filled in by docgen from `-Amaven.groupId/artifactId/version` (as in the official manuals; javac
+  warns that no processor claims these options, because docgen reads them without declaring them;
+  the warning is expected, owner decision 2026-11-21).
+  The AWS SDK section is a NOTE. The file example opens the file first. The HTTP example sets
+  `Content-Length`, uses `send`, and cancels on the response's close handler and on a failed
+  `send`. Correction to the audit: `send` alone doesn't notice a disconnect (see the report). A
+  stub test proves the pattern. The Mutiny cancellation behaviour is a NOTE. The WARNING banner
+  stays until `1.0.0-RC1` (release checklist).
 
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
 the concrete steps.
+- [ ] For `1.0.0-RC1`: remove the "being rewritten" WARNING banner from the manual
+  (`src/main/asciidoc/index.adoc`).
 - [ ] Gate 6 (required for `1.0.0`, not for `1.0.0-RC1`): run the external profile against real
   Spaces, in both addressing styles:
   ```

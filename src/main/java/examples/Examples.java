@@ -6,6 +6,7 @@ import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
+import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
@@ -111,27 +112,37 @@ public class Examples {
   }
 
   public void getObjectStreamToFile(Vertx vertx, S3Client client) {
-    client.getObjectStream("my-bucket", "videos/big.mp4")
-      .compose(stream -> vertx.fileSystem()
-        .open("/tmp/big.mp4", new OpenOptions().setWrite(true).setCreate(true))
-        // the stream must be consumed or cancelled: cancel it if the file can't be opened
-        .recover(err -> stream.cancel().compose(v -> Future.failedFuture(err)))
-        .compose(file -> stream.pipeTo(file)))
+    // Open the file first: once you have the stream, it must be consumed or cancelled
+    vertx.fileSystem().open("/tmp/big.mp4", new OpenOptions().setWrite(true).setTruncateExisting(true))
+      .compose(file -> client.getObjectStream("my-bucket", "videos/big.mp4").compose(
+        // pipeTo closes the file; if writing fails, cancel the stream instead of draining it
+        stream -> stream.pipeTo(file).onFailure(err -> stream.cancel()),
+        // no stream (e.g. NoSuchKey): just close the file
+        err -> file.close().compose(v -> Future.failedFuture(err))))
       .onSuccess(v -> System.out.println("downloaded"));
   }
 
   public void getObjectStreamToHttpResponse(S3Client client, HttpServerRequest request) {
+    HttpServerResponse response = request.response();
     client.getObjectStream("my-bucket", "videos/big.mp4").onComplete(ar -> {
-      HttpServerResponse response = request.response();
       if (ar.failed()) {
-        response.setStatusCode(502).end();
+        boolean missing = ar.cause() instanceof S3ServiceException
+          && ((S3ServiceException) ar.cause()).getStatusCode() == 404;
+        response.setStatusCode(missing ? 404 : 502).end();
         return;
       }
       S3ObjectStream stream = ar.result();
-      if (stream.metadata().getContentType() != null) {
-        response.putHeader("Content-Type", stream.metadata().getContentType());
+      S3ObjectMetadata metadata = stream.metadata();
+      if (metadata.getContentType() != null) {
+        response.putHeader("Content-Type", metadata.getContentType());
       }
-      stream.pipeTo(response);
+      if (metadata.getContentLength() >= 0) {
+        response.putHeader("Content-Length", Long.toString(metadata.getContentLength()));
+      }
+      // If the HTTP client goes away, cancel the stream: otherwise it keeps its S3 connection,
+      // and Vert.x may download the rest of the object for nothing (cancel is a no-op once done)
+      response.closeHandler(v -> stream.cancel());
+      response.send(stream).onFailure(err -> stream.cancel());
     });
   }
 

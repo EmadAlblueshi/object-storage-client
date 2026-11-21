@@ -38,6 +38,7 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.net.HostAndPort;
 import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.PemTrustOptions;
@@ -796,6 +797,43 @@ class TransportStubTest {
       assertEquals(0, ends.get());
       testContext.completeNow();
     })));
+  }
+
+  /**
+   * The manual's pattern for serving an object as an HTTP response: when the HTTP client goes
+   * away, the response's close handler cancels the stream, which closes the S3 connection and fails
+   * {@code send}. The stub sends part of the object and then nothing more, so {@code send} alone
+   * would never notice the disconnect (it only fails when a write fails): without the cancel, the
+   * S3 connection would stay open and the test would never finish.
+   */
+  @Test
+  void sendingToAnHttpResponseCancelsTheStreamWhenTheClientDisconnects(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    Promise<Void> sendFailed = Promise.promise();
+    io.vertx.core.net.NetClient browser = vertx.createNetClient();
+    vertx.createHttpServer()
+      .requestHandler(request -> client.getObjectStream("bucket", "video").onSuccess(stream -> {
+        HttpServerResponse response = request.response();
+        response.closeHandler(v -> stream.cancel());
+        response.send(stream).onFailure(err -> {
+          sendFailed.tryComplete();
+          stream.cancel();
+        });
+      }))
+      .listen(0, "localhost")
+      .compose(app -> browser.connect(app.actualPort(), "localhost")
+        .compose(socket -> {
+          // the HTTP client reads the first bytes of the response, then disconnects
+          socket.handler(data -> socket.close());
+          return socket.write("GET /video HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        })
+        .compose(v -> sendFailed.future())
+        .compose(v -> connectionClosed())
+        .eventually(app::close))
+      .eventually(browser::close)
+      .eventually(client::close)
+      .onComplete(testContext.succeedingThenComplete());
   }
 
   @Test
