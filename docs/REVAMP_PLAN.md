@@ -12,7 +12,8 @@ plus a presigner. **Not** a clone of the AWS SDK.
   never exposed as a public multipart API.
 - ListObjectsV2.
 - `S3Presigner`: GET and PUT.
-- Optional, to be confirmed by the owner before the step starts: CopyObject, DeleteObjects.
+- Dropped for 1.0 (owner decision, 2026-11-21): CopyObject, DeleteObjects. Either can be added
+  in 1.x without breaking anything, if the owner asks.
 
 **Non-goals** (never add unless the owner explicitly asks): a public multipart API, ACLs, bucket
 policies, lifecycle, versioning, tagging, SSE/encryption options, object lock, presigned POST,
@@ -36,7 +37,8 @@ version is `1.0.0-RC1` (no `0.5.0`). A gate is only relaxed or dropped by the ow
 **Gates for `1.0.0-RC1`** (published to Maven Central):
 1. **Scope complete.** Everything under "In scope" is implemented: the presigner (Phase 3),
    streaming uploads (Phase 4) and lean hardening (Phase 5). Step 9 (CopyObject, DeleteObjects)
-   is either done or explicitly dropped by the owner.
+   was explicitly dropped by the owner (2026-11-21); both can be added in 1.x without breaking
+   anything.
 2. **Vert.x idiom audit done and applied.** The library looks, feels and behaves like an
    official Vert.x client. The API shape is final after this gate. The report and the owner's
    decisions on it: [`VERTX_IDIOM_AUDIT.md`](VERTX_IDIOM_AUDIT.md).
@@ -337,7 +339,7 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 |---|---|---|---|
 | **0. Groundwork** (this step) | Rules in place | AGENTS.md + CLAUDE.md | — |
 | **1. Rename + skeleton** ⚠️BREAKING | New identity, green build | pom coordinates; delete `objectstorage` tree; new package + `module-info` + docgen-ready `package-info`; Vert.x 5.2.3 pinned; `--release 11`; JUnit 5.14.4 BOM; Testcontainers 2.0.5; codegen **and docgen** processors via `annotationProcessorPaths`; remove web-client and Jackson; `java11` surefire profile; CI: the two JDK jobs only; test TLS certificate + MinIO container; **context-test harness first** (event-loop / worker / virtual-thread verticle fixtures + `assertSameContext` helper). Everything else in build/site/docs stays as is. | Old code can't compile once web-client/Jackson are removed (see Phase 1 steps) |
-| **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy) with copy ctor + toJson/fromJson; SigV4 signer **ported** from git history and fixed (sorted/encoded query, RFC3986 path, canonical headers, no options mutation, host:port, session token), unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: list/create/head/delete bucket, put(Buffer)/get(Buffer, capped)/getObjectStream/head/delete object, ListObjectsV2, optionally CopyObject and DeleteObjects | Encoding edge cases; Spaces quirks |
+| **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy) with copy ctor + toJson/fromJson; SigV4 signer **ported** from git history and fixed (sorted/encoded query, RFC3986 path, canonical headers, no options mutation, host:port, session token), unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: list/create/head/delete bucket, put(Buffer)/get(Buffer, capped)/getObjectStream/head/delete object, ListObjectsV2, optionally CopyObject and DeleteObjects (dropped for 1.0, owner decision 2026-11-21) | Encoding edge cases; Spaces quirks |
 | **3. Presigned URLs** (own phase, right after the core client) | GET/PUT presign | Synchronous `S3Presigner` (standalone via `S3Presigner.create(options)` without `Vertx`, also exposed from the client) returning the URL as a `String`; shared SigV4 signer (query auth, `UNSIGNED-PAYLOAD`, cached signing key); separate presigner endpoint; expiry as `long` + `TimeUnit` (plus Java-only `Duration` overloads), positive, whole seconds, ≤ 604800 s; optional extra signed headers; `response-*` overrides; `X-Amz-Security-Token`; `Clock` only as an impl test hook; all signatures codegen-legal (see "Phase 3 — presigner API"); unit tests on AWS published examples; integration via plain HTTP client against Silo (including a non-default port). Presigned POST is out of scope. | Host/port mismatch, clock skew |
 | **4. Streaming uploads** | Backpressure-correct uploads | `putObject` from a `ReadStream<Buffer>` and from a file (AsyncFile): pause-before-async, payload hashing per the payload-signing policy, single PUT for small/empty bodies, multipart **internally and only when required** (part size internal, no public option), **AbortMultipartUpload on every failure**, file close on all paths. No public multipart API. (`getObjectStream` moved to Phase 2 step 6.) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
 | **5. Hardening** (lean) | Production-ready on DOKS | Closing the client aborts in-flight internal multipart uploads; log-redaction audit. The external backend profile stays local (the owner runs it); a CI job only if the owner asks. No retry framework and no per-operation timeout settings (non-goals). | Internal API drift on Vert.x bumps |
@@ -463,7 +465,7 @@ Order rationale: options come before the transport, which consumes them (endpoin
 | 6 | Object ops | putObject(Buffer) (`Content-Length` always set; content type, user metadata), getObject → Buffer (small objects only, size-capped), **getObjectStream** (issue #36; Range supported), headObject, deleteObject. See "Step 6 requirements" below. The commit says "Closes #36". | Payload signing over HTTP (signed, inline and via `executeBlocking`) and HTTPS (unsigned); the cap (with and without `Content-Length`); getObjectStream backpressure, ranges, errors before the body; special-character keys; runtime-generated data; harness, including `assertReadStreamOnCallerContext`. |
 | 7 | External backend profile (opt-in) | A generic `ExternalBackend` behind `S3TestBackend`, enabled only when `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY` and `S3_SECRET_KEY` are all set (otherwise skipped, never failed). No provider names, nothing secret in the repo, no CI job: the owner runs it locally. The bucket and object suites become abstract bases with Silo, Silo-TLS and External subclasses. Every created resource has a unique `vertx-s3-it-` name and is deleted in cleanup even on failure. One bucket create/head/delete test; all object tests share one bucket. | Against the external backend: CreateBucket `LocationConstraint`; `UNSIGNED-PAYLOAD` on bodiless and buffered requests (https endpoint); error mapping (`NoSuchKey`, `NoSuchBucket`, HEAD 404, auth errors); put/get/head/delete round trips; `getObjectStream` with backpressure, Range and cancel; special-character keys including empty/`.`/`..` segments and a leading `/`; the getObject cap. |
 | 8 | ListObjectsV2 (issue #32) | Prefix, delimiter, common prefixes, start-after, continuation tokens (the caller pages; no paging helper). `encoding-type=url` with key decoding. | Multi-page listings; special-character keys; harness. |
-| 9 | CopyObject + DeleteObjects (optional; the owner confirms before the step starts) | Copy-source encoding; CopyObject's 200-with-`<Error>`-body case; DeleteObjects with the required `Content-MD5`, quiet mode, per-key errors. | Same pattern; per-key failure reporting. |
+| 9 | ~~CopyObject + DeleteObjects~~ **Dropped for 1.0** (owner decision, 2026-11-21; can be added in 1.x without breaking anything) | Copy-source encoding; CopyObject's 200-with-`<Error>`-body case; DeleteObjects with the required `Content-MD5`, quiet mode, per-key errors. | Same pattern; per-key failure reporting. |
 
 ### Phase 2 — answers recorded (2026-11-20)
 1. `toJson` leaves the secret out; `fromJson` still accepts it (JSON is therefore not a full round trip for credentials).
@@ -606,7 +608,7 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
 - Applied as separate commits, each reviewed diff first: R1 + R2 (codegen annotations,
   exceptions), R3 + R6 (static JSON credentials only, `userMetadata`), R5 (manual), R4 (Phase 3
   presigner signatures).
-- Step 9 (CopyObject, DeleteObjects) stays on hold until the owner decides.
+- Step 9 (CopyObject, DeleteObjects) is dropped for 1.0 (owner decision, 2026-11-21).
 - **R3 + R6 applied:** `S3CredentialsProvider` and the `credentialsProvider` option are gone;
   `metadata` is `userMetadata` in `S3ObjectMetadata` and `S3PutObjectOptions` (still
   `Map<String, String>`), and `S3PutObjectOptions.putUserMetadata(name, value)` adds or replaces
@@ -624,7 +626,7 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
 - **R4 recorded** in "Phase 3 — presigner API": `String` URLs, `long` + `TimeUnit` expiry plus
   Java-only `Duration` overloads (owner revision of "`long` seconds"), `Clock` only as an impl
   test hook, codegen-legal signatures verified by compiling. This completes the audit's changes
-  (gate 2); step 9 stays on hold.
+  (gate 2).
 
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
