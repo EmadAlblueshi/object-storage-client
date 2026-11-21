@@ -12,7 +12,8 @@ plus a presigner. **Not** a clone of the AWS SDK.
   never exposed as a public multipart API.
 - ListObjectsV2.
 - `S3Presigner`: GET and PUT.
-- Optional, to be confirmed by the owner before the step starts: CopyObject, DeleteObjects.
+- Dropped for 1.0 (owner decision, 2026-11-21): CopyObject, DeleteObjects. Either can be added
+  in 1.x without breaking anything, if the owner asks.
 
 **Non-goals** (never add unless the owner explicitly asks): a public multipart API, ACLs, bucket
 policies, lifecycle, versioning, tagging, SSE/encryption options, object lock, presigned POST,
