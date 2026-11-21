@@ -30,7 +30,8 @@ public interface S3ObjectStream extends ReadStream<Buffer> {
    * then receives an {@link S3ClientException} saying it was cancelled, so a pipe fails instead of
    * hanging; no data or end event follows.
    *
-   * @return a future completed on the caller's context once the connection is released
+   * @return a future completed on the caller's context once the cancellation is done; it never
+   *     fails (if the response had already ended, there is nothing left to close)
    */
   Future<Void> cancel();
 

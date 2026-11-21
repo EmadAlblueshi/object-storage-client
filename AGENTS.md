@@ -208,11 +208,20 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   is size-capped: it fails with an `S3ClientException` pointing to `getObjectStream` instead of
   buffering a body over the cap. `getObjectStream` streams the body with backpressure.
 - Every buffered response body is size-limited (`impl.Transport`): `maxBufferedObjectSize` for
-  `getObject`, a fixed internal 4 MiB for XML results, and error bodies truncated at 4 MiB. A body
-  over its limit is never read further: the request is cancelled, which closes the connection.
+  `getObject`, a fixed internal 4 MiB for XML results, and error bodies truncated at 4 MiB. Once a
+  body crosses its limit (or its `Content-Length` announces it), the outcome is decided: the result
+  (limit error or truncated body) is recorded first, later data, end and failure events are
+  ignored, and the request is cancelled best-effort, which closes the connection if the response is
+  still in flight. A failure of that cancel (e.g. the response already ended) is ignored. The same
+  rule applies to `S3ObjectStream.cancel()`, whose Future never fails.
   A HEAD response's `Content-Length` describes the object and never counts as a body.
-- The transport issues every HTTP request on the caller's context (`Caller.onContext`), so
-  response events and object-stream handlers run there (rule 4).
+- The transport assembles the whole exchange in one task on the caller's context
+  (`Caller.onContext`) before the request is sent: signing, sending, and every continuation that
+  consumes the response. So the response head reaches them inline in the task that delivers it,
+  and body handlers are attached before any body event. Never attach a response-consuming
+  continuation from another thread (e.g. a non-Vert.x caller's): it may run in a later task, after
+  Vert.x has dropped the body and ended the response ("Response already ended"). Response events and
+  object-stream handlers run on the caller's context (rule 4).
 - `S3ObjectStream` is handed out paused, with its own handlers attached to the response at once
   (Vert.x drops chunks that arrive with no handler set). It delivers at most one terminal event
   (end, failure or cancellation). `cancel()` closes the connection and fails the stream with an
@@ -267,6 +276,12 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - No default credentials; fail fast when they are missing.
 
 ## Testing rules
+- **No flaky tests.** Every test must be deterministic regardless of machine or runner speed:
+  control the ordering of events explicitly (e.g. a stub that withholds a response until the
+  client acts, or a fake that delivers events in a scripted order), never rely on timing. A flaky
+  test is treated as a bug in the code or the test and fixed at its root cause; it is never
+  retried, re-run to green, or disabled. Timeouts are only a safety net that turns a hang into a
+  failure, never part of what a test checks.
 - vertx-junit5. Integration tests run against Silo via Testcontainers. The image is pinned to an
   exact release tag (never `latest`); don't change the tag without asking. Prefer the JVM-wide
   `S3TestBackend.sharedSilo()`/`sharedSiloTls()` (never stop them; use unique bucket names) over

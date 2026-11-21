@@ -29,12 +29,19 @@ import io.vertx.core.net.HostAndPort;
  *   <li>{@code Content-Length} is always set when a body is sent (and as {@code 0} for PUT/POST
  *   without a body). Redirects are never followed.</li>
  *   <li>Every request carries {@code User-Agent: vertx-s3-client/<version>}, unsigned.</li>
- *   <li>The HTTP request is issued on the caller's context, so response events (and the handlers
- *   of a streamed body) run there.</li>
+ *   <li>The whole exchange (signing, sending, and every continuation that consumes the response)
+ *   is assembled in one task on the caller's context, before the request is sent. So the response
+ *   head reaches those continuations inline, in the task that delivers it, and the body handlers
+ *   are attached before any body event. A continuation attached from another thread (e.g. a caller
+ *   on a non-Vert.x thread) could run in a later task, after Vert.x had already dropped the body
+ *   and ended the response. Response events (and the handlers of a streamed body) run on the
+ *   caller's context.</li>
  *   <li>Buffered bodies are size-limited: {@link #MAX_BUFFERED_RESPONSE_SIZE} for XML results,
  *   a caller-supplied limit for {@code getObject}. Error bodies are read up to that size and
- *   truncated beyond it. A body over its limit is never read further: the request is cancelled,
- *   which closes the connection.</li>
+ *   truncated beyond it. Once a body crosses its limit, the outcome is decided: the result is
+ *   recorded first, later body events are ignored, and the request is cancelled on a best-effort
+ *   basis. That closes the connection if the response is still in flight; if it has already
+ *   ended, the cancellation's own outcome is ignored.</li>
  *   <li>Non-2xx responses fail with {@code S3ServiceException} ({@link ErrorMapper}); everything
  *   else fails with {@link S3ClientException}.</li>
  * </ul>
@@ -74,29 +81,31 @@ final class Transport {
    */
   Future<S3Response> execute(ContextSupport.Caller caller, S3Request request, int limit,
                              LongFunction<S3ClientException> tooLarge) {
-    return recover(caller, open(caller, request).compose(response -> {
+    return recover(caller, caller.onContext(() -> open(caller, request).compose(response -> {
       if (!isSuccess(response)) {
         return failWithError(caller, response);
       }
       return readBody(caller, response, limit, tooLarge)
         .map(body -> new S3Response(response.statusCode(), response.statusMessage(), response.headers(), body));
-    }));
+    })));
   }
 
   /**
    * Sends {@code request} and, on success, returns the response <em>paused</em> with its body
    * unread, so no data is lost before the caller attaches handlers. Error responses are read
    * (truncated at {@link #MAX_BUFFERED_RESPONSE_SIZE}) and fail the Future before any body is
-   * handed out.
+   * handed out. The response is paused in the task that delivers its head, so handlers attached
+   * later (e.g. by a continuation running in a later task) miss nothing: while paused, Vert.x keeps
+   * the body and the end queued.
    */
   Future<HttpClientResponse> stream(ContextSupport.Caller caller, S3Request request) {
-    return recover(caller, open(caller, request).compose(response -> {
+    return recover(caller, caller.onContext(() -> open(caller, request).compose(response -> {
       if (!isSuccess(response)) {
         return failWithError(caller, response);
       }
       response.pause();
       return caller.succeeded(response);
-    }));
+    })));
   }
 
   Future<Void> close() {
@@ -119,7 +128,11 @@ final class Transport {
     }
   }
 
-  /** Signs and sends {@code request} from the caller's context; the response body is not read yet. */
+  /**
+   * Signs and sends {@code request}; the response body is not read yet. Runs on the caller's
+   * context: {@link #execute} and {@link #stream} call it there, and a payload hashed on a worker
+   * thread resumes there, because the hash Future is bound to the caller's context.
+   */
   private Future<HttpClientResponse> open(ContextSupport.Caller caller, S3Request request) {
     S3Credentials credentials;
     try {
@@ -170,11 +183,12 @@ final class Transport {
     }
 
     HostAndPort authority = HostAndPort.authority(host, config.defaultPort ? -1 : config.port);
-    return caller.onContext(() -> http.request(options)
+    // On the caller's context (see open), so Vert.x binds the request, and the response events, to it
+    return http.request(options)
       .compose(httpRequest -> {
         HttpClientRequest withAuthority = httpRequest.authority(authority);
         return body == null ? withAuthority.send() : withAuthority.send(body);
-      }));
+      });
   }
 
   /** Reads an error response (truncated at the buffered limit) and fails with the mapped exception. */
@@ -185,27 +199,38 @@ final class Transport {
   }
 
   /**
-   * Buffers the body of {@code response}, which must not have been read yet (the handlers are
-   * attached in the same context task that delivered the response head, so no chunk is missed).
+   * Buffers the body of {@code response}, which must not have been read yet: the handlers are
+   * attached in the context task that delivered the response head (see {@link #execute}), so no
+   * chunk is missed. Package-private for tests.
+   * <p>
+   * Once the body crosses {@code limit}, the outcome is decided and recorded first (the limit
+   * failure, or the truncated body); every later chunk, end or failure event is ignored, and the
+   * request is {@linkplain #abandon abandoned}.
    *
    * @param tooLarge the failure for a body over {@code limit}, or {@code null} to truncate
    *     instead: the first {@code limit} bytes are kept and the rest is not read
    */
-  private static Future<Buffer> readBody(ContextSupport.Caller caller, HttpClientResponse response, int limit,
-                                         LongFunction<S3ClientException> tooLarge) {
+  static Future<Buffer> readBody(ContextSupport.Caller caller, HttpClientResponse response, int limit,
+                                 LongFunction<S3ClientException> tooLarge) {
     // A HEAD response's Content-Length describes the object, not a body
     long contentLength = response.request().getMethod() == HttpMethod.HEAD ? 0 : contentLength(response);
     if (tooLarge != null && contentLength > limit) {
-      response.request().cancel();
-      return caller.failed(tooLarge.apply(contentLength));
+      Future<Buffer> failed = caller.failed(tooLarge.apply(contentLength));
+      abandon(response);
+      return failed;
     }
     Promise<Buffer> promise = caller.promise();
     Buffer body = Buffer.buffer((int) Math.max(0, Math.min(contentLength, limit)));
+    boolean[] decided = {false}; // only touched on the response's context
     response.handler(chunk -> {
+      if (decided[0]) {
+        return;
+      }
       if (body.length() + chunk.length() <= limit) {
         body.appendBuffer(chunk);
         return;
       }
+      decided[0] = true;
       if (tooLarge == null) {
         body.appendBuffer(chunk, 0, limit - body.length());
         promise.tryComplete(body);
@@ -213,11 +238,35 @@ final class Transport {
         promise.tryFail(tooLarge.apply(contentLength));
       }
       response.handler(null);
-      response.request().cancel();
+      abandon(response);
     });
-    response.endHandler(v -> promise.tryComplete(body));
-    response.exceptionHandler(promise::tryFail);
+    response.endHandler(v -> {
+      if (!decided[0]) {
+        decided[0] = true;
+        promise.tryComplete(body);
+      }
+    });
+    response.exceptionHandler(error -> {
+      if (!decided[0]) {
+        decided[0] = true;
+        promise.tryFail(error);
+      }
+    });
     return promise.future();
+  }
+
+  /**
+   * Stops reading a response whose outcome is already decided, on a best-effort basis: cancelling
+   * the request closes the connection if the response is still in flight. If the response has
+   * already ended (or the connection is already closed), the cancellation may fail or report
+   * nothing to cancel; that outcome is ignored, because it can't change the decided result.
+   */
+  private static void abandon(HttpClientResponse response) {
+    try {
+      response.request().cancel();
+    } catch (RuntimeException ignored) {
+      // best-effort, see above
+    }
   }
 
   /** Wraps any failure that isn't already an {@link S3Exception} in an {@link S3ClientException}. */
