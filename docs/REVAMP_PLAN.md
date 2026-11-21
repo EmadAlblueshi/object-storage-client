@@ -337,7 +337,7 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 | **0. Groundwork** (this step) | Rules in place | AGENTS.md + CLAUDE.md | — |
 | **1. Rename + skeleton** ⚠️BREAKING | New identity, green build | pom coordinates; delete `objectstorage` tree; new package + `module-info` + docgen-ready `package-info`; Vert.x 5.2.3 pinned; `--release 11`; JUnit 5.14.4 BOM; Testcontainers 2.0.5; codegen **and docgen** processors via `annotationProcessorPaths`; remove web-client and Jackson; `java11` surefire profile; CI: the two JDK jobs only; test TLS certificate + MinIO container; **context-test harness first** (event-loop / worker / virtual-thread verticle fixtures + `assertSameContext` helper). Everything else in build/site/docs stays as is. | Old code can't compile once web-client/Jackson are removed (see Phase 1 steps) |
 | **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy) with copy ctor + toJson/fromJson; SigV4 signer **ported** from git history and fixed (sorted/encoded query, RFC3986 path, canonical headers, no options mutation, host:port, session token), unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: list/create/head/delete bucket, put(Buffer)/get(Buffer, capped)/getObjectStream/head/delete object, ListObjectsV2, optionally CopyObject and DeleteObjects | Encoding edge cases; Spaces quirks |
-| **3. Presigned URLs** (own phase, right after the core client) | GET/PUT presign | Synchronous `S3Presigner` (standalone via `S3Presigner.create(options)` without `Vertx`, also exposed from the client) returning `URI`/`String`; shared SigV4 signer (query auth, `UNSIGNED-PAYLOAD`, cached signing key); separate presigner endpoint; expiry ≤ 604800 s; optional extra signed headers; `response-*` overrides; `X-Amz-Security-Token`; injectable `Clock`; unit tests on AWS published examples; integration via plain HTTP client against Silo (including a non-default port). Presigned POST is out of scope. | Host/port mismatch, clock skew |
+| **3. Presigned URLs** (own phase, right after the core client) | GET/PUT presign | Synchronous `S3Presigner` (standalone via `S3Presigner.create(options)` without `Vertx`, also exposed from the client) returning the URL as a `String`; shared SigV4 signer (query auth, `UNSIGNED-PAYLOAD`, cached signing key); separate presigner endpoint; expiry as `long` + `TimeUnit` (plus Java-only `Duration` overloads), positive, whole seconds, ≤ 604800 s; optional extra signed headers; `response-*` overrides; `X-Amz-Security-Token`; `Clock` only as an impl test hook; all signatures codegen-legal (see "Phase 3 — presigner API"); unit tests on AWS published examples; integration via plain HTTP client against Silo (including a non-default port). Presigned POST is out of scope. | Host/port mismatch, clock skew |
 | **4. Streaming uploads** | Backpressure-correct uploads | `putObject` from a `ReadStream<Buffer>` and from a file (AsyncFile): pause-before-async, payload hashing per the payload-signing policy, single PUT for small/empty bodies, multipart **internally and only when required** (part size internal, no public option), **AbortMultipartUpload on every failure**, file close on all paths. No public multipart API. (`getObjectStream` moved to Phase 2 step 6.) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
 | **5. Hardening** (lean) | Production-ready | Closing the client aborts in-flight internal multipart uploads; log-redaction audit. The external backend profile stays local (the owner runs it); a CI job only if the owner asks. No retry framework and no per-operation timeout settings (non-goals). | Internal API drift on Vert.x bumps |
 | **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `1.0.0-RC1`, then `1.0.0`, as decided by the "1.0.0 release gates" section; see the Phase 6 release checklist below | — |
@@ -364,13 +364,52 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
      - a fast hex encoder instead of per-byte `String.format`;
      - no per-call `MessageDigest`/`Mac` provider lookup. `Mac` and `MessageDigest` are **not thread-safe**: use per-thread instances (e.g. a `ThreadLocal` of prototypes) or `clone()` a prototype per use, and never share one instance.
 10. **Presigned URLs: an own phase, Phase 3, right after the core client.** Streaming moves to Phase 4.
-    - Synchronous API returning `URI`/`String` (pure computation, no `Future`). Usable standalone via `S3Presigner.create(options)` without a `Vertx` instance, and also exposed from the client.
+    - Synchronous API returning the URL as a `String` (pure computation, no `Future`; `URI` dropped by audit R4). Usable standalone via `S3Presigner.create(options)` without a `Vertx` instance, and also exposed from the client.
     - One shared SigV4 signer for requests and presigning (query-string auth, `UNSIGNED-PAYLOAD`). The derived signing key is cached per (date, region, service), keyed by credentials too so rotation is safe. The cache holds **only the current entry**, so rotated-out secrets aren't kept in memory.
     - The presigner endpoint is configurable separately from the client endpoint (public host vs internal Kubernetes address). Host is signed with the port when it's non-default.
-    - GET and PUT. Expiry is validated (max 604800 s). Optional extra signed headers (e.g. `Content-Type`); by default only `host` is signed. `response-*` overrides, `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved.
-    - Injectable `java.time.Clock`. Unit tests against the AWS SigV4 published examples. Integration tests download and upload via presigned URLs against Silo with a plain HTTP client.
+    - GET and PUT. Expiry is validated (see "Phase 3 — presigner API"). Optional extra signed headers (e.g. `Content-Type`); by default only `host` is signed. `response-*` overrides, `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved.
+    - A `java.time.Clock` only as an impl test hook (audit R4). Unit tests against the AWS SigV4 published examples. Integration tests download and upload via presigned URLs against Silo with a plain HTTP client.
     - Presigned POST (browser form policy) is out of scope for now.
     - ~~*Consequence:* presigning needs credentials synchronously, so the credentials abstraction must expose the current credentials without a `Future`.~~ **Superseded (2026-11-21, audit R3):** credentials are static (`S3ClientOptions.setCredentials`, fully JSON) and there is no credentials provider. The presigner signs with the static credentials of its options.
+
+### Phase 3 — presigner API (owner decision, 2026-11-21, audit R4 as revised)
+Recorded before Phase 3 starts, so the presigner is codegen-legal and idiomatic from the first
+commit. `S3Presigner` is `@VertxGen` (`PackagePolicyTest` requires it of every API interface):
+
+```java
+@VertxGen
+public interface S3Presigner {
+
+  // options type and the client accessor are designed in Phase 3
+  static S3Presigner create(/* presigner options */);
+
+  String presignGet(String bucket, String key, long expiry, TimeUnit unit);
+  String presignPut(String bucket, String key, long expiry, TimeUnit unit);
+
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  String presignGet(String bucket, String key, Duration expiry);
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  String presignPut(String bucket, String key, Duration expiry);
+}
+```
+- **Return:** the URL as a `String` (no `URI`: codegen rejects it).
+- **Expiry:** an amount and a `TimeUnit`, amount first as in Vert.x's own API
+  (`Future.timeout(long delay, TimeUnit unit)`, `Vertx.timer(long delay, TimeUnit unit)`).
+  Java callers can also pass a `Duration` through the `@GenIgnore(GenIgnore.PERMITTED_TYPE)`
+  overloads, which other languages don't see (as `MultiMap`'s Java-only methods in Vert.x core).
+- **Validation, both forms:** the expiry must be positive, a whole number of seconds
+  (`X-Amz-Expires` is in seconds; nothing is rounded silently), and at most 7 days (604800 s).
+  Presigning is synchronous, so invalid arguments (expiry, bucket, key) throw
+  `IllegalArgumentException`, and a `null` argument throws `NullPointerException`.
+- **Time:** the system UTC clock. A `Clock` is only an impl test hook (a package-private
+  constructor), for the AWS published presign examples.
+- **Verified by compiling** (2026-11-21, a probe interface in the API package with the real
+  codegen processor): these signatures are legal, `TimeUnit` is accepted in either parameter
+  order, and a `Duration` parameter without `@GenIgnore(GenIgnore.PERMITTED_TYPE)` is rejected
+  ("type java.time.Duration is not legal for use for a parameter").
+- Extra signed headers and `response-*` overrides need more parameters. They come as a
+  codegen-legal data object overload, designed in Phase 3. Every other public signature stays
+  codegen-legal as well (no `URI`, `Instant`, `Clock`, `Duration`).
 
 ### Correction (2026-11-20): build tooling policy
 - **Keep docgen. Do not remove it.** The revamp is about the API. Build tooling changes only where a recorded decision requires it: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the processor wiring for codegen and docgen.
@@ -581,6 +620,10 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
   `send`. Correction to the audit: `send` alone doesn't notice a disconnect (see the report). A
   stub test proves the pattern. The Mutiny cancellation behaviour is a NOTE. The WARNING banner
   stays until `1.0.0-RC1` (release checklist).
+- **R4 recorded** in "Phase 3 — presigner API": `String` URLs, `long` + `TimeUnit` expiry plus
+  Java-only `Duration` overloads (owner revision of "`long` seconds"), `Clock` only as an impl
+  test hook, codegen-legal signatures verified by compiling. This completes the audit's changes
+  (gate 2); step 9 stays on hold.
 
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
