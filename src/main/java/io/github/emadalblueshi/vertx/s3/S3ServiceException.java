@@ -11,6 +11,9 @@ import java.util.Map;
  * e.g. {@code NoSuchBucket}, {@code AccessDenied}, {@code SignatureDoesNotMatch}. It is
  * {@code null} when the response has no error document, as for HEAD requests, {@code 304}, or a
  * proxy's HTML error page; use {@link #getStatusCode()} then.
+ * <p>
+ * It carries no stack trace, like Vert.x's own server-reported errors: it describes the server's
+ * answer, not a place in your code. {@link #getRequestId()} identifies the request.
  */
 public class S3ServiceException extends S3Exception {
 
@@ -35,7 +38,7 @@ public class S3ServiceException extends S3Exception {
    */
   public S3ServiceException(String message, int statusCode, String errorCode, String requestId, String hostId,
                             String resource, Map<String, String> details) {
-    super(message, null);
+    super(message, null, true);
     this.statusCode = statusCode;
     this.errorCode = errorCode;
     this.requestId = requestId;

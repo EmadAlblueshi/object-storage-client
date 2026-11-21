@@ -1,6 +1,8 @@
 package io.github.emadalblueshi.vertx.s3;
 
 import io.github.emadalblueshi.vertx.s3.impl.S3ClientImpl;
+import io.vertx.codegen.annotations.Nullable;
+import io.vertx.codegen.annotations.VertxGen;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -23,6 +25,7 @@ import io.vertx.core.buffer.Buffer;
  * is undeployed, like a Vert.x {@code HttpClient}. Otherwise it is closed with its {@code Vertx}.
  * Don't use a client after its {@code Vertx} is closed: Vert.x can no longer deliver results.
  */
+@VertxGen
 public interface S3Client {
 
   /**
@@ -104,7 +107,7 @@ public interface S3Client {
    *     {@code NoSuchBucket}, and with an {@link S3ClientException} if the server reports a
    *     truncated page without a continuation token (it couldn't be paged)
    */
-  Future<S3ListObjectsResult> listObjects(String bucket, S3ListObjectsOptions options);
+  Future<S3ListObjectsResult> listObjects(String bucket, @Nullable S3ListObjectsOptions options);
 
   /**
    * Uploads an object from a buffer (PutObject), replacing any existing object with that key.
@@ -119,7 +122,7 @@ public interface S3Client {
    * @return the object's ETag as sent by the server (with its double quotes), or {@code null} if
    *     the server sent none
    */
-  Future<String> putObject(String bucket, String key, Buffer body);
+  Future<@Nullable String> putObject(String bucket, String key, Buffer body);
 
   /**
    * Uploads an object from a buffer (PutObject) with a content type and user metadata.
@@ -131,7 +134,7 @@ public interface S3Client {
    * @return the object's ETag as sent by the server (with its double quotes), or {@code null}
    * @see #putObject(String, String, Buffer)
    */
-  Future<String> putObject(String bucket, String key, Buffer body, S3PutObjectOptions options);
+  Future<@Nullable String> putObject(String bucket, String key, Buffer body, @Nullable S3PutObjectOptions options);
 
   /**
    * Downloads a <strong>small</strong> object into memory (GetObject).

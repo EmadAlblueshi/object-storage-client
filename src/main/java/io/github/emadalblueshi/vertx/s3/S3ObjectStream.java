@@ -1,5 +1,8 @@
 package io.github.emadalblueshi.vertx.s3;
 
+import io.vertx.codegen.annotations.CacheReturn;
+import io.vertx.codegen.annotations.Fluent;
+import io.vertx.codegen.annotations.VertxGen;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
@@ -19,9 +22,11 @@ import io.vertx.core.streams.ReadStream;
  * connection. A stream you don't read to the end must be {@linkplain #cancel() cancelled};
  * otherwise the connection is never released.
  */
+@VertxGen
 public interface S3ObjectStream extends ReadStream<Buffer> {
 
   /** The object's metadata, from the response headers. */
+  @CacheReturn
   S3ObjectMetadata metadata();
 
   /**
@@ -35,21 +40,27 @@ public interface S3ObjectStream extends ReadStream<Buffer> {
    */
   Future<Void> cancel();
 
+  @Fluent
   @Override
   S3ObjectStream exceptionHandler(Handler<Throwable> handler);
 
+  @Fluent
   @Override
   S3ObjectStream handler(Handler<Buffer> handler);
 
+  @Fluent
   @Override
   S3ObjectStream pause();
 
+  @Fluent
   @Override
   S3ObjectStream resume();
 
+  @Fluent
   @Override
   S3ObjectStream fetch(long amount);
 
+  @Fluent
   @Override
   S3ObjectStream endHandler(Handler<Void> endHandler);
 }
