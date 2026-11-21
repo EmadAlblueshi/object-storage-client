@@ -52,6 +52,9 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   and `@VertxGen` on every API interface, so the processor rejects codegen-illegal signatures at
   compile time (no `Instant`, `Duration`, `URI`, `Clock` or own functional interfaces in method
   signatures). Use codegen's `@Nullable`, `@Fluent` and `@CacheReturn` as Vert.x's own clients do.
+  A Java-only convenience overload with such a type is allowed only next to a codegen-legal
+  method that does the same, annotated `@GenIgnore(GenIgnore.PERMITTED_TYPE)` as in Vert.x core
+  (e.g. the presigner's `Duration` overloads).
 - `vertx-docgen` (provided scope): generates the Asciidoc manual from `src/main/asciidoc/*.adoc`
   and the `examples` package. Both processors run via `annotationProcessorPaths`. The manual's
   `${maven.groupId}`, `${maven.artifactId}` and `${maven.version}` are filled in by docgen from
@@ -127,8 +130,8 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 ## Vert.x rules (NON-NEGOTIABLE)
 1. **Future-only public API** (Vert.x 5 style). No callback overloads, no
    `CompletableFuture`, no blocking methods in the public API. The only exception is
-   presigning: it is pure computation with no I/O, so it is synchronous and returns
-   `URI`/`String` directly (see "Presigned URLs").
+   presigning: it is pure computation with no I/O, so it is synchronous and returns the URL
+   as a `String` directly (see "Presigned URLs").
 2. **Context capture:** every public async method captures the caller's context at call
    time and completes its Future ON THAT CONTEXT, whether the caller is an event loop, a
    worker, or a virtual-thread verticle. Never use an unbound `Promise.promise()` for a
@@ -257,16 +260,25 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   `S3ClientException` keeps it.
 
 ## Presigned URLs
-- A synchronous API returning `URI`/`String`, with no `Future`. It's usable standalone via
-  `S3Presigner.create(options)` without a `Vertx` instance, and is also exposed from the client.
+- A synchronous `@VertxGen` API returning the URL as a `String`, with no `Future`. It's usable
+  standalone via `S3Presigner.create(options)` without a `Vertx` instance, and is also exposed
+  from the client.
+- Signatures (owner decision, 2026-11-21, audit R4 as revised): the expiry is an amount and a
+  `TimeUnit`, in Vert.x's order (as `Future.timeout(long, TimeUnit)`), plus Java-only `Duration`
+  overloads marked `@GenIgnore(GenIgnore.PERMITTED_TYPE)`:
+  `presignGet`/`presignPut(String bucket, String key, long expiry, TimeUnit unit)` and
+  `presignGet`/`presignPut(String bucket, String key, Duration expiry)`. Both forms validate the
+  expiry: positive, a whole number of seconds, at most 7 days (604800 s). No `URI`, `Instant`,
+  `Clock` or `Duration` in any other public signature.
 - Query-string auth with `UNSIGNED-PAYLOAD`, through the shared signer, with the static
   credentials of its options (there is no credentials provider).
 - The presigner endpoint is configurable separately from the client endpoint (public host vs
   internal Kubernetes address). Host is signed with the port when it's non-default.
-- GET and PUT. Expiry is validated (max 604800 s). Only `host` is signed by default; optional
-  extra signed headers (e.g. `Content-Type`) are allowed. `response-*` overrides,
-  `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved.
-- Time comes from an injectable `java.time.Clock` (default: the system UTC clock).
+- GET and PUT. Only `host` is signed by default; optional extra signed headers (e.g.
+  `Content-Type`) are allowed. `response-*` overrides, `X-Amz-Security-Token` support, and
+  RFC 3986 key encoding with `/` preserved.
+- Time comes from the system UTC clock. A `java.time.Clock` is only an impl test hook (a
+  package-private constructor), never part of the public API.
 - Presigned POST (browser form policy) is out of scope.
 
 ## XML
@@ -351,8 +363,8 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   vectors). S3-specific rules are unit-tested and verified against Silo, which checks signatures
   server-side.
 - Presigning has unit tests against the AWS SigV4 published presign examples, using a fixed
-  `Clock`. Integration tests download and upload through presigned URLs against Silo, using a
-  plain HTTP client.
+  `Clock` through the impl test hook. Integration tests download and upload through presigned
+  URLs against Silo, using a plain HTTP client.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
   shared static client state across test classes).
