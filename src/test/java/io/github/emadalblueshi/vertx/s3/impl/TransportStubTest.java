@@ -104,6 +104,8 @@ class TransportStubTest {
       Buffer out = stub.raw != null ? stub.raw : Buffer.buffer(stub.body);
       if (stub.headersOnly) {
         response.writeHead(); // the announced body never comes
+      } else if (stub.backedUp != null) {
+        fillUntilBackpressure(response, stub);
       } else if (stub.chunked) {
         response.setChunked(true);
         for (int i = 0; i < out.length(); i += 8192) {
@@ -116,6 +118,50 @@ class TransportStubTest {
         response.end(out);
       }
     });
+  }
+
+  /**
+   * Writes chunks (from {@link #BACKPRESSURE_SEED}) until the write queue is full, i.e. the client
+   * has stopped reading with data pending; then completes {@code stub.backedUp}, and once the
+   * client reads again, writes {@link #CHUNKS_AFTER_DRAIN} more chunks and ends. The number of
+   * chunks written is published in {@code stub.chunksWritten} before the end. A client that never
+   * stops reading (a stream that isn't paused) fails {@code stub.backedUp} after
+   * {@link #MAX_CHUNKS_BEFORE_BACKPRESSURE} chunks instead of looping forever.
+   */
+  private static void fillUntilBackpressure(io.vertx.core.http.HttpServerResponse response, Stub stub) {
+    response.setChunked(true);
+    Random random = new Random(BACKPRESSURE_SEED);
+    int written = 0;
+    while (!response.writeQueueFull()) {
+      if (written == MAX_CHUNKS_BEFORE_BACKPRESSURE) {
+        stub.backedUp.fail("the client never stopped reading");
+        response.reset();
+        return;
+      }
+      response.write(backpressureChunk(random));
+      written++;
+    }
+    int beforeDrain = written;
+    stub.backedUp.complete();
+    response.drainHandler(v -> {
+      response.drainHandler(null);
+      for (int i = 0; i < CHUNKS_AFTER_DRAIN; i++) {
+        response.write(backpressureChunk(random));
+      }
+      stub.chunksWritten.set(beforeDrain + CHUNKS_AFTER_DRAIN);
+      response.end();
+    });
+  }
+
+  private static final long BACKPRESSURE_SEED = 3;
+  private static final int CHUNKS_AFTER_DRAIN = 4;
+  /** 256 MiB: far more than any socket buffers, so only a client that keeps reading gets there. */
+  private static final int MAX_CHUNKS_BEFORE_BACKPRESSURE = 4096;
+
+  private static Buffer backpressureChunk(Random random) {
+    byte[] chunk = new byte[64 * 1024];
+    random.nextBytes(chunk);
+    return Buffer.buffer(chunk);
   }
 
   // --- what goes on the wire -----------------------------------------------------------------------
@@ -523,20 +569,38 @@ class TransportStubTest {
     })));
   }
 
+  /**
+   * The consumer attaches only once the stub can't write any more: the paused stream has made the
+   * client stop reading with data already received and pending. Nothing may be lost.
+   */
   @Test
   void streamIsHandedOutPausedSoALateConsumerLosesNothing(VertxTestContext testContext) {
-    byte[] data = new byte[512 * 1024];
-    new Random(3).nextBytes(data);
+    Promise<Void> backedUp = Promise.promise();
+    AtomicInteger chunksWritten = new AtomicInteger();
     S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
-    responder.set(c -> new Stub(200, Buffer.buffer(data)));
+    responder.set(c -> new Stub(200, "").fillUntilBackpressure(backedUp, chunksWritten));
     client.getObjectStream("bucket", "late").compose(stream -> {
-      Promise<Void> later = Promise.promise();
-      vertx.setTimer(200, id -> later.complete()); // the whole body has arrived by now
-      return later.future().compose(v -> stream.collect(java.util.stream.Collectors.toList()));
+      io.vertx.core.Context streamContext = vertx.getOrCreateContext();
+      Promise<java.util.List<Buffer>> collected = Promise.promise();
+      backedUp.future().onComplete(ar -> streamContext.runOnContext(x -> {
+        if (ar.failed()) {
+          collected.fail(ar.cause());
+        } else {
+          stream.collect(java.util.stream.Collectors.toList()).onComplete(collected);
+        }
+      }));
+      return collected.future();
     }).eventually(client::close).onComplete(testContext.succeeding(chunks -> testContext.verify(() -> {
       Buffer all = Buffer.buffer();
       chunks.forEach(all::appendBuffer);
-      assertEquals(Buffer.buffer(data), all);
+      Random random = new Random(BACKPRESSURE_SEED);
+      Buffer expected = Buffer.buffer();
+      for (int i = 0; i < chunksWritten.get(); i++) {
+        expected.appendBuffer(backpressureChunk(random));
+      }
+      assertTrue(chunksWritten.get() > CHUNKS_AFTER_DRAIN, "the stub must have backed up first");
+      assertEquals(expected.length(), all.length());
+      assertEquals(expected, all);
       testContext.completeNow();
     })));
   }
@@ -698,29 +762,58 @@ class TransportStubTest {
       })));
   }
 
+  /**
+   * One pooled connection and room for one waiter. While the stream holds the connection, of two
+   * more requests one has to wait and the other is rejected at once: that rejection proves the
+   * connection is held, and only then is the stream cancelled. The waiting request must then get
+   * the released connection; the stub records that it arrived after the cancel. A request that
+   * succeeds before the cancel fails the test at once. The final check runs after every task
+   * already queued on the stream's context, including the cancellation failure.
+   */
   @Test
   void cancelReleasesThePooledConnection(VertxTestContext testContext) {
-    // One pooled connection: while the stream holds it, any other request has to wait
     S3ClientOptions options = options(http.actualPort(), false);
-    options.getPoolOptions().setHttp1MaxSize(1);
+    options.getPoolOptions().setHttp1MaxSize(1).setMaxWaitQueueSize(1);
     S3Client client = S3Client.create(vertx, options);
-    responder.set(c -> c.uri.endsWith("/big") ? new Stub(200, Buffer.buffer(new byte[8 * 1024 * 1024])) : new Stub(200, LIST_BUCKETS));
+    java.util.concurrent.atomic.AtomicBoolean cancelIssued = new java.util.concurrent.atomic.AtomicBoolean();
+    AtomicReference<Boolean> waiterAfterCancel = new AtomicReference<>();
+    responder.set(c -> {
+      if (c.uri.endsWith("/big")) {
+        return new Stub(200, Buffer.buffer(new byte[8 * 1024 * 1024]));
+      }
+      waiterAfterCancel.set(cancelIssued.get());
+      return new Stub(200, LIST_BUCKETS);
+    });
     List<Throwable> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
     AtomicInteger ends = new AtomicInteger();
+    List<Throwable> rejections = new java.util.concurrent.CopyOnWriteArrayList<>();
     client.getObjectStream("bucket", "big").compose(stream -> {
       stream.exceptionHandler(errors::add).endHandler(v -> ends.incrementAndGet());
-      Future<?> waiting = client.listBuckets();
-      Promise<Void> checked = Promise.promise();
-      vertx.setTimer(300, id -> {
-        testContext.verify(() -> assertFalse(waiting.isComplete(), "the second request must wait for the connection"));
-        stream.cancel().onComplete(checked);
-      });
-      return checked.future().compose(v -> waiting);
-    }).compose(v -> {
-      Promise<Void> settled = Promise.promise();
-      vertx.setTimer(100, id -> settled.complete()); // let any late stream event arrive
-      return settled.future();
-    }).eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      Promise<Void> oneRejected = Promise.promise();
+      Promise<Void> waiterServed = Promise.promise();
+      for (int i = 0; i < 2; i++) {
+        client.listBuckets().onComplete(ar -> {
+          if (ar.failed()) {
+            rejections.add(ar.cause());
+            oneRejected.tryComplete();
+          } else if (!cancelIssued.get()) {
+            testContext.failNow(new AssertionError("a request succeeded while the stream held the only connection"));
+          } else {
+            waiterServed.tryComplete();
+          }
+        });
+      }
+      return oneRejected.future()
+        .compose(v -> {
+          cancelIssued.set(true);
+          return stream.cancel();
+        })
+        .compose(v -> waiterServed.future());
+    }).compose(v -> afterQueuedTasks()).eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      assertEquals(1, rejections.size(), rejections.toString());
+      assertInstanceOf(io.vertx.core.http.ConnectionPoolTooBusyException.class, rejections.get(0).getCause(),
+        rejections.get(0).toString());
+      assertEquals(Boolean.TRUE, waiterAfterCancel.get(), "the waiting request was sent before the cancel");
       assertEquals(1, errors.size(), errors.toString());
       assertEquals("The object stream was cancelled", errors.get(0).getMessage());
       assertInstanceOf(S3ClientException.class, errors.get(0));
@@ -752,6 +845,13 @@ class TransportStubTest {
         check.accept(e);
         testContext.completeNow();
       })));
+  }
+
+  /** Completes after every task already queued on the current context has run. */
+  private Future<Void> afterQueuedTasks() {
+    Promise<Void> promise = Promise.promise();
+    vertx.getOrCreateContext().runOnContext(v -> promise.complete());
+    return promise.future();
   }
 
   /** Succeeds once the stub has seen a connection close; no timer involved. */
@@ -821,6 +921,16 @@ class TransportStubTest {
     }
 
     boolean withholdEnd;
+
+    Promise<Void> backedUp;
+    AtomicInteger chunksWritten;
+
+    /** Writes until the client stops reading, then signals {@code backedUp}; see fillUntilBackpressure. */
+    Stub fillUntilBackpressure(Promise<Void> backedUp, AtomicInteger chunksWritten) {
+      this.backedUp = backedUp;
+      this.chunksWritten = chunksWritten;
+      return this;
+    }
 
     /** With {@link #chunked()}: sends the body but never ends the response. */
     Stub withholdEnd() {

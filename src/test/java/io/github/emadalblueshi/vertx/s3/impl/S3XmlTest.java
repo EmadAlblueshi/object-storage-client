@@ -10,7 +10,6 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -129,24 +128,28 @@ class S3XmlTest {
     assertThrows(XmlParseException.class, () -> parse("<r>&nbsp;</r>"));
   }
 
+  /**
+   * The listener counts a connection <em>before</em> it answers, and a parser that fetches a
+   * resource waits for the answer. So once {@code parse} has returned, any fetch it made has
+   * already been counted: the check needs no waiting.
+   */
   @Test
   void noNetworkAccessForExternalDtdOrEntities() throws Exception {
     try (ServerSocket server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
-      server.setSoTimeout(200);
       AtomicInteger connections = new AtomicInteger();
-      Thread acceptor = new Thread(() -> {
-        while (!server.isClosed()) {
-          try (Socket ignored = server.accept()) {
+      Thread listener = new Thread(() -> {
+        while (true) {
+          try (Socket socket = server.accept()) {
             connections.incrementAndGet();
-          } catch (SocketTimeoutException e) {
-            // keep listening until closed
+            socket.getOutputStream().write(
+              "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
           } catch (IOException e) {
-            return;
+            return; // the server socket was closed
           }
         }
       }, "xxe-listener");
-      acceptor.setDaemon(true);
-      acceptor.start();
+      listener.setDaemon(true);
+      listener.start();
 
       String base = "http://127.0.0.1:" + server.getLocalPort() + "/";
       List<String> documents = List.of(
@@ -160,9 +163,8 @@ class S3XmlTest {
         } catch (XmlParseException expected) {
           // rejection is fine; only network access would be a failure
         }
+        assertEquals(0, connections.get(), "the parser must never fetch external resources: " + xml);
       }
-      Thread.sleep(300);
-      assertEquals(0, connections.get(), "the parser must never fetch external resources");
     }
   }
 
