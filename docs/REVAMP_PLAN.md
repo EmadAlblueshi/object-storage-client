@@ -27,6 +27,48 @@ ListBuckets pagination, per-operation timeout settings, a retry framework.
   proposal below are a historical record. Where they list missing features or options, this
   section decides.
 
+## 1.0.0 release gates (owner decision, 2026-11-21)
+This library and the owner's Vert.x NATS client are the production foundation of the owner's
+Flutter + Vert.x project. **1.0.0 means correct under load and over time**, not just
+feature-complete. No version is published before these gates pass, and the next published
+version is `1.0.0-RC1` (no `0.5.0`). A gate is only relaxed or dropped by the owner.
+
+**Gates for `1.0.0-RC1`** (published to Maven Central):
+1. **Scope complete.** Everything under "In scope" is implemented: the presigner (Phase 3),
+   streaming uploads (Phase 4) and lean hardening (Phase 5). Step 9 (CopyObject, DeleteObjects)
+   is either done or explicitly dropped by the owner.
+2. **Vert.x idiom audit done and applied.** The library looks, feels and behaves like an
+   official Vert.x client. The API shape is final after this gate. The report and the owner's
+   decisions on it: [`VERTX_IDIOM_AUDIT.md`](VERTX_IDIOM_AUDIT.md).
+3. **Docs complete:**
+   - README;
+   - the docgen manual;
+   - a migration note from `object-storage-client` 0.4.x;
+   - a "Running in Kubernetes" README section: memory limits and why large objects must be
+     streamed, pool sizing, closing the client on graceful shutdown, and the presigner's public
+     vs internal endpoint.
+4. **Netty leak detection at `paranoid` in the test runs, with zero leak reports.**
+5. **Soak test:** a long-running (e.g. 8 h) mixed workload against Silo:
+   - buffered and streamed uploads and downloads;
+   - cancels;
+   - listings;
+   - errors;
+   - presigned URLs.
+
+   It asserts flat memory and no leaked connections. It runs on demand, never in regular CI.
+
+**Gates for `1.0.0`:**
+
+6. **External profile green against real Spaces** in both addressing styles (see the Phase 6
+   release checklist for the commands).
+7. **Staging use for 1–2 weeks with no API change.** The library runs in the owner's backend in
+   staging on Kubernetes, together with the NATS client, including presigned Flutter uploads.
+   Any API change means a new RC and restarts the clock.
+
+**After 1.0.0:** an API compatibility check (japicmp or revapi) in CI.
+
+**Not needed for 1.0:** a Spaces CI job, more backends, retries, extra options.
+
 ## Context
 Total revamp of `object-storage-client` (renaming to `vertx-s3-client`), consumed by a pure Vert.x 5.2.x backend on DigitalOcean Kubernetes (Spaces in prod, MinIO in dev). Hard requirement: idiomatic Vert.x with strict context correctness. This step was **analysis only**. The only action after approval is writing `AGENTS.md` and `CLAUDE.md` at the repo root. Nothing is committed.
 
@@ -299,7 +341,7 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 | **3. Presigned URLs** (own phase, right after the core client) | GET/PUT presign | Synchronous `S3Presigner` (standalone via `S3Presigner.create(options)` without `Vertx`, also exposed from the client) returning `URI`/`String`; shared SigV4 signer (query auth, `UNSIGNED-PAYLOAD`, cached signing key); separate presigner endpoint; expiry ≤ 604800 s; optional extra signed headers; `response-*` overrides; `X-Amz-Security-Token`; injectable `Clock`; unit tests on AWS published examples; integration via plain HTTP client against Silo (including a non-default port). Presigned POST is out of scope. | Host/port mismatch, clock skew |
 | **4. Streaming uploads** | Backpressure-correct uploads | `putObject` from a `ReadStream<Buffer>` and from a file (AsyncFile): pause-before-async, payload hashing per the payload-signing policy, single PUT for small/empty bodies, multipart **internally and only when required** (part size internal, no public option), **AbortMultipartUpload on every failure**, file close on all paths. No public multipart API. (`getObjectStream` moved to Phase 2 step 6.) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
 | **5. Hardening** (lean) | Production-ready on DOKS | Closing the client aborts in-flight internal multipart uploads; log-redaction audit. The external backend profile stays local (the owner runs it); a CI job only if the owner asks. No retry framework and no per-operation timeout settings (non-goals). | Internal API drift on Vert.x bumps |
-| **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `0.5.0` (or `1.0.0-alpha1`); see the Phase 6 release checklist below | — |
+| **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `1.0.0-RC1`, then `1.0.0`, as decided by the "1.0.0 release gates" section; see the Phase 6 release checklist below | — |
 
 ---
 
@@ -519,8 +561,19 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
   - A second `maven-compiler-plugin` execution (no processors, its own output and generated-sources directories, `-Xlint:deprecation -Xlint:-module`, `failOnWarning`): works. But the `compile` goal unconditionally re-points the project artifact at its output directory, which logs "Overwriting artifact's file" on every build. Sharing the default generated-sources directory also cleared default-compile's converters.
   - The in-process compiler API (`javax.tools`) in a test: the tests run inside the library's module, which doesn't read `java.compiler`; surefire would need extra flags.
 
+### Vert.x idiom audit (2026-11-21)
+- The report, the owner's decisions and the order of the changes are in
+  [`VERTX_IDIOM_AUDIT.md`](VERTX_IDIOM_AUDIT.md). It is gate 2.
+- Applied as separate commits, each reviewed diff first: R1 + R2 (codegen annotations,
+  exceptions), R3 + R6 (static JSON credentials only, `userMetadata`), R5 (manual), R4 (Phase 3
+  presigner signatures).
+- Step 9 (CopyObject, DeleteObjects) stays on hold until the owner decides.
+
 ### Phase 6 — release checklist
-- [ ] Run the external profile against real Spaces before the first release, in both addressing styles:
+The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
+the concrete steps.
+- [ ] Gate 6 (required for `1.0.0`, not for `1.0.0-RC1`): run the external profile against real
+  Spaces, in both addressing styles:
   ```
   export S3_ENDPOINT=https://<region>.digitaloceanspaces.com
   export S3_REGION=<region>

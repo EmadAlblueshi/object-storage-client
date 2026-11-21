@@ -36,6 +36,10 @@ migrated; backward compatibility is NOT a goal. Do not add code to the old packa
 **Roadmap:** [`docs/REVAMP_PLAN.md`](docs/REVAMP_PLAN.md) is the source of truth for the
 revamp roadmap, phases and recorded decisions. Follow it; when it and this file disagree, ask.
 
+**Releases:** nothing is published until the gates in the "1.0.0 release gates" section of
+[`docs/REVAMP_PLAN.md`](docs/REVAMP_PLAN.md) pass. The next version is `1.0.0-RC1`, then `1.0.0`.
+Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change means a new RC.
+
 ## Tech stack
 - Maven, single module.
 - **Java:** main and test code both compile with `--release 11` (the Vert.x 5 baseline;
@@ -329,6 +333,7 @@ revamp roadmap, phases and recorded decisions. Follow it; when it and this file 
 - Work on feature branches off `revamping` (or `master` after the merge). Never commit to `master` directly.
 - Small, focused commits, imperative subject (≤72 chars), body explains why.
 - Mark breaking API changes with `BREAKING:` in the commit body.
+- No `Co-Authored-By` or other trailers in commit messages.
 
 ## Do / Don't for AI agents
 **Do**
