@@ -244,7 +244,7 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   filtered into `impl/version.properties` at build time and never hard-coded.
 - Errors map to the library's `S3Exception` hierarchy: `S3ServiceException` for error responses
   (HTTP status, S3 code, request ids, details; bodiless and non-XML responses included) and
-  `S3ClientException` for everything else (connection, TLS, unreadable response, credentials,
+  `S3ClientException` for everything else (connection, TLS, unreadable response, invalid argument,
   closed client). Redirects are never followed. `S3Exception` extends `VertxException`;
   `S3ServiceException` carries no stack trace (as Vert.x's server-reported errors), while
   `S3ClientException` keeps it.
@@ -252,7 +252,8 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 ## Presigned URLs
 - A synchronous API returning `URI`/`String`, with no `Future`. It's usable standalone via
   `S3Presigner.create(options)` without a `Vertx` instance, and is also exposed from the client.
-- Query-string auth with `UNSIGNED-PAYLOAD`, through the shared signer.
+- Query-string auth with `UNSIGNED-PAYLOAD`, through the shared signer, with the static
+  credentials of its options (there is no credentials provider).
 - The presigner endpoint is configurable separately from the client endpoint (public host vs
   internal Kubernetes address). Host is signed with the port when it's non-default.
 - GET and PUT. Expiry is validated (max 604800 s). Only `host` is signed by default; optional
@@ -280,6 +281,11 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   entries that Vert.x writes in clear inside the nested `HttpClientOptions` JSON (key and trust
   stores, proxy auth).
 - No default credentials; fail fast when they are missing.
+- **Credentials are static** (owner decision, 2026-11-21, audit R3):
+  `S3ClientOptions.setCredentials(S3Credentials)` is the only way to configure them, and it is
+  fully JSON (`new S3ClientOptions(config.getJsonObject("s3"))`). The client copies them at
+  creation; to change keys, create a new client. No credentials provider, `Supplier` overload or
+  other rotation mechanism unless the owner asks (then as an overload).
 
 ## Testing rules
 - **No flaky tests.** Every test must be deterministic regardless of machine or runner speed:

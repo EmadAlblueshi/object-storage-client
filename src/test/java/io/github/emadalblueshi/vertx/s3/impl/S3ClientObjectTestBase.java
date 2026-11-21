@@ -190,20 +190,20 @@ abstract class S3ClientObjectTestBase {
   void contentTypeAndMetadataRoundTrip(VertxTestContext testContext) {
     String key = "with-metadata.json";
     S3PutObjectOptions options = new S3PutObjectOptions().setContentType("application/json")
-      .setMetadata(Map.of("Owner-Id", "42", "note", "hello world"));
+      .setUserMetadata(Map.of("Owner-Id", "42", "note", "hello world"));
     put(client, key, Buffer.buffer("{}"), options)
       .compose(etag -> client.headObject(bucket, key))
       .compose(head -> {
         testContext.verify(() -> {
           assertEquals("application/json", head.getContentType());
-          assertEquals(Map.of("owner-id", "42", "note", "hello world"), head.getMetadata());
+          assertEquals(Map.of("owner-id", "42", "note", "hello world"), head.getUserMetadata());
         });
         return client.getObjectStream(bucket, key);
       })
       .compose(stream -> {
         testContext.verify(() -> {
           assertEquals("application/json", stream.metadata().getContentType());
-          assertEquals(Map.of("owner-id", "42", "note", "hello world"), stream.metadata().getMetadata());
+          assertEquals(Map.of("owner-id", "42", "note", "hello world"), stream.metadata().getUserMetadata());
         });
         return stream.cancel();
       })

@@ -139,7 +139,7 @@ final class ObjectRequests {
       headers.add(Map.entry(HttpHeaders.CONTENT_TYPE.toString(), options.getContentType()));
     }
     Map<String, String> seen = new LinkedHashMap<>();
-    for (Map.Entry<String, String> entry : options.getMetadata().entrySet()) {
+    for (Map.Entry<String, String> entry : options.getUserMetadata().entrySet()) {
       String name = entry.getKey();
       if (name == null || !TOKEN.matcher(name).matches()) {
         throw new IllegalArgumentException("Invalid metadata name \"" + name + "\": use HTTP token characters "
@@ -171,7 +171,7 @@ final class ObjectRequests {
       .setContentType(headers.get(HttpHeaders.CONTENT_TYPE))
       .setEtag(headers.get(HttpHeaders.ETAG))
       .setLastModified(parseHttpDate(headers.get(HttpHeaders.LAST_MODIFIED)))
-      .setMetadata(user);
+      .setUserMetadata(user);
   }
 
   private static long parseLong(String value) {

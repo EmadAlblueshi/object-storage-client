@@ -260,8 +260,8 @@ class TransportStubTest {
 
   @Test
   void sessionTokenIsSentAndSigned(VertxTestContext testContext) {
-    S3ClientOptions options = options(http.actualPort(), false).setCredentials(null)
-      .setCredentialsProvider(() -> new S3Credentials("AKIDEXAMPLE", "secret").setSessionToken("token-123"));
+    S3ClientOptions options = options(http.actualPort(), false)
+      .setCredentials(new S3Credentials("AKIDEXAMPLE", "secret").setSessionToken("token-123"));
     S3Client client = S3Client.create(vertx, options);
     client.listBuckets().eventually(client::close).onComplete(testContext.succeeding(result -> testContext.verify(() -> {
       assertEquals("token-123", last.get().headers.get("x-amz-security-token"));
@@ -424,30 +424,6 @@ class TransportStubTest {
   }
 
   @Test
-  void failingCredentialsProviderBecomesClientException(VertxTestContext testContext) {
-    S3Client client = S3Client.create(vertx, options(http.actualPort(), false).setCredentials(null)
-      .setCredentialsProvider(() -> {
-        throw new IllegalStateException("vault unavailable");
-      }));
-    client.listBuckets().eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
-      assertInstanceOf(S3ClientException.class, e);
-      assertEquals("vault unavailable", e.getCause().getMessage());
-      assertEquals(0, requests.get(), "nothing is sent without credentials");
-      testContext.completeNow();
-    })));
-  }
-
-  @Test
-  void credentialsProviderReturningNullBecomesClientException(VertxTestContext testContext) {
-    S3Client client = S3Client.create(vertx, options(http.actualPort(), false).setCredentials(null)
-      .setCredentialsProvider(() -> null));
-    client.listBuckets().eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
-      assertInstanceOf(S3ClientException.class, e);
-      testContext.completeNow();
-    })));
-  }
-
-  @Test
   void closedClientFailsAndCloseIsIdempotent(VertxTestContext testContext) {
     S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
     client.close()
@@ -515,7 +491,7 @@ class TransportStubTest {
     S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
     responder.set(c -> new Stub(200, "").header("ETag", "\"abc123\""));
     S3PutObjectOptions put = new S3PutObjectOptions().setContentType("text/plain; charset=utf-8")
-      .setMetadata(Map.of("Owner-Id", "42"));
+      .setUserMetadata(Map.of("Owner-Id", "42"));
     client.putObject("bucket", "dir/a b.txt", Buffer.buffer("hello"), put).eventually(client::close)
       .onComplete(testContext.succeeding(etag -> testContext.verify(() -> {
         assertEquals("\"abc123\"", etag);
@@ -535,7 +511,7 @@ class TransportStubTest {
   @Test
   void invalidMetadataFailsWithoutAnyRequest(VertxTestContext testContext) {
     S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
-    S3PutObjectOptions put = new S3PutObjectOptions().setMetadata(Map.of("name", "caf\u00e9"));
+    S3PutObjectOptions put = new S3PutObjectOptions().setUserMetadata(Map.of("name", "caf\u00e9"));
     client.putObject("bucket", "key", Buffer.buffer("x"), put).eventually(client::close)
       .onComplete(testContext.failing(e -> testContext.verify(() -> {
         assertInstanceOf(S3ClientException.class, e);
@@ -716,7 +692,7 @@ class TransportStubTest {
       assertEquals("video/mp4", m.getContentType());
       assertEquals("\"e\"", m.getEtag());
       assertEquals(java.time.Instant.parse("2026-11-20T10:15:30Z"), m.getLastModified());
-      assertEquals(Map.of("camera", "front"), m.getMetadata());
+      assertEquals(Map.of("camera", "front"), m.getUserMetadata());
       testContext.completeNow();
     })));
   }

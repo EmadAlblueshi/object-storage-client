@@ -22,7 +22,7 @@ public class S3ObjectMetadata {
   private String contentType;
   private String etag;
   private Instant lastModified;
-  private Map<String, String> metadata = Collections.emptyMap();
+  private Map<String, String> userMetadata = Collections.emptyMap();
 
   public S3ObjectMetadata() {
   }
@@ -32,7 +32,7 @@ public class S3ObjectMetadata {
     this.contentType = other.contentType;
     this.etag = other.etag;
     this.lastModified = other.lastModified;
-    setMetadata(other.metadata);
+    setUserMetadata(other.userMetadata);
   }
 
   public S3ObjectMetadata(JsonObject json) {
@@ -86,12 +86,12 @@ public class S3ObjectMetadata {
    * User metadata ({@code x-amz-meta-*} headers), keyed by lowercase name without the prefix.
    * Never {@code null}; unmodifiable.
    */
-  public Map<String, String> getMetadata() {
-    return metadata;
+  public Map<String, String> getUserMetadata() {
+    return userMetadata;
   }
 
-  public S3ObjectMetadata setMetadata(Map<String, String> metadata) {
-    this.metadata = Collections.unmodifiableMap(new LinkedHashMap<>(Objects.requireNonNull(metadata, "metadata")));
+  public S3ObjectMetadata setUserMetadata(Map<String, String> userMetadata) {
+    this.userMetadata = Collections.unmodifiableMap(new LinkedHashMap<>(Objects.requireNonNull(userMetadata, "userMetadata")));
     return this;
   }
 
@@ -104,6 +104,6 @@ public class S3ObjectMetadata {
   @Override
   public String toString() {
     return "S3ObjectMetadata{contentLength=" + contentLength + ", contentType=" + contentType + ", etag=" + etag
-      + ", lastModified=" + lastModified + ", metadata=" + metadata + '}';
+      + ", lastModified=" + lastModified + ", userMetadata=" + userMetadata + '}';
   }
 }

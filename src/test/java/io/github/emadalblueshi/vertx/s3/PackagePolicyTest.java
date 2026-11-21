@@ -132,13 +132,6 @@ class PackagePolicyTest {
   }
 
   /**
-   * API interfaces that are not {@code @VertxGen}, by simple name. {@code S3CredentialsProvider}
-   * is a functional interface that codegen doesn't accept as a parameter type; it is removed with
-   * the static-credentials change (audit R3), and this entry with it.
-   */
-  private static final Set<String> VERTX_GEN_EXEMPT = Set.of("S3CredentialsProvider");
-
-  /**
    * Every API interface is {@code @VertxGen}, as in Vert.x's own clients, so the codegen processor
    * checks at compile time that its signatures only use codegen-legal types.
    */
@@ -148,7 +141,6 @@ class PackagePolicyTest {
       .filter(Class::isInterface)
       .filter(c -> !c.isAnnotationPresent(VertxGen.class))
       .map(Class::getSimpleName)
-      .filter(n -> !VERTX_GEN_EXEMPT.contains(n))
       .collect(Collectors.toList());
     assertTrue(missing.isEmpty(), () -> "API interfaces without @VertxGen: " + missing);
   }

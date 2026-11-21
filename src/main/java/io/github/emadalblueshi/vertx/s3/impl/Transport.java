@@ -134,16 +134,7 @@ final class Transport {
    * thread resumes there, because the hash Future is bound to the caller's context.
    */
   private Future<HttpClientResponse> open(ContextSupport.Caller caller, S3Request request) {
-    S3Credentials credentials;
-    try {
-      credentials = config.credentialsProvider.credentials();
-    } catch (RuntimeException e) {
-      return caller.failed(new S3ClientException("The credentials provider failed", e));
-    }
-    if (credentials == null || isBlank(credentials.getAccessKey()) || isBlank(credentials.getSecretKey())) {
-      return caller.failed(new S3ClientException("The credentials provider returned no access key or secret key", null));
-    }
-    return payloadHash(caller, request).compose(payloadHash -> send(caller, request, credentials, payloadHash));
+    return payloadHash(caller, request).compose(payloadHash -> send(caller, request, config.credentials, payloadHash));
   }
 
   private Future<HttpClientResponse> send(ContextSupport.Caller caller, S3Request request, S3Credentials credentials,
@@ -290,9 +281,5 @@ final class Transport {
     } catch (NumberFormatException e) {
       return -1;
     }
-  }
-
-  private static boolean isBlank(String value) {
-    return value == null || value.trim().isEmpty();
   }
 }

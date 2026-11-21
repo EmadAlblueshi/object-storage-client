@@ -17,8 +17,8 @@ import io.vertx.core.buffer.Buffer;
  * <p>
  * Failures are {@link S3Exception}s: an {@link S3ServiceException} when the server returned an
  * error response, an {@link S3ClientException} for everything else (connection, TLS, invalid
- * response, credentials, closed client). Methods never throw; failures are reported through the
- * returned Future.
+ * response, invalid argument, closed client). Methods never throw; failures are reported through
+ * the returned Future.
  * <p>
  * A client is thread-safe and can be shared between verticles. It is bound to the {@code Vertx}
  * it was created with. Created inside a verticle, it is closed automatically when that verticle

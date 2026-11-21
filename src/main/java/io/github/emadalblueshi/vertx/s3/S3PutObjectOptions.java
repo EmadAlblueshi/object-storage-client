@@ -18,14 +18,14 @@ import io.vertx.core.json.JsonObject;
 public class S3PutObjectOptions {
 
   private String contentType;
-  private Map<String, String> metadata = new LinkedHashMap<>();
+  private Map<String, String> userMetadata = new LinkedHashMap<>();
 
   public S3PutObjectOptions() {
   }
 
   public S3PutObjectOptions(S3PutObjectOptions other) {
     this.contentType = other.contentType;
-    this.metadata = new LinkedHashMap<>(other.metadata);
+    this.userMetadata = new LinkedHashMap<>(other.userMetadata);
   }
 
   public S3PutObjectOptions(JsonObject json) {
@@ -43,17 +43,34 @@ public class S3PutObjectOptions {
   }
 
   /**
-   * User metadata, sent as {@code x-amz-meta-<name>} headers. Names are HTTP token characters
-   * (stored lowercase by S3); values are printable US-ASCII. Non-ASCII values are rejected, not
-   * encoded: if you need them (e.g. Arabic file names), URL-encode them yourself, or keep such
-   * data in the object key or in your own database.
+   * User metadata, sent as {@code x-amz-meta-<name>} headers. Names are HTTP token characters and
+   * case-insensitive (S3 stores them lowercase); values are printable US-ASCII. Non-ASCII values
+   * are rejected, not encoded: if you need them (e.g. Arabic file names), URL-encode them yourself,
+   * or keep such data in the object key or in your own database. Invalid entries, including two
+   * names that differ only in case, fail {@code putObject} before any request is sent.
+   * Unmodifiable.
    */
-  public Map<String, String> getMetadata() {
-    return Collections.unmodifiableMap(metadata);
+  public Map<String, String> getUserMetadata() {
+    return Collections.unmodifiableMap(userMetadata);
   }
 
-  public S3PutObjectOptions setMetadata(Map<String, String> metadata) {
-    this.metadata = new LinkedHashMap<>(Objects.requireNonNull(metadata, "metadata"));
+  /** Replaces all user metadata with a copy of {@code userMetadata}. */
+  public S3PutObjectOptions setUserMetadata(Map<String, String> userMetadata) {
+    this.userMetadata = new LinkedHashMap<>(Objects.requireNonNull(userMetadata, "userMetadata"));
+    return this;
+  }
+
+  /**
+   * Adds one user metadata entry, replacing any entry whose name differs only in case. The same
+   * rules as for {@link #getUserMetadata()} apply, checked by {@code putObject}.
+   *
+   * @throws NullPointerException if {@code name} or {@code value} is {@code null}
+   */
+  public S3PutObjectOptions putUserMetadata(String name, String value) {
+    Objects.requireNonNull(name, "name");
+    Objects.requireNonNull(value, "value");
+    userMetadata.keySet().removeIf(existing -> existing.equalsIgnoreCase(name));
+    userMetadata.put(name, value);
     return this;
   }
 
@@ -65,6 +82,6 @@ public class S3PutObjectOptions {
 
   @Override
   public String toString() {
-    return "S3PutObjectOptions{contentType=" + contentType + ", metadata=" + metadata + '}';
+    return "S3PutObjectOptions{contentType=" + contentType + ", userMetadata=" + userMetadata + '}';
   }
 }

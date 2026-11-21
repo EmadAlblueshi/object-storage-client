@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,16 +30,14 @@ class S3ClientOptionsTest {
     assertNull(options.getRegion(), "region is required: no magic default");
     assertTrue(options.isPathStyleAccess());
     assertNull(options.getCredentials());
-    assertNull(options.getCredentialsProvider());
     assertEquals(4 * 1024 * 1024, options.getMaxBufferedObjectSize());
     assertEquals(new HttpClientOptions().toJson(), options.getHttpClientOptions().toJson());
     assertEquals(new PoolOptions().toJson(), options.getPoolOptions().toJson());
   }
 
   @Test
-  void copyConstructorIsDeepExceptForTheProvider() {
-    S3CredentialsProvider provider = () -> new S3Credentials("a", "b");
-    S3ClientOptions original = sample().setCredentialsProvider(provider);
+  void copyConstructorIsDeep() {
+    S3ClientOptions original = sample();
     S3ClientOptions copy = new S3ClientOptions(original);
 
     assertEquals(original.toJson(), copy.toJson());
@@ -48,7 +45,6 @@ class S3ClientOptionsTest {
     assertNotSame(original.getPoolOptions(), copy.getPoolOptions());
     assertNotSame(original.getCredentials(), copy.getCredentials());
     assertEquals(SECRET, copy.getCredentials().getSecretKey());
-    assertSame(provider, copy.getCredentialsProvider());
 
     original.getHttpClientOptions().setConnectTimeout(1);
     original.getPoolOptions().setHttp1MaxSize(1);
@@ -97,13 +93,22 @@ class S3ClientOptionsTest {
     assertNotNull(options.getPoolOptions());
   }
 
+  /** The documented configuration path: everything, credentials included, from one JSON object. */
   @Test
-  void credentialsProviderIsNotSerialised() {
-    S3ClientOptions options = new S3ClientOptions().setCredentialsProvider(() -> new S3Credentials("a", SECRET));
-    JsonObject json = options.toJson();
-    assertFalse(json.containsKey("credentialsProvider"), json.encode());
-    assertFalse(json.encode().contains(SECRET), json.encode());
-    assertNull(new S3ClientOptions(json).getCredentialsProvider());
+  void credentialsAreConfiguredFromJsonLikeEveryOtherOption() {
+    JsonObject config = new JsonObject().put("s3", new JsonObject()
+      .put("endpoint", "https://nyc3.digitaloceanspaces.com")
+      .put("region", "nyc3")
+      .put("credentials", new JsonObject().put("accessKey", "AK").put("secretKey", SECRET)));
+    S3ClientOptions options = new S3ClientOptions(config.getJsonObject("s3"));
+    assertEquals("AK", options.getCredentials().getAccessKey());
+    assertEquals(SECRET, options.getCredentials().getSecretKey());
+  }
+
+  @Test
+  void jsonHasNoProviderKeyOrOtherFunctionalSettings() {
+    assertEquals(java.util.Set.of("credentials", "endpoint", "httpClientOptions", "maxBufferedObjectSize",
+      "pathStyleAccess", "poolOptions", "region"), sample().toJson().fieldNames());
   }
 
   @Test

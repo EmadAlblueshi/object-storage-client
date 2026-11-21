@@ -2,9 +2,7 @@ package io.github.emadalblueshi.vertx.s3;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -60,20 +58,5 @@ class S3CredentialsTest {
     assertFalse(text.contains(TOKEN), text);
     assertEquals("S3Credentials{accessKey=AKIAEXAMPLE, secretKey=****, sessionToken=null}",
       new S3Credentials(ACCESS, SECRET).toString());
-  }
-
-  @Test
-  void staticProviderReturnsSnapshotCopies() {
-    S3Credentials source = new S3Credentials(ACCESS, SECRET);
-    S3CredentialsProvider provider = S3CredentialsProvider.of(source);
-    source.setSecretKey("changed-later");
-
-    S3Credentials first = provider.credentials();
-    assertEquals(SECRET, first.getSecretKey(), "provider must not see later changes to its argument");
-    first.setSecretKey("mutated-by-caller");
-    S3Credentials second = provider.credentials();
-    assertEquals(SECRET, second.getSecretKey(), "callers must not be able to change the snapshot");
-    assertNotSame(first, second);
-    assertThrows(NullPointerException.class, () -> S3CredentialsProvider.of(null));
   }
 }

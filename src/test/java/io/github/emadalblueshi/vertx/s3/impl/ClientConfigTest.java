@@ -14,6 +14,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
+import io.vertx.core.json.JsonObject;
 
 /** Validation in {@code S3Client.create}: every invalid option fails fast with IllegalArgumentException. */
 class ClientConfigTest {
@@ -67,9 +68,19 @@ class ClientConfigTest {
   }
 
   @Test
-  void exactlyOneCredentialSource() {
+  void optionsFromJsonAloneAreValid() {
+    ClientConfig config = ClientConfig.from(new S3ClientOptions(new JsonObject()
+      .put("endpoint", "https://nyc3.digitaloceanspaces.com")
+      .put("region", "nyc3")
+      .put("credentials", new JsonObject().put("accessKey", "AK").put("secretKey", "SK").put("sessionToken", "ST"))));
+    assertEquals("AK", config.credentials.getAccessKey());
+    assertEquals("SK", config.credentials.getSecretKey());
+    assertEquals("ST", config.credentials.getSessionToken());
+  }
+
+  @Test
+  void credentialsAreRequired() {
     assertInvalid(o -> o.setCredentials(null));
-    assertInvalid(o -> o.setCredentialsProvider(() -> new S3Credentials("a", "b")));
   }
 
   @Test
@@ -79,17 +90,12 @@ class ClientConfigTest {
   }
 
   @Test
-  void providerAloneIsAccepted() {
-    ClientConfig config = ClientConfig.from(valid().setCredentials(null).setCredentialsProvider(() -> new S3Credentials("a", "b")));
-    assertEquals("a", config.credentialsProvider.credentials().getAccessKey());
-  }
-
-  @Test
   void staticCredentialsAreSnapshotted() {
     S3Credentials credentials = new S3Credentials("access", "secret");
     ClientConfig config = ClientConfig.from(valid().setCredentials(credentials));
     credentials.setSecretKey("changed");
-    assertEquals("secret", config.credentialsProvider.credentials().getSecretKey());
+    assertEquals("secret", config.credentials.getSecretKey());
+    assertNotSame(credentials, config.credentials);
   }
 
   @Test

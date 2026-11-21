@@ -81,7 +81,7 @@ class ObjectRequestsTest {
     metadata.put("Owner-Id", "42");
     metadata.put("note", "a value, with spaces");
     List<Map.Entry<String, String>> headers = ObjectRequests.putHeaders(new S3PutObjectOptions()
-      .setContentType("image/png").setMetadata(metadata));
+      .setContentType("image/png").setUserMetadata(metadata));
     assertEquals(List.of(Map.entry("content-type", "image/png"), Map.entry("x-amz-meta-owner-id", "42"),
       Map.entry("x-amz-meta-note", "a value, with spaces")), headers);
   }
@@ -90,7 +90,7 @@ class ObjectRequestsTest {
   @ValueSource(strings = {"", "with space", "colon:", "café", "new\nline", "slash/"})
   void invalidMetadataNames(String name) {
     IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-      () -> ObjectRequests.putHeaders(new S3PutObjectOptions().setMetadata(Map.of(name, "v"))));
+      () -> ObjectRequests.putHeaders(new S3PutObjectOptions().setUserMetadata(Map.of(name, "v"))));
     assertTrue(e.getMessage().startsWith("Invalid metadata name"), e.getMessage());
   }
 
@@ -98,7 +98,7 @@ class ObjectRequestsTest {
   @ValueSource(strings = {"café", "line\r\nbreak", "tab\there", "nul\u0000"})
   void invalidMetadataValues(String value) {
     IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-      () -> ObjectRequests.putHeaders(new S3PutObjectOptions().setMetadata(Map.of("name", value))));
+      () -> ObjectRequests.putHeaders(new S3PutObjectOptions().setUserMetadata(Map.of("name", value))));
     assertEquals("Invalid value for metadata \"name\": use printable US-ASCII", e.getMessage());
   }
 
@@ -108,7 +108,7 @@ class ObjectRequestsTest {
     metadata.put("Name", "a");
     metadata.put("NAME", "b");
     IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-      () -> ObjectRequests.putHeaders(new S3PutObjectOptions().setMetadata(metadata)));
+      () -> ObjectRequests.putHeaders(new S3PutObjectOptions().setUserMetadata(metadata)));
     assertEquals("Duplicate metadata name \"name\" (names are case-insensitive)", e.getMessage());
   }
 
@@ -137,7 +137,7 @@ class ObjectRequestsTest {
     assertEquals("text/csv", metadata.getContentType());
     assertEquals("\"0123abc\"", metadata.getEtag());
     assertEquals(Instant.parse("2026-11-20T10:15:30Z"), metadata.getLastModified());
-    assertEquals(Map.of("owner-id", "42", "note", "hello"), metadata.getMetadata());
+    assertEquals(Map.of("owner-id", "42", "note", "hello"), metadata.getUserMetadata());
   }
 
   @Test
@@ -148,7 +148,7 @@ class ObjectRequestsTest {
     assertNull(metadata.getContentType());
     assertNull(metadata.getEtag());
     assertNull(metadata.getLastModified());
-    assertEquals(Map.of(), metadata.getMetadata());
+    assertEquals(Map.of(), metadata.getUserMetadata());
   }
 
   // --- ListObjectsV2 ---
