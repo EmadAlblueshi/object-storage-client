@@ -258,6 +258,19 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   (source, part, completion, limit, client close) lets an in-flight request settle, aborts the
   multipart upload and fails with the original cause; a failed abort is attached as suppressed.
   Closing the client aborts the streamed uploads in progress before the transport closes.
+- File uploads (`putFile`, `impl.FileUpload`; owner decision, 2026-11-22): the file's size is read
+  (`FileSystem.props`) and the file opened (then closed) on the caller's context before any
+  request, so a missing file, a directory or a file over 5 TiB fails without contacting the
+  server. Nothing is buffered: each part is a byte range streamed from its own `AsyncFile` handle
+  into its request with an exact `Content-Length` (`Transport.executeStreamed`), two parts in
+  flight; the part size is `MultipartRequests.partSizeFor` (the smallest multiple of 8 MiB that
+  fits 10,000 parts: 8 MiB up to 78 GiB, 528 MiB at 5 TiB). The transport pipes the range itself,
+  not with Vert.x's `send(ReadStream)`, whose pipe ends the request when the body fails: a read
+  failure or a range that reads short (the file shrank) resets the request. HTTPS sends
+  `UNSIGNED-PAYLOAD`; plain HTTP reads each range twice, hashing it first. A file changed in
+  place without a length change isn't detected. On failure or client close, the requests in
+  flight are reset, and once they settle the upload is aborted. Every handle is closed. File
+  problems are `S3ClientException`s; S3 failures pass through.
 - Large objects are never buffered in memory. `getObject` (Buffer) is for small objects only and
   is size-capped: it fails with an `S3ClientException` pointing to `getObjectStream` instead of
   buffering a body over the cap. `getObjectStream` streams the body with backpressure.

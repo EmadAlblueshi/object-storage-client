@@ -147,7 +147,8 @@ public interface S3Client {
    * <p>
    * A stream that ends within the first 8 MiB is sent as one PutObject; a longer one as a multipart
    * upload of 8 MiB parts, one uploading while the next one is read, so at most about 16 MiB is
-   * buffered per upload. A stream is limited to 10,000 parts (78 GiB). If the stream fails, a part
+   * buffered per upload. A stream is limited to 10,000 parts (78 GiB; upload larger files with
+   * {@link #putFile(String, String, String)}). If the stream fails, a part
    * or the completion fails, or the client is closed, the multipart upload is aborted and the
    * Future fails. With invalid arguments the stream isn't read and stays paused.
    *
@@ -171,6 +172,41 @@ public interface S3Client {
    */
   Future<@Nullable String> putObject(String bucket, String key, ReadStream<Buffer> body,
                                      @Nullable S3PutObjectOptions options);
+
+  /**
+   * Uploads a file, read asynchronously (never blocking the event loop) and never buffered: each
+   * part is streamed from its byte range of the file straight into its request, with
+   * backpressure, so memory stays at a few chunks whatever the file size.
+   * <p>
+   * The file's size is read and the file opened before any request, so a missing file, a
+   * directory or a file over S3's 5 TiB limit fails without contacting the server. A file of up to
+   * 8 MiB is sent as one PutObject; a larger one as a multipart upload with two parts streaming at
+   * once, whose part size grows with the file: 8 MiB up to 78 GiB, then the smallest multiple of
+   * 8 MiB that fits it in 10,000 parts. Over plain HTTP each range is read twice, to sign it with
+   * its SHA-256 first. A file that shrinks during the upload fails it; a file changed in place
+   * without changing its length is uploaded as found. On failure, or when the client is closed,
+   * the requests in flight are reset and the multipart upload is aborted. Every file handle is
+   * closed. File problems fail with an {@link S3ClientException}.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param filename the path of the file to upload
+   * @return the object's ETag as sent by the server, or {@code null} if a single PutObject's
+   *     response had none
+   */
+  Future<@Nullable String> putFile(String bucket, String key, String filename);
+
+  /**
+   * As {@link #putFile(String, String, String)}, with a content type and user metadata.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param filename the path of the file to upload
+   * @param options the content type and user metadata; {@code null} for none
+   * @return the object's ETag as sent by the server, or {@code null} if a single PutObject's
+   *     response had none
+   */
+  Future<@Nullable String> putFile(String bucket, String key, String filename, @Nullable S3PutObjectOptions options);
 
   /**
    * Downloads a <strong>small</strong> object into memory (GetObject).

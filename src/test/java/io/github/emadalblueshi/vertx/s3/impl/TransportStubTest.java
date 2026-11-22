@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -436,6 +437,74 @@ class TransportStubTest {
         assertFalse(requests.get() > 0);
         testContext.completeNow();
       })));
+  }
+
+  // --- streamed bodies (file ranges): the transport's own pipe -------------------------------------
+
+  @Test
+  void streamedBodyIsSentWithItsExactContentLength(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, ""));
+    ScriptedReadStream body = pausedSource();
+    Transport.StreamedExchange exchange = streamed(body, 5);
+    body.whenResumed().compose(v -> body.emit("hel")).compose(v -> body.emit("lo")).compose(v -> body.end());
+    exchange.response.onComplete(testContext.succeeding(response -> testContext.verify(() -> {
+      assertEquals("hello", last.get().body.toString());
+      assertEquals("5", last.get().headers.get("Content-Length"));
+      assertEquals(S3SignatureV4.UNSIGNED_PAYLOAD, last.get().headers.get("x-amz-content-sha256"));
+      testContext.completeNow();
+    })));
+  }
+
+  /** A body that ends short of its Content-Length (a file that shrank) resets the request instead of ending it. */
+  @Test
+  void streamedBodyEndingShortResetsTheRequest(VertxTestContext testContext) {
+    ScriptedReadStream body = pausedSource();
+    Transport.StreamedExchange exchange = streamed(body, 5);
+    body.whenResumed().compose(v -> body.emit("abc")).compose(v -> body.end());
+    exchange.response.onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertEquals("The file changed during the upload: 5 bytes expected, 3 read", e.getMessage());
+      connectionClosed.get().future().onComplete(testContext.succeedingThenComplete());
+    })));
+  }
+
+  /** A body that fails resets the request (Vert.x's own pipe would end it, leaving the server waiting). */
+  @Test
+  void streamedBodyFailureResetsTheRequest(VertxTestContext testContext) {
+    ScriptedReadStream body = pausedSource();
+    Transport.StreamedExchange exchange = streamed(body, 5);
+    IOException disk = new IOException("disk failed");
+    body.whenResumed().compose(v -> body.emit("ab")).compose(v -> body.fail(disk));
+    exchange.response.onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertSame(disk, e);
+      connectionClosed.get().future().onComplete(testContext.succeedingThenComplete());
+    })));
+  }
+
+  @Test
+  void streamedRequestCanBeResetBeforeItIsOpen(VertxTestContext testContext) {
+    ScriptedReadStream body = pausedSource();
+    Transport.StreamedExchange exchange = streamed(body, 5);
+    S3ClientException closing = new S3ClientException("closing", null);
+    exchange.reset(closing);
+    exchange.response.onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertSame(closing, e);
+      assertEquals(0, requests.get(), "no request completed");
+      testContext.completeNow();
+    })));
+  }
+
+  private ScriptedReadStream pausedSource() {
+    ScriptedReadStream body = new ScriptedReadStream(vertx.getOrCreateContext());
+    body.pause();
+    return body;
+  }
+
+  private Transport.StreamedExchange streamed(ScriptedReadStream body, long length) {
+    Transport transport = new Transport(vertx, ClientConfig.from(options(http.actualPort(), false)));
+    return transport.executeStreamed(ContextSupport.capture(vertx),
+      S3Request.object(HttpMethod.PUT, "bucket", "k", java.util.List.of(), null).withPayloadHash(S3SignatureV4.UNSIGNED_PAYLOAD),
+      body, length);
   }
 
   // --- objects: wire format, size limits, streams ---------------------------------------------------

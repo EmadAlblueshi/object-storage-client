@@ -764,8 +764,19 @@ part uploads. Design decisions (owner, 2026-11-22):
   step 3.6 operations plus an internal `uploadPart`. Fixed 8 MiB parts for streams, one uploading
   while the next fills (at most about 16 MiB buffered per upload); a full part is shipped only
   when the next byte arrives, so no empty last part. Streams over 10,000 parts (78 GiB) fail with
-  an `S3ClientException`; files size their parts from their length (max(8 MiB,
-  ⌈size / 10,000⌉)). Over plain HTTP, parts are hashed incrementally as they arrive.
+  an `S3ClientException`. Over plain HTTP, parts are hashed incrementally as they arrive.
+- **Files (`impl.FileUpload`, owner decision 2026-11-22, replacing a first draft that buffered
+  two parts, up to about 1 GiB for the largest files):** a file's part is a byte range of known
+  length, so it is streamed from its own `AsyncFile` handle into the request with an exact
+  `Content-Length`; memory stays at a few chunks per part whatever the file size. Two parts are in
+  flight. The part size is the smallest multiple of 8 MiB that fits 10,000 parts (8 MiB up to
+  78 GiB, 528 MiB at S3's 5 TiB limit). The transport pipes the range itself: Vert.x's
+  `HttpClientRequest.send(ReadStream)` pipes with `endOnFailure`, which would end the request
+  short of its `Content-Length` on a read failure. A read failure or a short range (the file
+  shrank) resets the request; a file changed in place without a length change isn't detected.
+  HTTPS sends `UNSIGNED-PAYLOAD`; plain HTTP (development) reads each range twice to hash it
+  first. On failure or client close the requests in flight are reset, then the upload is aborted
+  once they settle; every handle is closed.
 - **Failures** abort the multipart upload and fail with the original cause (a failed abort
   attached as suppressed). **Closing the client aborts streamed uploads in progress**, moved here
   from Phase 5. `S3ServiceException` now keeps suppressed exceptions (still no stack trace), so a
@@ -774,7 +785,15 @@ part uploads. Design decisions (owner, 2026-11-22):
   `putObject(ReadStream)`, abort on close, stub, fake-stream and context tests; (4b) `putFile`
   (open first, close always, part size from the file size); (4c) integration in the shared
   suites (every backend) and the docs, including the memory note (about 16 MiB per concurrent
-  streamed upload).
+  `putObject(ReadStream)` upload; `putFile` only a few chunks).
+
+### Unreproduced build failure (2026-11-22, during step 4b)
+One `mvn test` run (an incremental build: a clean main-only compile, then edited test files)
+reported BUILD FAILURE without running any test, most likely in compilation; its output was lost
+to a log filter. Not reproduced: 5 × `mvn clean verify` and 3 × the same incremental sequence all
+passed, with full logs kept; the logs show no annotation-processor errors (e.g. "Attempt to
+recreate a file") and the incremental runs did recompile. Recorded as a one-off; if a build fails
+again, keep the full log.
 
 ### Phase 3 — step 3.6 findings (Silo `RELEASE.2026-11-12T00-00-00Z`, verified 2026-11-22)
 - **ListMultipartUploads:** without a prefix, Silo lists every open upload, but it ignores
@@ -861,7 +880,8 @@ the concrete steps.
 - [ ] Gate 3: a "Running in Kubernetes" section in `README.adoc`: memory limits and why large
   objects must be streamed, pool sizing, closing the client on graceful shutdown, and the
   presigner's public vs internal endpoint. Buffer memory is up to about 16 MiB per concurrent
-  streamed upload (two 8 MiB parts): size pod memory for the expected concurrency.
+  `putObject(ReadStream)` upload (two 8 MiB parts): size pod memory for the expected concurrency.
+  `putFile` streams file ranges and needs only a few chunks per upload.
 - [ ] Gate 3: a migration note from `object-storage-client` 0.4.x: new coordinates and package;
   the old API is replaced, not migrated.
 - [ ] After the GitHub rename to `vertx-s3-client`: point the README's CI badge and links at the

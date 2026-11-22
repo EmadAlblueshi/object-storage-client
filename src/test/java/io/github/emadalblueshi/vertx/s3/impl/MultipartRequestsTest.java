@@ -48,6 +48,19 @@ class MultipartRequestsTest {
     assertTrue(MultipartRequests.prefixProblem("bad\uDC00").contains("Unicode"));
   }
 
+  /** File uploads: the smallest multiple of the minimum that fits the file in the part limit. */
+  @Test
+  void partSizeGrowsWithTheFileInMultiplesOfTheMinimum() {
+    int mib8 = 8 * 1024 * 1024;
+    assertEquals(mib8, MultipartRequests.partSizeFor(0, mib8, 10_000));
+    assertEquals(mib8, MultipartRequests.partSizeFor(1, mib8, 10_000));
+    assertEquals(mib8, MultipartRequests.partSizeFor(10_000L * mib8, mib8, 10_000), "78 GiB");
+    assertEquals(2 * mib8, MultipartRequests.partSizeFor(10_000L * mib8 + 1, mib8, 10_000));
+    assertEquals(66 * mib8, MultipartRequests.partSizeFor(MultipartRequests.MAX_OBJECT_SIZE, mib8, 10_000), "5 TiB: 528 MiB");
+    assertEquals(8, MultipartRequests.partSizeFor(10, 4, 2));
+    assertThrows(IllegalArgumentException.class, () -> MultipartRequests.partSizeFor(Long.MAX_VALUE / 2, mib8, 10_000));
+  }
+
   // --- CompleteMultipartUpload body --------------------------------------------------------------------
 
   @Test

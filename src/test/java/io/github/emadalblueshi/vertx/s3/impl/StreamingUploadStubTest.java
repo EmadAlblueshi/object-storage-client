@@ -6,11 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -29,10 +32,13 @@ import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
 import io.vertx.core.Future;
+import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.file.AsyncFile;
+import io.vertx.core.file.OpenOptions;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerRequest;
@@ -303,7 +309,8 @@ class StreamingUploadStubTest {
     source.emit("abcdefghijklm");
     upload.onComplete(testContext.failing(e -> testContext.verify(() -> {
       assertInstanceOf(S3ClientException.class, e);
-      assertEquals("A streamed upload is limited to 2 parts of 4 bytes (8 bytes)", e.getMessage());
+      assertEquals("A streamed upload is limited to 2 parts of 4 bytes (8 bytes); upload a larger file with putFile",
+        e.getMessage());
       assertEquals(2, partRequests().size());
       List<String> sent = descriptionsWithoutBodies(Integer.MAX_VALUE);
       assertEquals("DELETE /bucket/k?uploadId=up-1 ", sent.get(sent.size() - 1));
@@ -348,7 +355,271 @@ class StreamingUploadStubTest {
     })));
   }
 
+  // --- files: each part streamed from its own file range -----------------------------------------
+
+  @Test
+  void smallFileIsOnePutObjectAndEveryHandleIsClosed(VertxTestContext testContext) {
+    RecordingOpener opener = new RecordingOpener();
+    tempFile("abc")
+      .compose(path -> client().putFile("bucket", "k", path, null, 4, 2, opener))
+      .onComplete(testContext.succeeding(etag -> testContext.verify(() -> {
+        assertEquals("\"etag-single\"", etag);
+        assertEquals(List.of("PUT /bucket/k abc"), descriptions());
+        assertEquals("3", requests.get(0).headers.get("Content-Length"));
+        // Over plain HTTP the range is read twice: hashed, then sent
+        assertEquals(HashUtil.sha256Hex("abc".getBytes()), requests.get(0).headers.get("x-amz-content-sha256"));
+        assertTrue(opener.opened.get() > 1, "a check, then a handle per pass");
+        assertEquals(opener.opened.get(), opener.closed.get());
+        testContext.completeNow();
+      })));
+  }
+
+  /** The part size comes from the file's length: 10 bytes in at most 2 parts of a multiple of 4 bytes is 8 + 2. */
+  @Test
+  void largerFileUsesPartsSizedFromItsLength(VertxTestContext testContext) {
+    RecordingOpener opener = new RecordingOpener();
+    tempFile("abcdefghij")
+      .compose(path -> client().putFile("bucket", "k", path, new S3PutObjectOptions().setContentType("video/mp4"), 4, 2, opener))
+      .onComplete(testContext.succeeding(etag -> testContext.verify(() -> {
+        assertEquals("\"etag-final\"", etag);
+        assertEquals(Map.of("1", "abcdefgh", "2", "ij"), partBodies());
+        assertEquals("video/mp4", requests.get(0).headers.get("Content-Type"));
+        assertEquals(opener.opened.get(), opener.closed.get());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void eachPartHasItsExactLengthAndRangeHash(VertxTestContext testContext) {
+    tempFile("abcdefghij")
+      .compose(path -> client().putFile("bucket", "k", path, null, 4, 3, new RecordingOpener()))
+      .onComplete(testContext.succeeding(etag -> testContext.verify(() -> {
+        assertEquals(Map.of("1", "abcd", "2", "efgh", "3", "ij"), partBodies());
+        for (Captured part : partRequests()) {
+          assertEquals(Integer.toString(part.body.length()), part.headers.get("Content-Length"));
+          assertEquals(HashUtil.sha256Hex(part.body.getBytes()), part.headers.get("x-amz-content-sha256"));
+        }
+        String complete = requests.get(requests.size() - 1).body.toString();
+        assertTrue(complete.indexOf("<PartNumber>1<") < complete.indexOf("<PartNumber>2<")
+          && complete.indexOf("<PartNumber>2<") < complete.indexOf("<PartNumber>3<"), complete);
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * Two parts stream at once; the third starts only when one of them is done. Parts are launched in
+   * one go, each opening its hash handle at once, so the opens are counted deterministically: a
+   * check, then a hash and a send handle for each part started.
+   */
+  @Test
+  void atMostTwoPartsAreInFlight(VertxTestContext testContext) {
+    RecordingOpener opener = new RecordingOpener();
+    Promise<Reply> part1Reply = Promise.promise();
+    Promise<Reply> part2Reply = Promise.promise();
+    responder.set(c -> c.describe().startsWith("PUT /bucket/k?partNumber=1&") ? part1Reply.future()
+      : c.describe().startsWith("PUT /bucket/k?partNumber=2&") ? part2Reply.future() : s3(c));
+    Future<Captured> part1Sent = arrival("PUT /bucket/k?partNumber=1&");
+    Future<Captured> part2Sent = arrival("PUT /bucket/k?partNumber=2&");
+    Future<Captured> part3Sent = arrival("PUT /bucket/k?partNumber=3&");
+    Future<String> upload = tempFile("abcdefghijkl")
+      .compose(path -> client().putFile("bucket", "k", path, null, 4, 3, opener));
+    Future.all(part1Sent, part2Sent)
+      .compose(v -> {
+        testContext.verify(() -> {
+          assertFalse(part3Sent.isComplete(), "a third part while two are in flight");
+          assertEquals(5, opener.opened.get(), "the check, and a hash and a send handle for parts 1 and 2 only");
+        });
+        part1Reply.complete(new Reply(200, "").header("ETag", "\"etag-1\""));
+        return part3Sent;
+      })
+      .compose(v -> {
+        part2Reply.complete(new Reply(200, "").header("ETag", "\"etag-2\""));
+        return upload;
+      })
+      .onComplete(testContext.succeeding(etag -> testContext.verify(() -> {
+        assertEquals(Map.of("1", "abcd", "2", "efgh", "3", "ijkl"), partBodies());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void failedFileUploadAbortsAndClosesEveryHandle(VertxTestContext testContext) {
+    responder.set(c -> c.describe().startsWith("PUT /bucket/k?partNumber=2&")
+      ? Future.succeededFuture(new Reply(500, "<Error><Code>InternalError</Code><Message>part</Message></Error>"))
+      : s3(c));
+    RecordingOpener opener = new RecordingOpener();
+    tempFile("abcdefghij")
+      .compose(path -> client().putFile("bucket", "k", path, null, 4, 2, opener))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals(500, assertInstanceOf(S3ServiceException.class, e).getStatusCode());
+        assertTrue(descriptions().contains("DELETE /bucket/k?uploadId=up-1 "), descriptions().toString());
+        assertEquals(opener.opened.get(), opener.closed.get());
+        testContext.completeNow();
+      })));
+  }
+
+  /** A file that shrinks during the upload fails it: a range reads short. */
+  @Test
+  void shrinkingFileFailsAndAborts(VertxTestContext testContext) {
+    RecordingOpener opener = new RecordingOpener() {
+      @Override
+      public Future<AsyncFile> apply(String path) {
+        // The third open is part 2's hash pass: the file shrinks just before
+        return opened.get() == 2 ? vertx.fileSystem().truncate(path, 6).compose(v -> super.apply(path)) : super.apply(path);
+      }
+    };
+    tempFile("abcdefghijkl")
+      .compose(path -> client().putFile("bucket", "k", path, null, 4, 3, opener))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        assertEquals("The file changed during the upload: 4 bytes expected at offset 4, 2 read", e.getMessage());
+        assertTrue(descriptions().contains("DELETE /bucket/k?uploadId=up-1 "), descriptions().toString());
+        assertEquals(opener.opened.get(), opener.closed.get());
+        testContext.completeNow();
+      })));
+  }
+
+  /** Closing the client resets the parts in flight, then aborts the upload. */
+  @Test
+  void closingTheClientResetsTheFilePartsAndAborts(VertxTestContext testContext) {
+    responder.set(c -> c.uri.contains("partNumber=") ? Promise.<Reply>promise().future() : s3(c));
+    Future<Captured> part1Sent = arrival("PUT /bucket/k?partNumber=1&");
+    Future<Captured> part2Sent = arrival("PUT /bucket/k?partNumber=2&");
+    Future<Captured> abortSent = arrival("DELETE /bucket/k?uploadId=up-1");
+    RecordingOpener opener = new RecordingOpener();
+    S3ClientImpl client = client();
+    Future<String> upload = tempFile("abcdefghijkl").compose(path -> client.putFile("bucket", "k", path, null, 4, 3, opener));
+    Future.all(part1Sent, part2Sent)
+      .compose(v -> client.close())
+      .onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+        assertTrue(abortSent.succeeded(), "aborted before the close completed");
+        assertTrue(upload.failed());
+        assertEquals("The S3 client was closed during the upload", upload.cause().getMessage());
+        assertEquals(opener.opened.get(), opener.closed.get());
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * Memory stays at a few chunks: against a server that stops reading, the 64 MiB range is paused
+   * long before it has been read, because nothing but the socket and the write queue hold it.
+   */
+  @Test
+  void aStalledServerPausesTheFileInsteadOfBuffering(VertxTestContext testContext) {
+    int size = 64 * 1024 * 1024;
+    RecordingOpener opener = new RecordingOpener();
+    vertx.createHttpServer().requestHandler(HttpServerRequest::pause).listen(0, "localhost")
+      .compose(server -> tempFile(new byte[size]).compose(path -> {
+        S3ClientImpl client = (S3ClientImpl) S3Client.create(vertx, new S3ClientOptions()
+          .setEndpoint("http://localhost:" + server.actualPort()).setRegion("test-west-1")
+          .setCredentials(new S3Credentials("AKIDEXAMPLE", "secret")));
+        client.putFile("bucket", "k", path, null, 128 * 1024 * 1024, 2, opener);
+        return opener.firstPause.future()
+          .map(v -> {
+            testContext.verify(() -> assertTrue(opener.readWhenPaused.get() < size / 2,
+              "read " + opener.readWhenPaused.get() + " of " + size + " bytes before pausing"));
+            return (Void) null;
+          })
+          .eventually(() -> client.close())
+          .eventually(() -> server.close());
+      }))
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  @Test
+  void missingFileOrDirectoryFailsWithoutOpeningOrSending(VertxTestContext testContext) {
+    RecordingOpener opener = new RecordingOpener();
+    S3ClientImpl client = client();
+    client.putFile("bucket", "k", "/no/such/file-" + System.nanoTime(), null, 4, 2, opener)
+      .transform(missing -> {
+        testContext.verify(() -> {
+          assertInstanceOf(S3ClientException.class, missing.cause());
+          assertTrue(missing.cause().getMessage().startsWith("Cannot read the file /no/such/file-"), missing.cause().getMessage());
+        });
+        return vertx.fileSystem().createTempDirectory("vertx-s3-dir-");
+      })
+      .compose(dir -> client.putFile("bucket", "k", dir, null, 4, 2, opener).transform(Future::succeededFuture)
+        .compose(directory -> vertx.fileSystem().delete(dir).map(directory)))
+      .onComplete(testContext.succeeding(directory -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, directory.cause());
+        assertTrue(directory.cause().getMessage().startsWith("Not a regular file: "), directory.cause().getMessage());
+        assertEquals(0, opener.opened.get());
+        assertEquals(List.of(), descriptions());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void invalidArgumentsFailBeforeTheFileIsRead(VertxTestContext testContext) {
+    RecordingOpener opener = new RecordingOpener();
+    client().putFile("Bad_Bucket", "k", "/etc/hostname", null, 4, 2, opener)
+      .compose(none -> client().putFile("bucket", "k", "", null, 4, 2, opener))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        assertEquals(0, opener.opened.get());
+        assertEquals(List.of(), descriptions());
+        testContext.completeNow();
+      })));
+  }
+
   // --- helpers -------------------------------------------------------------------------------------
+
+  /** A temporary file with {@code content}, deleted when the JVM exits. */
+  private Future<String> tempFile(String content) {
+    return tempFile(content.getBytes());
+  }
+
+  private Future<String> tempFile(byte[] content) {
+    return vertx.fileSystem().createTempFile("vertx-s3-upload-", ".bin")
+      .compose(path -> {
+        new java.io.File(path).deleteOnExit();
+        return vertx.fileSystem().writeFile(path, Buffer.buffer(content)).map(path);
+      });
+  }
+
+  /** The bodies of the part requests, by part number. */
+  private Map<String, String> partBodies() {
+    return partRequests().stream().collect(Collectors.toMap(c -> c.query("partNumber"), c -> c.body.toString()));
+  }
+
+  /**
+   * Opens files for reading like the client does, and records opens, closes, and (per handle) the
+   * bytes delivered before its first pause after data: the transport's backpressure pause.
+   */
+  private class RecordingOpener implements Function<String, Future<AsyncFile>> {
+    final AtomicInteger opened = new AtomicInteger();
+    final AtomicInteger closed = new AtomicInteger();
+    final Promise<Void> firstPause = Promise.promise();
+    final AtomicLong readWhenPaused = new AtomicLong(-1);
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Future<AsyncFile> apply(String path) {
+      opened.incrementAndGet();
+      return vertx.fileSystem().open(path, new OpenOptions().setRead(true).setWrite(false).setCreate(false))
+        .map(file -> {
+          AtomicLong read = new AtomicLong();
+          return (AsyncFile) Proxy.newProxyInstance(AsyncFile.class.getClassLoader(), new Class<?>[] {AsyncFile.class},
+            (proxy, method, args) -> {
+              Object[] actual = args;
+              if (method.getName().equals("close") && method.getParameterCount() == 0) {
+                closed.incrementAndGet();
+              } else if (method.getName().equals("handler") && args[0] != null) {
+                Handler<Buffer> handler = (Handler<Buffer>) args[0];
+                actual = new Object[] {(Handler<Buffer>) chunk -> {
+                  read.addAndGet(chunk.length());
+                  handler.handle(chunk);
+                }};
+              } else if (method.getName().equals("pause") && read.get() > 0 && readWhenPaused.compareAndSet(-1, read.get())) {
+                firstPause.tryComplete();
+              }
+              Object result = method.invoke(file, actual);
+              return result == file ? proxy : result;
+            });
+        });
+    }
+  }
+
 
   private S3ClientImpl client() {
     return (S3ClientImpl) S3Client.create(vertx, new S3ClientOptions()

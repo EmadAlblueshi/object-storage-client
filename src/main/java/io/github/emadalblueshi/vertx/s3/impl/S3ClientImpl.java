@@ -6,11 +6,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
+import io.github.emadalblueshi.vertx.s3.S3Exception;
 import io.github.emadalblueshi.vertx.s3.S3CompletedPart;
 import io.github.emadalblueshi.vertx.s3.S3ListBucketsResult;
 import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
@@ -25,6 +27,8 @@ import io.github.emadalblueshi.vertx.s3.S3UploadedPart;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.file.AsyncFile;
+import io.vertx.core.file.OpenOptions;
 import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.streams.ReadStream;
@@ -55,7 +59,7 @@ public final class S3ClientImpl implements S3Client {
   /** The shutdown Future, set by the first close (explicit or by the owner); non-null means closed. */
   private volatile Future<Void> shutdown;
   /** Streamed uploads in progress, aborted when the client closes. Guarded by {@code this} for additions. */
-  private final Set<StreamingUpload> uploads = ConcurrentHashMap.newKeySet();
+  private final Set<ActiveUpload> uploads = ConcurrentHashMap.newKeySet();
 
   public S3ClientImpl(Vertx vertx, S3ClientOptions options) {
     this.vertx = Objects.requireNonNull(vertx, "vertx");
@@ -185,16 +189,77 @@ public final class S3ClientImpl implements S3Client {
     }
     List<Map.Entry<String, String>> putHeaders = headers;
     return call(caller, problem, () -> {
-      StreamingUpload upload = new StreamingUpload(this, caller, bucket, key, putHeaders, body, partSize, maxParts,
-        !config.tls);
-      synchronized (this) {
-        if (shutdown != null) {
-          return caller.failed(new S3ClientException("The S3 client is closed", null));
-        }
-        uploads.add(upload);
-      }
-      return upload.start();
+      return start(caller, new StreamingUpload(this, caller, bucket, key, putHeaders, body, partSize, maxParts, !config.tls));
     });
+  }
+
+  @Override
+  public Future<String> putFile(String bucket, String key, String filename) {
+    return putFile(bucket, key, filename, null);
+  }
+
+  @Override
+  public Future<String> putFile(String bucket, String key, String filename, S3PutObjectOptions options) {
+    return putFile(bucket, key, filename, options, STREAM_PART_SIZE, MultipartRequests.MAX_PARTS,
+      name -> vertx.fileSystem().open(name, new OpenOptions().setRead(true).setWrite(false).setCreate(false)));
+  }
+
+  /** {@link #putFile(String, String, String, S3PutObjectOptions)} with another minimum part size, limit and opener. For tests. */
+  Future<String> putFile(String bucket, String key, String filename, S3PutObjectOptions options, int minPartSize,
+                         int maxParts, Function<String, Future<AsyncFile>> open) {
+    ContextSupport.Caller caller = ContextSupport.capture(vertx);
+    String problem = objectProblem(bucket, key);
+    List<Map.Entry<String, String>> headers = null;
+    if (problem == null && (filename == null || filename.isEmpty())) {
+      problem = "The file name is required";
+    }
+    if (problem == null) {
+      try {
+        headers = ObjectRequests.putHeaders(options);
+      } catch (IllegalArgumentException e) {
+        problem = e.getMessage();
+      }
+    }
+    List<Map.Entry<String, String>> putHeaders = headers;
+    // On the caller's context, so the file's events (and the file system's Futures) are bound to it
+    return call(caller, problem, () -> caller.onContext(() -> vertx.fileSystem().props(filename)
+      .transform(props -> props.succeeded() ? caller.succeeded(props.result())
+        : caller.<io.vertx.core.file.FileProps>failed(fileProblem("Cannot read the file " + filename, props.cause())))
+      .compose(props -> {
+        if (!props.isRegularFile()) {
+          return caller.failed(new S3ClientException("Not a regular file: " + filename, null));
+        }
+        if (props.size() > MultipartRequests.MAX_OBJECT_SIZE) {
+          return caller.failed(new S3ClientException("The file is larger than 5 TiB, the largest S3 object: " + filename,
+            null));
+        }
+        long size = props.size();
+        int partSize = MultipartRequests.partSizeFor(size, minPartSize, maxParts);
+        // Opened once up front, so an unreadable file fails before any request; each range opens its own handle
+        return open.apply(filename)
+          .transform(opened -> opened.succeeded() ? opened.result().close()
+            : caller.<Void>failed(fileProblem("Cannot open the file " + filename, opened.cause())))
+          .compose(v -> start(caller, new FileUpload(this, caller, bucket, key, putHeaders, filename, size, partSize,
+            !config.tls, open)))
+          .transform(ar -> ar.succeeded() ? caller.succeeded(ar.result())
+            : caller.<String>failed(ar.cause() instanceof S3Exception ? ar.cause()
+              : fileProblem("Reading the file " + filename + " failed", ar.cause())));
+      })));
+  }
+
+  /** Starts an upload unless the client is closing, registered so that closing aborts it. */
+  private Future<String> start(ContextSupport.Caller caller, ActiveUpload upload) {
+    synchronized (this) {
+      if (shutdown != null) {
+        return caller.failed(new S3ClientException("The S3 client is closed", null));
+      }
+      uploads.add(upload);
+    }
+    return upload.start();
+  }
+
+  private static S3ClientException fileProblem(String message, Throwable cause) {
+    return new S3ClientException(message + ": " + cause.getMessage(), cause);
   }
 
   @Override
@@ -405,6 +470,22 @@ public final class S3ClientImpl implements S3Client {
       });
   }
 
+  /** PutObject with {@code length} bytes streamed from {@code body}; {@code payloadHash} is required. */
+  Transport.StreamedExchange putStreamed(ContextSupport.Caller caller, String bucket, String key,
+                                         List<Map.Entry<String, String>> headers, ReadStream<Buffer> body, long length,
+                                         String payloadHash) {
+    return transport.executeStreamed(caller,
+      S3Request.object(HttpMethod.PUT, bucket, key, headers, null).withPayloadHash(payloadHash), body, length);
+  }
+
+  /** UploadPart with {@code length} bytes streamed from {@code body}; {@code payloadHash} is required. */
+  Transport.StreamedExchange uploadPartStreamed(ContextSupport.Caller caller, String bucket, String key, String uploadId,
+                                                int partNumber, ReadStream<Buffer> body, long length, String payloadHash) {
+    return transport.executeStreamed(caller, new S3Request(HttpMethod.PUT, bucket, key,
+        List.of(Map.entry("partNumber", Integer.toString(partNumber)), Map.entry("uploadId", uploadId)), List.of(), null)
+      .withPayloadHash(payloadHash), body, length);
+  }
+
   /** UploadPart, which the client only uses for streamed uploads; the Future gives the part's ETag. */
   Future<String> uploadPart(ContextSupport.Caller caller, String bucket, String key, String uploadId, int partNumber,
                             Buffer body, String sha256Hex) {
@@ -451,8 +532,8 @@ public final class S3ClientImpl implements S3Client {
       .mapEmpty();
   }
 
-  /** A streamed upload that finished (or failed) no longer needs aborting on close. */
-  void unregister(StreamingUpload upload) {
+  /** An upload that finished (or failed) no longer needs aborting on close. */
+  void unregister(ActiveUpload upload) {
     uploads.remove(upload);
   }
 
@@ -534,7 +615,7 @@ public final class S3ClientImpl implements S3Client {
     synchronized (this) {
       if (shutdown == null) {
         Future<Void> aborted = null;
-        for (StreamingUpload upload : List.copyOf(uploads)) {
+        for (ActiveUpload upload : List.copyOf(uploads)) {
           aborted = aborted == null ? upload.abortOnClose() : aborted.transform(ar -> upload.abortOnClose());
         }
         shutdown = aborted == null ? transport.close() : aborted.transform(ar -> transport.close());

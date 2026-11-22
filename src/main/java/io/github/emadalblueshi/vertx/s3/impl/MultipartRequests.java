@@ -21,12 +21,30 @@ final class MultipartRequests {
   static final long MIN_PART_SIZE = 5L * 1024 * 1024;
   static final long MAX_PART_SIZE = 5L * 1024 * 1024 * 1024;
 
+  /** S3's largest object: 5 TiB. */
+  static final long MAX_OBJECT_SIZE = 5L * 1024 * 1024 * 1024 * 1024;
+
   /** Page sizes requested from ListParts and ListMultipartUploads (S3's maximum for both). */
   static final int PAGE_SIZE = 1000;
   /** At most 100,000 open uploads are listed. */
   static final int MAX_UPLOAD_PAGES = 100;
 
   private MultipartRequests() {
+  }
+
+  /**
+   * The part size for an upload of {@code size} bytes: the smallest multiple of {@code minimum}
+   * that fits it in {@code maxParts} parts (so {@code minimum} up to {@code minimum * maxParts}
+   * bytes). For sizes up to {@link #MAX_OBJECT_SIZE} with the 8 MiB minimum and 10,000 parts, at
+   * most 552 MiB.
+   */
+  static int partSizeFor(long size, int minimum, int maxParts) {
+    long needed = (size + maxParts - 1) / maxParts;
+    long partSize = Math.max(1, (needed + minimum - 1) / minimum) * minimum;
+    if (partSize > Integer.MAX_VALUE) {
+      throw new IllegalArgumentException("Too large for parts of at most 2 GiB: " + size + " bytes");
+    }
+    return (int) partSize;
   }
 
   static String uploadIdProblem(String uploadId) {

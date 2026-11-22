@@ -17,6 +17,7 @@ import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.net.HostAndPort;
+import io.vertx.core.streams.ReadStream;
 
 /**
  * Sends signed S3 requests over a Vert.x {@link HttpClientAgent}.
@@ -108,6 +109,98 @@ final class Transport {
     })));
   }
 
+  /**
+   * Sends {@code request} with exactly {@code length} bytes streamed from {@code body}, which must
+   * be paused (e.g. a file range), as its body with that {@code Content-Length}; the request's
+   * payload hash must be set ({@code UNSIGNED-PAYLOAD}, or the body's SHA-256 computed in
+   * advance). The response is buffered like {@link #execute(ContextSupport.Caller, S3Request)}.
+   * <p>
+   * The body is piped with backpressure by the transport itself, not by Vert.x's
+   * {@code send(ReadStream)}, whose pipe <em>ends</em> the request when the body fails: with a
+   * fixed {@code Content-Length} that would leave the server waiting for the rest. Here a body
+   * failure, or a body that ends short of {@code length} (a file that shrank), resets the request,
+   * and the response Future fails with that cause. {@link StreamedExchange#reset} resets it on
+   * demand, also before the request exists.
+   */
+  StreamedExchange executeStreamed(ContextSupport.Caller caller, S3Request request, ReadStream<Buffer> body, long length) {
+    StreamedExchange exchange = new StreamedExchange();
+    exchange.response = recover(caller, caller.onContext(() -> openRequest(caller, request, request.payloadHash, length)
+        .compose(httpRequest -> {
+          // Failures (including our own resets) are reported through the response Future; without
+          // a handler, Vert.x would also log them. Set before attach, which may reset at once.
+          httpRequest.exceptionHandler(error -> { });
+          exchange.attach(httpRequest);
+          return pipe(body, httpRequest, length, exchange);
+        })
+        .compose(response -> {
+          if (!isSuccess(response)) {
+            return failWithError(caller, response);
+          }
+          return readBody(caller, response, MAX_BUFFERED_RESPONSE_SIZE, size -> new S3ClientException(
+              "The response body exceeds the limit of " + MAX_BUFFERED_RESPONSE_SIZE + " bytes", null))
+            .map(responseBody -> new S3Response(response.statusCode(), response.statusMessage(), response.headers(),
+              responseBody));
+        })))
+      // A failure caused by a reset of our own surfaces with our cause, not as a stream reset
+      .recover(error -> caller.failed(exchange.cause() != null ? exchange.cause() : error));
+    return exchange;
+  }
+
+  /** A request whose body is streamed, which can be reset (e.g. when its upload fails elsewhere). */
+  static final class StreamedExchange {
+    /** The buffered response; set once by {@link #executeStreamed}. */
+    Future<S3Response> response;
+    private HttpClientRequest request;
+    private Throwable cause;
+
+    /** Resets the request (now, or as soon as it exists) with {@code cause}; the first cause wins. */
+    synchronized void reset(Throwable resetCause) {
+      if (cause != null) {
+        return;
+      }
+      cause = resetCause;
+      if (request != null) {
+        request.reset(0, resetCause);
+      }
+    }
+
+    synchronized void attach(HttpClientRequest httpRequest) {
+      request = httpRequest;
+      if (cause != null) {
+        httpRequest.reset(0, cause);
+      }
+    }
+
+    synchronized Throwable cause() {
+      return cause;
+    }
+  }
+
+  /** Writes {@code length} bytes of {@code body} to {@code request} with backpressure, and ends it. */
+  private static Future<HttpClientResponse> pipe(ReadStream<Buffer> body, HttpClientRequest request, long length,
+                                                 StreamedExchange exchange) {
+    long[] sent = {0};
+    request.drainHandler(v -> body.resume());
+    body.exceptionHandler(exchange::reset);
+    body.endHandler(v -> {
+      if (sent[0] == length) {
+        request.end();
+      } else {
+        exchange.reset(new S3ClientException("The file changed during the upload: " + length + " bytes expected, "
+          + sent[0] + " read", null));
+      }
+    });
+    body.handler(chunk -> {
+      sent[0] += chunk.length();
+      request.write(chunk);
+      if (request.writeQueueFull()) {
+        body.pause();
+      }
+    });
+    body.resume();
+    return request.response();
+  }
+
   /** The signer, shared with the client's presigner (one signing-key cache). */
   S3SignatureV4 signer() {
     return signer;
@@ -142,11 +235,24 @@ final class Transport {
    * thread resumes there, because the hash Future is bound to the caller's context.
    */
   private Future<HttpClientResponse> open(ContextSupport.Caller caller, S3Request request) {
-    return payloadHash(caller, request).compose(payloadHash -> send(caller, request, config.credentials, payloadHash));
+    return payloadHash(caller, request).compose(payloadHash -> send(caller, request, payloadHash));
   }
 
-  private Future<HttpClientResponse> send(ContextSupport.Caller caller, S3Request request, S3Credentials credentials,
-                                          String payloadHash) {
+  private Future<HttpClientResponse> send(ContextSupport.Caller caller, S3Request request, String payloadHash) {
+    Buffer body = request.body;
+    return openRequest(caller, request, payloadHash, body == null ? -1 : body.length())
+      .compose(httpRequest -> body == null ? httpRequest.send() : httpRequest.send(body));
+  }
+
+  /**
+   * Signs {@code request} and opens it, with the authority set, without sending a body yet.
+   *
+   * @param contentLength the body's length, or {@code -1} for none ({@code Content-Length: 0} for
+   *     PUT and POST)
+   */
+  private Future<HttpClientRequest> openRequest(ContextSupport.Caller caller, S3Request request, String payloadHash,
+                                                long contentLength) {
+    S3Credentials credentials = config.credentials;
     String host = config.hostFor(request.bucket);
     String hostHeader = S3SignatureV4.hostHeader(host, config.defaultPort ? -1 : config.port, config.tls);
     String path = config.pathFor(request.bucket, request.key);
@@ -174,20 +280,15 @@ final class Transport {
     }
     // Not signed: proxies may rewrite it, and the AWS SDKs don't sign it either
     options.putHeader(HttpHeaders.USER_AGENT, UserAgent.VALUE);
-    Buffer body = request.body;
-    if (body != null) {
-      options.putHeader(HttpHeaders.CONTENT_LENGTH, Integer.toString(body.length()));
+    if (contentLength >= 0) {
+      options.putHeader(HttpHeaders.CONTENT_LENGTH, Long.toString(contentLength));
     } else if (request.method == HttpMethod.PUT || request.method == HttpMethod.POST) {
       options.putHeader(HttpHeaders.CONTENT_LENGTH, "0");
     }
 
     HostAndPort authority = HostAndPort.authority(host, config.defaultPort ? -1 : config.port);
     // On the caller's context (see open), so Vert.x binds the request, and the response events, to it
-    return http.request(options)
-      .compose(httpRequest -> {
-        HttpClientRequest withAuthority = httpRequest.authority(authority);
-        return body == null ? withAuthority.send() : withAuthority.send(body);
-      });
+    return http.request(options).map(httpRequest -> httpRequest.authority(authority));
   }
 
   /** Reads an error response (truncated at the buffered limit) and fails with the mapped exception. */

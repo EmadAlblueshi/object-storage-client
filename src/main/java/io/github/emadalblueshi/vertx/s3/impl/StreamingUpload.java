@@ -32,7 +32,7 @@ import io.vertx.core.streams.ReadStream;
  *   and the result fails with the original cause; a failed abort is attached as suppressed.</li>
  * </ul>
  */
-final class StreamingUpload {
+final class StreamingUpload implements ActiveUpload {
 
   private final S3ClientImpl client;
   private final ContextSupport.Caller caller;
@@ -77,7 +77,8 @@ final class StreamingUpload {
   }
 
   /** Starts reading the source, which the caller has already paused. */
-  Future<String> start() {
+  @Override
+  public Future<String> start() {
     source.handler(chunk -> caller.execute(() -> onChunk(chunk)));
     source.exceptionHandler(cause -> caller.execute(() -> fail(cause)));
     source.endHandler(v -> caller.execute(this::onEnd));
@@ -89,7 +90,8 @@ final class StreamingUpload {
    * Fails the upload because the client is closing; the Future completes once the upload is
    * aborted (or finished anyway).
    */
-  Future<Void> abortOnClose() {
+  @Override
+  public Future<Void> abortOnClose() {
     caller.execute(() -> fail(new S3ClientException("The S3 client was closed during the upload", null)));
     return result.future().transform(ar -> caller.succeeded(null));
   }
@@ -149,7 +151,7 @@ final class StreamingUpload {
   private void ship(boolean last) {
     if (nextPartNumber > maxParts) {
       fail(new S3ClientException("A streamed upload is limited to " + maxParts + " parts of " + partSize
-        + " bytes (" + ((long) maxParts * partSize) + " bytes)", null));
+        + " bytes (" + ((long) maxParts * partSize) + " bytes); upload a larger file with putFile", null));
       return;
     }
     int partNumber = nextPartNumber++;

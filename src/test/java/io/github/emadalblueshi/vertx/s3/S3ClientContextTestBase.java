@@ -327,6 +327,55 @@ abstract class S3ClientContextTestBase {
       })));
   }
 
+  /**
+   * File uploads: a small one (one PutObject) and one just over a part (a multipart upload of two
+   * ranges streamed from the file; over Silo's plain HTTP each range is hashed first and the
+   * signature verified by Silo).
+   */
+  @Test
+  void fileUploadsCompleteOnCallerContext(VertxTestContext testContext) {
+    byte[] small = new byte[2048];
+    byte[] large = new byte[8 * 1024 * 1024 + 1];
+    new java.util.Random(9).nextBytes(small);
+    new java.util.Random(10).nextBytes(large);
+    String smallKey = "file-small-" + kind();
+    String largeKey = "file-large-" + kind();
+    uploadTemp(small, smallKey)
+      .compose(etag -> uploadTemp(large, largeKey))
+      .compose(etag -> {
+        testContext.verify(() -> assertTrue(etag.endsWith("-2\""), etag));
+        return client.getObject(objectBucket, smallKey);
+      })
+      .compose(body -> {
+        testContext.verify(() -> assertArrayEquals(small, body.getBytes()));
+        return client.getObjectStream(objectBucket, largeKey).compose(stream -> stream.collect(java.util.stream.Collectors.toList()));
+      })
+      .onComplete(testContext.succeeding(chunks -> testContext.verify(() -> {
+        Buffer all = Buffer.buffer();
+        chunks.forEach(all::appendBuffer);
+        assertArrayEquals(large, all.getBytes());
+        testContext.completeNow();
+      })));
+  }
+
+  /** Writes {@code content} to a temporary file and uploads it with putFile as the caller. */
+  private Future<String> uploadTemp(byte[] content, String key) {
+    return vertx.fileSystem().createTempFile("vertx-s3-ctx-", ".bin")
+      .compose(path -> vertx.fileSystem().writeFile(path, Buffer.buffer(content))
+        .compose(v -> caller.assertCompletesOnCallerContext(ctx -> client.putFile(objectBucket, key, path,
+          new S3PutObjectOptions().setContentType("application/octet-stream"))))
+        .compose(etag -> vertx.fileSystem().delete(path).map(etag)));
+  }
+
+  @Test
+  void fileUploadFailureCompletesOnCallerContext(VertxTestContext testContext) {
+    caller.assertCompletesOnCallerContext(ctx -> client.putFile(objectBucket, "k", "/no/such/file-" + kind()))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        testContext.completeNow();
+      })));
+  }
+
   @Test
   void streamedUploadFailureCompletesOnCallerContext(VertxTestContext testContext) {
     String missing = "ctx-missing-" + UUID.randomUUID().toString().substring(0, 8);
