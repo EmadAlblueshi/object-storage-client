@@ -61,6 +61,10 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   `-Amaven.*` processor options in the pom, as in the official Vert.x manuals. Docgen reads these
   options without declaring them, so javac's "The following options were not recognized by any
   processor" warning is expected (owner decision, 2026-11-21); don't remove the options to silence it.
+- Docgen starts a snippet at its method's first statement, so a comment on the first line of an
+  `examples.Examples` method is silently dropped from the manual. Never start a snippet with a
+  comment: put it after the first statement, or in the manual's prose. `ExamplesInManualTest`
+  checks that every comment in `Examples.java` reaches the generated manual.
 - Tests: JUnit Jupiter **5.14.4** (`junit-bom` imported BEFORE `vertx-dependencies`; don't
   take the JUnit 6 that the Vert.x BOM manages, because it needs Java 17), `vertx-junit5`,
   Testcontainers **2.0.5** (works with Docker 29).

@@ -71,9 +71,10 @@ public class Examples {
   }
 
   public void createFromJsonConfig(Vertx vertx, JsonObject config) {
-    // e.g. {"s3": {"endpoint": "https://nyc3.digitaloceanspaces.com", "region": "nyc3",
-    //              "credentials": {"accessKey": "...", "secretKey": "..."}}}
-    S3ClientOptions options = new S3ClientOptions(config.getJsonObject("s3"));
+    JsonObject s3 = config.getJsonObject("s3");
+    // e.g. {"endpoint": "https://nyc3.digitaloceanspaces.com", "region": "nyc3",
+    //       "credentials": {"accessKey": "...", "secretKey": "..."}}
+    S3ClientOptions options = new S3ClientOptions(s3);
 
     S3Client client = S3Client.create(vertx, options);
   }
@@ -84,17 +85,17 @@ public class Examples {
   }
 
   public void bucketExists(S3Client client) {
-    // headBucket fails with HTTP 404 if the bucket doesn't exist (HEAD responses have no error code)
     Future<Boolean> exists = client.headBucket("my-bucket")
       .map(true)
+      // A missing bucket fails with HTTP 404 (HEAD responses have no error code)
       .recover(err -> err instanceof S3ServiceException && ((S3ServiceException) err).getStatusCode() == 404
         ? Future.succeededFuture(false)
         : Future.failedFuture(err));
   }
 
   public void deleteBucket(S3Client client) {
-    // The bucket must be empty
     client.deleteBucket("my-bucket")
+      // Fails with BucketNotEmpty (HTTP 409) unless the bucket is empty
       .onSuccess(v -> System.out.println("deleted"));
   }
 
@@ -116,8 +117,8 @@ public class Examples {
   }
 
   public void getObjectStreamToFile(Vertx vertx, S3Client client) {
-    // Open the file first: once you have the stream, it must be consumed or cancelled
     vertx.fileSystem().open("/tmp/big.mp4", new OpenOptions().setWrite(true).setTruncateExisting(true))
+      // The file is open before the stream exists: once you have the stream, it must be consumed or cancelled
       .compose(file -> client.getObjectStream("my-bucket", "videos/big.mp4").compose(
         // pipeTo closes the file; if writing fails, cancel the stream instead of draining it
         stream -> stream.pipeTo(file).onFailure(err -> stream.cancel()),
