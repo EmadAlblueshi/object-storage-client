@@ -11,6 +11,9 @@ import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
 import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
+import io.github.emadalblueshi.vertx.s3.S3PresignGetOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignPutOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignedRequest;
 import io.github.emadalblueshi.vertx.s3.S3Presigner;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
@@ -223,11 +226,14 @@ public class Examples {
     String url = client.presigner().presignPut("my-bucket", "avatars/user-42.png", 10, TimeUnit.MINUTES);
   }
 
-  public JsonObject presignUpload(S3Presigner presigner, String userId) {
-    String key = "uploads/" + userId + "/" + UUID.randomUUID() + ".jpg";
-    String url = presigner.presignPut("my-bucket", key, 10, TimeUnit.MINUTES);
-    // Remember the key as this user's pending upload; the app sends PUT <url> with the file as the body
-    return new JsonObject().put("key", key).put("url", url);
+  public JsonObject presignUpload(S3Presigner presigner, String userId, String contentType, String contentMd5) {
+    String key = "uploads/" + userId + "/" + UUID.randomUUID();
+    // contentType and contentMd5 come from the app, after your checks (e.g. an allowed type)
+    S3PresignedRequest upload = presigner.presignPut("my-bucket", key, 10, TimeUnit.MINUTES,
+      new S3PresignPutOptions().setContentType(contentType).setContentMd5(contentMd5));
+    // Remember the key as this user's pending upload, and return
+    // {"url": ..., "method": "PUT", "headers": {"Content-Type": ..., "Content-MD5": ...}}
+    return upload.toJson().put("key", key);
   }
 
   public Future<Void> verifyUpload(S3Client client, String key) {
@@ -245,6 +251,15 @@ public class Examples {
 
     // In Java, a Duration works too
     String same = presigner.presignGet("my-bucket", "uploads/user-42/photo.jpg", Duration.ofMinutes(5));
+  }
+
+  public void presignPrivateDownload(S3Presigner presigner) {
+    S3PresignGetOptions options = new S3PresignGetOptions()
+      .setContentType("application/pdf")
+      // Saved as "Résumé 2026.pdf", whatever the key; never cached
+      .setContentDisposition(S3PresignGetOptions.attachment("Résumé 2026.pdf"))
+      .setCacheControl("no-store");
+    String url = presigner.presignGet("my-bucket", "documents/42.pdf", 5, TimeUnit.MINUTES, options).getUrl();
   }
 
   public void listBuckets(S3Client client) {

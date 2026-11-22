@@ -137,6 +137,18 @@ String uploadUrl = presigner.presignPut("my-bucket", "uploads/photo.jpg", 10, Ti
 String downloadUrl = presigner.presignGet("my-bucket", "uploads/photo.jpg", 5, TimeUnit.MINUTES);
 ----
 
+With options, a presigned `PUT` signs headers the upload must send exactly (`Content-Type`,
+`Content-MD5`), and a presigned `GET` overrides the response's `Content-Type`,
+`Content-Disposition` and `Cache-Control`. The result carries the URL, the method and the headers
+to send:
+
+[source,java]
+----
+S3PresignedRequest upload = presigner.presignPut("my-bucket", "uploads/photo.jpg", 10, TimeUnit.MINUTES,
+  new S3PresignPutOptions().setContentType("image/jpeg"));
+JsonObject forTheApp = upload.toJson(); // {"url": ..., "method": "PUT", "headers": {"Content-Type": "image/jpeg"}}
+----
+
 `S3Presigner.create(options)` presigns without a `Vertx` instance, and `setPublicEndpoint` makes
 URLs point to a public host while the client uses an in-cluster address. URLs are bearer tokens:
 never log them, and verify uploads with `headObject` before trusting them.

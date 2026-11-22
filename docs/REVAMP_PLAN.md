@@ -449,7 +449,7 @@ public interface S3Presigner {
 Complete (2026-11-22): signer presigning, the public API (`S3Presigner`, `S3Client.presigner()`,
 `publicEndpoint`), the integration suites against Silo, Silo-TLS and External, and the manual's
 "Presigned URLs" section. The External presign suite awaits the owner's local run (release gate 6).
-Reopened for step 3.5 (D5).
+Reopened for step 3.5 (D5); step 3.5 complete (2026-11-22).
 
 ### Phase 3 — step 3.5: presign options (owner decision D5, 2026-11-22)
 D3 is partly reversed: a trimmed set of options with clear value and broad S3-compatible
@@ -479,6 +479,7 @@ support.
 - **Steps** (each diff first, verified, committed by the owner):
   1. (3.5b) API, implementation and unit tests, with this decision recorded in the scope
      section, `AGENTS.md` and the plan.
+  Steps 2 and 3 land as one commit (owner decision, 2026-11-22).
   2. (3.5c) Integration tests in the presign suite (Silo, Silo-TLS, External): a wrong or missing
      signed `Content-Type` and `Content-MD5` are rejected, a body that doesn't match its
      `Content-MD5` is rejected, and GET overrides appear in the response headers, including a
@@ -703,6 +704,15 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
   test hook, codegen-legal signatures verified by compiling. This completes the audit's changes
   (gate 2).
 
+### Phase 3 — step 3.5 findings (2026-11-22)
+- **Missing signed header:** Silo (like MinIO) answers 400 `AccessDenied` ("There were headers
+  present in the request which were not signed"); AWS is expected to answer 403
+  `SignatureDoesNotMatch`. The presign suite makes it an explicit expectation per backend; the
+  External subclass keeps the AWS default, so gate 6 checks it against Spaces.
+- **Confirmed on Silo (HTTP and HTTPS):** a wrong signed header value (including an added
+  `; charset=utf-8`) is 403 `SignatureDoesNotMatch`; the signed `Content-MD5` with other bytes is
+  400 `BadDigest`; GET overrides, including an RFC 8187 `filename*`, come back exactly.
+
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
 the concrete steps.
@@ -728,7 +738,7 @@ the concrete steps.
   S3_PATH_STYLE=false mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false
   unset S3_ENDPOINT S3_REGION S3_ACCESS_KEY S3_SECRET_KEY
   ```
-  Unverified until then: LocationConstraint, UNSIGNED-PAYLOAD on Spaces, virtual-hosted addressing, dot-segment and leading-slash key behavior.
+  Unverified until then: LocationConstraint, UNSIGNED-PAYLOAD on Spaces, virtual-hosted addressing, dot-segment and leading-slash key behavior, and the presign options (how a missing signed header is reported, `BadDigest`, GET response overrides).
 
 ## Decision questions for you (answer before Phase 1)
 1. **Coordinates/package:** keep groupId `io.github.emadalblueshi`, root package `io.github.emadalblueshi.vertx.s3`, module `io.github.emadalblueshi.vertx.s3`? (alt: `io.github.emadalblueshi.s3`)

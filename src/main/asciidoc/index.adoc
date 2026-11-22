@@ -310,9 +310,11 @@ ingress in front of the storage must pass the `Host` header through unchanged.
 
 The backend stays in charge of what gets stored:
 
-. The backend authorizes the user, chooses the key (never the app), and returns a presigned `PUT`
-URL.
-. The app sends the file as the body of an HTTP `PUT` to that URL.
+. The app asks the backend for an upload, announcing the file's content type and the base64 MD5
+of its bytes.
+. The backend authorizes the user, checks what the app announced, chooses the key (never the app),
+and returns a presigned `PUT` request that signs the content type and the MD5.
+. The app sends exactly those bytes, with exactly the returned headers, to the URL.
 . The app tells the backend that the upload is done, and the backend checks the object with
 `headObject` before trusting it.
 
@@ -320,6 +322,13 @@ URL.
 ----
 {@link examples.Examples#presignUpload}
 ----
+
+`S3PresignPutOptions` turns `Content-Type` and `Content-MD5` into signed headers, and the methods
+taking options return an `S3PresignedRequest`: the URL, the method and the headers to send. Its
+`toJson()` can be returned to the app as is; its `toString()` never shows the URL. The server
+rejects an upload that sends another value for a signed header, or leaves one out, and one whose
+body doesn't match its `Content-MD5`. Without options, `presignPut` returns just the URL, and only
+`Host` is signed.
 
 [source,$lang]
 ----
@@ -338,18 +347,36 @@ A presigned `GET` URL can be returned to the app, or used directly, e.g. as an i
 {@link examples.Examples#presignDownload}
 ----
 
+With `S3PresignGetOptions`, the URL also overrides headers of the response: `Content-Type`,
+`Content-Disposition` and `Cache-Control`. `attachment` and `inline` build a `Content-Disposition`
+for any file name (RFC 6266). The overrides apply to that response only; the stored object doesn't
+change.
+
+[source,$lang]
+----
+{@link examples.Examples#presignPrivateDownload}
+----
+
 === Rules for presigned URLs
 
 * *Keep the expiry short*: minutes, just enough for the transfer to start.
 * *A URL is a bearer token.* Anyone who has it can use it until it expires, and it can't be revoked.
 Never log presigned URLs, and hand them out only over HTTPS.
-* *A presigned `PUT` can't limit the upload size.* Verify the object with `headObject` after the
-upload, and delete it if it isn't acceptable.
-* *Only `Host` is signed*, so the uploader may send any `Content-Type`, which S3 stores and serves
-back. Treat it as untrusted input.
+* *A presigned `PUT` can't enforce a maximum size.* Check the size the app announces before
+presigning, verify the object with `headObject` after the upload, and delete it if it isn't
+acceptable. A signed `Content-MD5` pins the exact bytes the app announced, but not their size.
+* *Use unique keys chosen by the backend*, e.g. with a UUID. A presigned `PUT` replaces any object
+with the same key; there is no overwrite protection.
+* *Send signed headers byte for byte, and the body as bytes.* Some HTTP clients change headers: Dart's
+`http` package, for example, adds `; charset=utf-8` to the `Content-Type` of a string body, which
+the server then rejects. Without options only `Host` is signed, so the uploader may send any
+`Content-Type`, which S3 stores and serves back: treat it as untrusted input.
+* *Private documents*: sign `Cache-Control: no-store`, and point URLs at the storage endpoint, not
+at a CDN-proxied domain, which may cache the response and serve it to others.
 * *Browser uploads* (e.g. Flutter web) are cross-origin requests: the bucket needs a CORS rule that
-allows your app's origin, the `PUT` method and the headers it sends. Configure it with your storage
-provider's tools; this library doesn't manage it. Native mobile apps don't need one.
+allows your app's origin, the `PUT` method and the headers it sends, including `Content-Type` and
+`Content-MD5` when they are signed. Configure it with your storage provider's tools; this library
+doesn't manage it. Native mobile apps don't need one.
 
 == Errors
 

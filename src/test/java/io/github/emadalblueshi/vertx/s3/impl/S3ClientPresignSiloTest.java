@@ -9,4 +9,18 @@ class S3ClientPresignSiloTest extends S3ClientPresignTestBase {
   protected S3TestBackend backend() {
     return S3TestBackend.sharedSilo();
   }
+
+  /**
+   * Silo, like MinIO, reports a missing signed header as if an unsigned header were present:
+   * 400 AccessDenied ("There were headers present in the request which were not signed").
+   */
+  @Override
+  protected int missingSignedHeaderStatus() {
+    return 400;
+  }
+
+  @Override
+  protected String missingSignedHeaderCode() {
+    return "AccessDenied";
+  }
 }

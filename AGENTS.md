@@ -387,7 +387,10 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - Presigning has unit tests against the AWS SigV4 published presign examples, using a fixed
   `Clock` through the impl test hook. The `S3ClientPresign*` suites (Silo, Silo-TLS, External)
   download and upload through presigned URLs with a plain Vert.x `HttpClient`, sending each URL
-  exactly as returned (`setAbsoluteURI`). Expired URLs are signed in the past through the `Clock`
+  exactly as returned (`setAbsoluteURI`), including the presign options: signed headers sent
+  exactly, wrong or missing, a body that doesn't match its `Content-MD5`, and GET response
+  overrides. How a backend reports a missing signed header is an explicit expectation in the
+  subclasses (Silo: 400 `AccessDenied`). Expired URLs are signed in the past through the `Clock`
   hook; tests never wait for a URL to expire.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no

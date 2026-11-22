@@ -3,12 +3,17 @@ package io.github.emadalblueshi.vertx.s3.impl;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -24,12 +29,17 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignGetOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignPutOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignedRequest;
 import io.github.emadalblueshi.vertx.s3.S3Presigner;
+import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
 import io.github.emadalblueshi.vertx.s3.backend.S3TestBackend;
 import io.github.emadalblueshi.vertx.s3.backend.TestResources;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
+import io.vertx.core.MultiMap;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -70,6 +80,19 @@ abstract class S3ClientPresignTestBase {
 
   /** The backend for this suite; may abort the class (skipped) if it isn't available. */
   protected abstract S3TestBackend backend();
+
+  /**
+   * The HTTP status for an upload that leaves out a header its URL signs. Without the header, the
+   * canonical request no longer matches the signature: 403 {@code SignatureDoesNotMatch} on AWS.
+   */
+  protected int missingSignedHeaderStatus() {
+    return 403;
+  }
+
+  /** The S3 error code that goes with {@link #missingSignedHeaderStatus()}. */
+  protected String missingSignedHeaderCode() {
+    return "SignatureDoesNotMatch";
+  }
 
   @BeforeAll
   void setUp(Vertx vertx, VertxTestContext testContext) {
@@ -278,6 +301,140 @@ abstract class S3ClientPresignTestBase {
       .onComplete(testContext.succeedingThenComplete());
   }
 
+  // --- options --------------------------------------------------------------------------------
+
+  /**
+   * A signed {@code Content-Type} must be sent exactly as signed. The exact value is stored; another
+   * value, the same value with a charset parameter (which some HTTP clients add to string bodies),
+   * or no header at all is rejected, and nothing is stored. A missing header gets the backend's
+   * {@link #missingSignedHeaderStatus()} and {@link #missingSignedHeaderCode()}.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"exact", "other", "with-charset", "missing"})
+  void signedContentTypeMustBeSentExactly(String sent, VertxTestContext testContext) {
+    String key = resources.key(bucket, "signed-type/" + sent + ".jpg");
+    S3PresignedRequest upload = presigner().presignPut(bucket, key, 10, TimeUnit.MINUTES,
+      new S3PresignPutOptions().setContentType("image/jpeg"));
+    assertEquals(Map.of("Content-Type", "image/jpeg"), upload.getHeaders());
+    Map<String, String> headers;
+    switch (sent) {
+      case "exact":
+        headers = upload.getHeaders();
+        break;
+      case "other":
+        headers = Map.of("Content-Type", "image/png");
+        break;
+      case "with-charset":
+        headers = Map.of("Content-Type", "image/jpeg; charset=utf-8");
+        break;
+      default:
+        headers = Map.of();
+    }
+    boolean accepted = "exact".equals(sent);
+    sendWithHeaders(HttpMethod.valueOf(upload.getMethod()), upload.getUrl(), Buffer.buffer("jpeg bytes"), headers)
+      .compose(response -> {
+        if (!accepted) {
+          if ("missing".equals(sent)) {
+            expectError(response, missingSignedHeaderStatus(), missingSignedHeaderCode());
+          } else {
+            expectError(response, 403, "SignatureDoesNotMatch");
+          }
+          return exists(key);
+        }
+        expectStatus(response, 200);
+        return client.headObject(bucket, key).map(head -> {
+          assertEquals("image/jpeg", head.getContentType());
+          return true;
+        });
+      })
+      .onComplete(testContext.succeeding(stored -> testContext.verify(() -> {
+        assertEquals(accepted, stored);
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * A signed {@code Content-MD5} pins the exact bytes: a header with another digest or no header is
+   * rejected by the signature check, and the signed digest with other bytes of the same length is
+   * rejected by the server's body check. Only the matching upload is stored.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"matching", "other-md5", "missing", "other-body"})
+  void signedContentMd5PinsTheBytes(String sent, VertxTestContext testContext) {
+    String key = resources.key(bucket, "signed-md5/" + sent + ".bin");
+    Buffer body = Buffer.buffer("exact bytes");
+    Buffer other = Buffer.buffer("Exact bytes");
+    S3PresignedRequest upload = presigner().presignPut(bucket, key, 10, TimeUnit.MINUTES,
+      new S3PresignPutOptions().setContentMd5(md5(body)));
+    assertEquals(Map.of("Content-MD5", md5(body)), upload.getHeaders());
+    Future<Response> attempt;
+    switch (sent) {
+      case "matching":
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), body, upload.getHeaders());
+        break;
+      case "other-md5":
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), other, Map.of("Content-MD5", md5(other)));
+        break;
+      case "missing":
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), body, Map.of());
+        break;
+      default:
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), other, upload.getHeaders());
+    }
+    attempt
+      .compose(response -> {
+        switch (sent) {
+          case "matching":
+            expectStatus(response, 200);
+            break;
+          case "other-body":
+            expectError(response, 400, "BadDigest");
+            break;
+          case "missing":
+            expectError(response, missingSignedHeaderStatus(), missingSignedHeaderCode());
+            break;
+          default:
+            expectError(response, 403, "SignatureDoesNotMatch");
+        }
+        return exists(key);
+      })
+      .onComplete(testContext.succeeding(stored -> testContext.verify(() -> {
+        assertEquals("matching".equals(sent), stored);
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * GET overrides replace the download's response headers, including a Content-Disposition for a
+   * non-ASCII file name; the stored object is unchanged, so a URL without overrides still gets the
+   * stored headers.
+   */
+  @Test
+  void getOverridesReplaceTheResponseHeaders(VertxTestContext testContext) {
+    String key = resources.key(bucket, "overrides/invoice.pdf");
+    String disposition = S3PresignGetOptions.attachment("فاتورة 7.pdf");
+    S3PresignedRequest download = presigner().presignGet(bucket, key, 10, TimeUnit.MINUTES, new S3PresignGetOptions()
+      .setContentType("application/pdf").setContentDisposition(disposition).setCacheControl("no-store"));
+    assertEquals("GET", download.getMethod());
+    assertEquals(Map.of(), download.getHeaders());
+    client.putObject(bucket, key, Buffer.buffer("%PDF-1.7"), new S3PutObjectOptions().setContentType("application/octet-stream"))
+      .compose(etag -> sendWithHeaders(HttpMethod.GET, download.getUrl(), null, Map.of()))
+      .compose(response -> {
+        expectStatus(response, 200);
+        assertEquals("%PDF-1.7", response.body.toString());
+        assertEquals("application/pdf", response.headers.get("Content-Type"));
+        assertEquals(disposition, response.headers.get("Content-Disposition"));
+        assertEquals("no-store", response.headers.get("Cache-Control"));
+        return sendWithHeaders(HttpMethod.GET, presigner().presignGet(bucket, key, 10, TimeUnit.MINUTES), null, Map.of());
+      })
+      .onComplete(testContext.succeeding(plain -> testContext.verify(() -> {
+        expectStatus(plain, 200);
+        assertEquals("application/octet-stream", plain.headers.get("Content-Type"));
+        assertNull(plain.headers.get("Content-Disposition"));
+        testContext.completeNow();
+      })));
+  }
+
   // --- helpers --------------------------------------------------------------------------------
 
   /** Whether {@code key} exists in the suite's bucket, according to the client. */
@@ -333,17 +490,29 @@ abstract class S3ClientPresignTestBase {
    * Vert.x context, so the response handlers are attached before the response can arrive.
    */
   private Future<Response> send(HttpMethod method, String url, Buffer body, String contentType) {
+    return sendWithHeaders(method, url, body, contentType == null ? Map.of() : Map.of("Content-Type", contentType));
+  }
+
+  /** As {@link #send(HttpMethod, String, Buffer, String)}, with exactly {@code headers}. */
+  private Future<Response> sendWithHeaders(HttpMethod method, String url, Buffer body, Map<String, String> headers) {
     RequestOptions options = new RequestOptions().setMethod(method).setAbsoluteURI(url);
-    if (contentType != null) {
-      options.putHeader("Content-Type", contentType);
-    }
+    headers.forEach(options::putHeader);
     Promise<Response> promise = Promise.promise();
     context.runOnContext(v -> http.request(options)
       .compose(request -> body == null ? request.send() : request.send(body))
       .compose(response -> response.body()
-        .map(content -> new Response(response.statusCode(), response.getHeader("Content-Type"), content)))
+        .map(content -> new Response(response.statusCode(), response.headers(), content)))
       .onComplete(promise));
     return promise.future();
+  }
+
+  /** The {@code Content-MD5} value of {@code body}: the base64 MD5 digest. */
+  private static String md5(Buffer body) {
+    try {
+      return Base64.getEncoder().encodeToString(MessageDigest.getInstance("MD5").digest(body.getBytes()));
+    } catch (NoSuchAlgorithmException e) {
+      throw new AssertionError(e);
+    }
   }
 
   private static void expectStatus(Response response, int status) {
@@ -371,12 +540,14 @@ abstract class S3ClientPresignTestBase {
 
   private static final class Response {
     final int status;
+    final MultiMap headers;
     final String contentType;
     final Buffer body;
 
-    Response(int status, String contentType, Buffer body) {
+    Response(int status, MultiMap headers, Buffer body) {
       this.status = status;
-      this.contentType = contentType;
+      this.headers = headers;
+      this.contentType = headers.get("Content-Type");
       this.body = body;
     }
   }
