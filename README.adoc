@@ -153,11 +153,30 @@ JsonObject forTheApp = upload.toJson(); // {"url": ..., "method": "PUT", "header
 URLs point to a public host while the client uses an in-cluster address. URLs are bearer tokens:
 never log them, and verify uploads with `headObject` before trusting them.
 
+=== Multipart uploads
+
+Large files are uploaded in parts, in parallel and resumably: the backend creates the upload and
+presigns part URLs, the app uploads the parts and reports their `ETag`s, and the backend completes
+the upload:
+
+[source,java]
+----
+client.createMultipartUpload("my-bucket", "videos/big.mp4", new S3PutObjectOptions().setContentType("video/mp4"))
+  .onSuccess(uploadId -> {
+    String part1 = presigner.presignUploadPart("my-bucket", "videos/big.mp4", uploadId, 1, 15, TimeUnit.MINUTES);
+    // ... the app uploads the parts and reports their ETags, then:
+    // client.completeMultipartUpload("my-bucket", "videos/big.mp4", uploadId, parts)
+  });
+----
+
+`listParts` resumes an upload whose `ETag`s were lost, `abortMultipartUpload` gives one up, and
+`listMultipartUploads` lets a cleanup job find uploads that were never finished.
+
 == Documentation
 
 The link:src/main/asciidoc/index.adoc[manual] covers everything else: contexts and threading,
 addressing styles, transport options and credentials, ranges and cancellation, listing pages, the
-presigned upload flow, and errors. Its code snippets are in
+presigned upload flow, multipart uploads (part sizes, resuming, cleanup), and errors. Its code snippets are in
 link:src/main/java/examples/Examples.java[`Examples.java`]. To build it as HTML
 (`target/docs/vertx-s3-client/java/index.html`), with the javadoc (`target/docs/apidocs`):
 

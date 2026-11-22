@@ -378,6 +378,93 @@ allows your app's origin, the `PUT` method and the headers it sends, including `
 `Content-MD5` when they are signed. Configure it with your storage provider's tools; this library
 doesn't manage it. Native mobile apps don't need one.
 
+== Multipart uploads
+
+Large files, such as videos of hundreds of MB to GB, are uploaded in parts: a browser or mobile
+app uploads them directly through presigned part URLs, several at a time, and can resume after a
+lost connection without starting over. The backend stays in charge:
+
+. The app announces the file's size and type. The backend authorizes the user, chooses the key and
+the part size, and creates the upload. It stores the upload id with the user and the key.
+. The backend presigns part URLs, a batch at a time.
+. The app uploads the parts and reports each part's number and `ETag` (a response header of the
+part upload).
+. The backend completes the upload, then checks the object before trusting it.
+
+[source,$lang]
+----
+{@link examples.Examples#startMultipartUpload}
+----
+
+`createMultipartUpload` takes the options of `putObject`: the content type and user metadata are
+set here for the whole object, since parts have none. S3's rules for the parts: 1 to 10,000 parts,
+numbered 1 to 10,000; each 5 MiB to 5 GiB, except the last, which may be smaller.
+
+[source,$lang]
+----
+{@link examples.Examples#presignParts}
+----
+
+Presign part URLs on demand, a batch at a time, with a short expiry: the app asks for more as it
+goes, and for fresh ones when it resumes. `presignUploadPart` with `S3PresignUploadPartOptions` can
+also sign a `Content-MD5` per part, as for a presigned `PUT`.
+
+[source,$lang]
+----
+{@link examples.Examples#completeMultipartUpload}
+----
+
+The parts may be reported in any order, e.g. as parallel uploads finish: `completeMultipartUpload`
+sends them in part-number order, as S3 requires, and part numbers may have gaps. The server rejects
+a wrong `ETag` (`InvalidPart`) and a part other than the last one under 5 MiB (`EntityTooSmall`);
+the upload then stays open. A presigned part URL can't limit the part size either: `listParts`
+lets the backend check the part sizes before completing, and `headObject` checks the object after.
+
+=== Resuming
+
+To resume, the app comes back with the upload id the backend stored. If it lost the `ETag`s of the
+parts already uploaded, `listParts` returns them, with their sizes; the app then uploads only the
+missing parts, with fresh URLs.
+
+[source,$lang]
+----
+{@link examples.Examples#missingParts}
+----
+
+=== Giving up and cleaning up
+
+Until an upload is completed or aborted, its parts are stored, and usually billed. Abort an upload
+the app gives up on with `abortMultipartUpload`. A part that was still being uploaded may be stored
+after the abort; aborting again removes it.
+
+Uploads can also be abandoned without anyone noticing: an app that never comes back, or a backend
+that created an upload but crashed before storing its id. A cleanup job finds them with
+`listMultipartUploads` and aborts the old ones:
+
+[source,$lang]
+----
+{@link examples.Examples#abortStaleUploads}
+----
+
+For an upload that is already gone, AWS answers `404 NoSuchUpload` while some S3-compatible servers
+answer success: treat both as done. On AWS, a prefix limits the listing to keys that start with it;
+some servers (MinIO-compatible ones, for example) only match whole keys, so a cleanup job should
+list the whole bucket and filter. As an extra safety net, a bucket lifecycle rule
+(`AbortIncompleteMultipartUpload`) can abort old uploads on servers that support it; configure it
+with your storage provider's tools, as this library doesn't manage lifecycle rules.
+
+=== Part sizes and rules
+
+* *Part size*: 8 to 16 MiB suits large media from mobile apps: a failed part is cheap to retry, and
+a 2 GiB video in 16 MiB parts takes 128 requests. Files above 78 GiB (10,000 parts of 8 MiB) need
+larger parts; the `startMultipartUpload` example computes the size.
+* *Parallelism*: 3 or 4 parts at a time is usually enough to fill a mobile connection.
+* *Browsers* need a CORS rule on the bucket that allows `PUT` and *exposes the `ETag` header*;
+without it the app can't read the part `ETag`s.
+* *Completion*: S3 can report a failure after it has started a `200` response; such a response
+fails with an `S3ServiceException` whose status code is `200`. Completing can take a while for
+large objects.
+
 == Errors
 
 Failures are `S3Exception` instances. An `S3ServiceException` means the server answered with an

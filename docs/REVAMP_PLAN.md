@@ -455,7 +455,8 @@ public interface S3Presigner {
 Complete (2026-11-22): signer presigning, the public API (`S3Presigner`, `S3Client.presigner()`,
 `publicEndpoint`), the integration suites against Silo, Silo-TLS and External, and the manual's
 "Presigned URLs" section. The External presign suite awaits the owner's local run (release gate 6).
-Reopened for step 3.5 (D5); step 3.5 complete (2026-11-22).
+Reopened for step 3.5 (D5); step 3.5 complete (2026-11-22). Step 3.6 (multipart uploads)
+complete (2026-11-22).
 
 ### Phase 3 — step 3.5: presign options (owner decision D5, 2026-11-22)
 D3 is partly reversed: a trimmed set of options with clear value and broad S3-compatible
@@ -760,6 +761,10 @@ part uploads. Design decisions (owner, 2026-11-22):
   upload, where AWS answers `404 NoSuchUpload`. `ListParts` after an abort is `404 NoSuchUpload`.
 - **ListParts** pages correctly (`max-parts`, `NextPartNumberMarker`).
 - **CompleteMultipartUpload** with a wrong ETag is `400 InvalidPart`.
+- **Confirmed by the multipart suite (HTTP and HTTPS):** a presigned part URL for an aborted
+  upload is `404 NoSuchUpload`; a part under 5 MiB other than the last is `400 EntityTooSmall` on
+  completion; an unsorted part list is `400 InvalidPartOrder` (the client sorts, so this only
+  shows without the sort); a signed per-part `Content-MD5` with other bytes is `400 BadDigest`.
 
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
@@ -786,7 +791,7 @@ the concrete steps.
   S3_PATH_STYLE=false mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false
   unset S3_ENDPOINT S3_REGION S3_ACCESS_KEY S3_SECRET_KEY
   ```
-  Unverified until then: LocationConstraint, UNSIGNED-PAYLOAD on Spaces, virtual-hosted addressing, dot-segment and leading-slash key behavior, and the presign options (how a missing signed header is reported, `BadDigest`, GET response overrides).
+  Unverified until then: LocationConstraint, UNSIGNED-PAYLOAD on Spaces, virtual-hosted addressing, dot-segment and leading-slash key behavior, the presign options (how a missing signed header is reported, `BadDigest`, GET response overrides), and multipart uploads (ListMultipartUploads prefix matching, a second abort, `EntityTooSmall`/`InvalidPart`/`BadDigest`).
 
 ## Decision questions for you (answer before Phase 1)
 1. **Coordinates/package:** keep groupId `io.github.emadalblueshi`, root package `io.github.emadalblueshi.vertx.s3`, module `io.github.emadalblueshi.vertx.s3`? (alt: `io.github.emadalblueshi.s3`)

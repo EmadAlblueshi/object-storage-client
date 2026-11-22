@@ -410,6 +410,14 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   overrides. How a backend reports a missing signed header is an explicit expectation in the
   subclasses (Silo: 400 `AccessDenied`). Expired URLs are signed in the past through the `Clock`
   hook; tests never wait for a URL to expire.
+- The `S3ClientMultipart*` suites (Silo, Silo-TLS, External) upload parts through presigned part
+  URLs with a plain `HttpClient`: round trip, parallel parts reported out of order, resume via
+  `listParts`, `listParts` paging, abort, a wrong ETag, part-order rules, `EntityTooSmall`, a
+  per-part `Content-MD5`, and an orphaned upload found by `listMultipartUploads` and aborted. How
+  a backend matches a ListMultipartUploads prefix and answers a second abort are explicit
+  expectations in the subclasses (Silo: whole keys only; `204`). The suite aborts every upload
+  left open in its bucket before cleanup. Paging of ListMultipartUploads is stub-tested only,
+  since Silo doesn't page it.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
   shared static client state across test classes).

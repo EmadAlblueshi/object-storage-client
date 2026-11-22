@@ -1,12 +1,17 @@
 package examples;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
+import io.github.emadalblueshi.vertx.s3.S3CompletedPart;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
 import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
@@ -17,12 +22,14 @@ import io.github.emadalblueshi.vertx.s3.S3PresignedRequest;
 import io.github.emadalblueshi.vertx.s3.S3Presigner;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
+import io.github.emadalblueshi.vertx.s3.S3UploadedPart;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.file.OpenOptions;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.PemTrustOptions;
 
@@ -260,6 +267,63 @@ public class Examples {
       .setContentDisposition(S3PresignGetOptions.attachment("Résumé 2026.pdf"))
       .setCacheControl("no-store");
     String url = presigner.presignGet("my-bucket", "documents/42.pdf", 5, TimeUnit.MINUTES, options).getUrl();
+  }
+
+  public Future<JsonObject> startMultipartUpload(S3Client client, String userId, long size, String contentType) {
+    String key = "videos/" + userId + "/" + UUID.randomUUID();
+    long mib = 1024 * 1024;
+    // Parts of at least 8 MiB, rounded up to whole MiB, and at most 10,000 of them
+    long partSize = (Math.max(8 * mib, (size + 9_999) / 10_000) + mib - 1) / mib * mib;
+    long parts = (size + partSize - 1) / partSize;
+    return client.createMultipartUpload("my-bucket", key, new S3PutObjectOptions().setContentType(contentType))
+      // Store the upload id with the user and the key before answering: it is needed to resume or clean up
+      .map(uploadId -> new JsonObject().put("key", key).put("uploadId", uploadId).put("partSize", partSize)
+        .put("parts", parts));
+  }
+
+  public JsonArray presignParts(S3Presigner presigner, String key, String uploadId, int first, int last) {
+    JsonArray urls = new JsonArray();
+    for (int part = first; part <= last; part++) {
+      urls.add(new JsonObject().put("partNumber", part)
+        .put("url", presigner.presignUploadPart("my-bucket", key, uploadId, part, 15, TimeUnit.MINUTES)));
+    }
+    // The app PUTs each part to its URL, a few at a time, and keeps the ETag header of each response
+    return urls;
+  }
+
+  public Future<Void> completeMultipartUpload(S3Client client, String key, String uploadId, JsonArray reported,
+                                              long maxSize) {
+    List<S3CompletedPart> parts = reported.stream()
+      .map(part -> new S3CompletedPart((JsonObject) part))
+      .collect(Collectors.toList());
+    // Reported as [{"partNumber": 1, "etag": "\"...\""}, ...], in any order
+    return client.completeMultipartUpload("my-bucket", key, uploadId, parts)
+      .compose(etag -> client.headObject("my-bucket", key))
+      .compose(metadata -> metadata.getContentLength() <= maxSize
+        ? Future.<Void>succeededFuture()
+        : client.deleteObject("my-bucket", key).compose(v -> Future.<Void>failedFuture("upload too large")));
+  }
+
+  public Future<List<Integer>> missingParts(S3Client client, String key, String uploadId, int parts) {
+    return client.listParts("my-bucket", key, uploadId).map(uploaded -> {
+      Set<Integer> done = uploaded.stream().map(S3UploadedPart::getPartNumber).collect(Collectors.toSet());
+      // Presign only these again; listParts also returns the ETags of the parts already uploaded
+      return IntStream.rangeClosed(1, parts).filter(n -> !done.contains(n)).boxed().collect(Collectors.toList());
+    });
+  }
+
+  public Future<Void> abortStaleUploads(S3Client client, Instant startedBefore) {
+    return client.listMultipartUploads("my-bucket", null).compose(uploads -> {
+      List<Future<Void>> aborts = uploads.stream()
+        .filter(upload -> upload.getInitiated() != null && upload.getInitiated().isBefore(startedBefore))
+        .map(upload -> client.abortMultipartUpload("my-bucket", upload.getKey(), upload.getUploadId())
+          // Already gone (404 NoSuchUpload) counts as done
+          .recover(err -> err instanceof S3ServiceException && ((S3ServiceException) err).getStatusCode() == 404
+            ? Future.succeededFuture()
+            : Future.failedFuture(err)))
+        .collect(Collectors.toList());
+      return Future.all(aborts).mapEmpty();
+    });
   }
 
   public void listBuckets(S3Client client) {
