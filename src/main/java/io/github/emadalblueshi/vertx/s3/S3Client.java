@@ -1,5 +1,7 @@
 package io.github.emadalblueshi.vertx.s3;
 
+import java.util.List;
+
 import io.github.emadalblueshi.vertx.s3.impl.S3ClientImpl;
 import io.vertx.codegen.annotations.CacheReturn;
 import io.vertx.codegen.annotations.Nullable;
@@ -203,6 +205,91 @@ public interface S3Client {
    * @return a future completed when the object is deleted
    */
   Future<Void> deleteObject(String bucket, String key);
+
+  /**
+   * Starts a multipart upload (CreateMultipartUpload), for a large object whose parts are then
+   * uploaded separately, typically by a browser or mobile app through presigned part URLs (see
+   * {@link S3Presigner}), and in parallel or resumed later.
+   * <p>
+   * The options are those of {@link #putObject(String, String, Buffer, S3PutObjectOptions)}: the
+   * content type and user metadata are stored with the completed object, and can't be changed by
+   * the parts. S3's rules for the parts: 1 to 10,000 parts, numbered 1 to 10,000; each 5 MiB to
+   * 5 GiB, except the last, which may be smaller. The server checks the sizes when the upload is
+   * completed.
+   * <p>
+   * Until it is {@linkplain #completeMultipartUpload completed} or
+   * {@linkplain #abortMultipartUpload aborted}, an upload's parts are stored (and usually billed);
+   * {@link #listMultipartUploads} finds uploads that were never finished.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param options the content type and user metadata of the object, or {@code null} for none
+   * @return the upload id
+   */
+  Future<String> createMultipartUpload(String bucket, String key, @Nullable S3PutObjectOptions options);
+
+  /**
+   * Completes a multipart upload (CompleteMultipartUpload): the parts are joined into the object.
+   * <p>
+   * The parts are sent in ascending part-number order, as S3 requires, whatever their order in
+   * {@code parts} (e.g. the order in which parallel uploads finished). Part numbers may have gaps.
+   * The list is checked before any request: 1 to 10,000 parts, numbers 1 to 10,000 without
+   * duplicates, and an {@code ETag} for each. The server rejects a part whose {@code ETag} doesn't
+   * match ({@code InvalidPart}) and a part other than the last one that is smaller than 5 MiB
+   * ({@code EntityTooSmall}); the upload then stays open.
+   * <p>
+   * S3 can report a failure after it has started a {@code 200} response: such a response fails
+   * with an {@link S3ServiceException} whose status code is {@code 200}.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param uploadId the upload id
+   * @param parts the uploaded parts
+   * @return the {@code ETag} of the completed object
+   */
+  Future<String> completeMultipartUpload(String bucket, String key, String uploadId, List<S3CompletedPart> parts);
+
+  /**
+   * Aborts a multipart upload (AbortMultipartUpload) and deletes its parts. For an upload that
+   * doesn't exist, or was already completed or aborted, AWS answers {@code 404}
+   * {@code NoSuchUpload}, passed on as an {@link S3ServiceException}; some S3-compatible servers
+   * (MinIO-compatible ones, for example) answer success instead. A cleanup job can treat both as
+   * done. A part that is still being uploaded may be stored after the abort; aborting again
+   * removes it.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param uploadId the upload id
+   * @return a future completed when the upload is aborted
+   */
+  Future<Void> abortMultipartUpload(String bucket, String key, String uploadId);
+
+  /**
+   * Lists the parts uploaded so far (ListParts), e.g. to resume an upload whose {@code ETag}s were
+   * lost, or to check the part sizes before completing. Every part is returned, in part-number
+   * order: at most 10,000, fetched in pages of 1,000.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param uploadId the upload id
+   * @return the uploaded parts
+   */
+  Future<List<S3UploadedPart>> listParts(String bucket, String key, String uploadId);
+
+  /**
+   * Lists the multipart uploads of a bucket that are in progress (ListMultipartUploads), e.g. for a
+   * cleanup job that aborts uploads that were never completed, including uploads that were created
+   * but never recorded. Every upload is returned, in key order, fetched in pages of 1,000; more than
+   * 100,000 open uploads fail the call (narrow the prefix).
+   * <p>
+   * On AWS a prefix matches the start of keys. Some S3-compatible servers (MinIO-compatible ones,
+   * for example) only match a prefix against whole keys; there, list without a prefix and filter.
+   *
+   * @param bucket the bucket name
+   * @param prefix only uploads whose key starts with it, or {@code null} for all
+   * @return the uploads in progress
+   */
+  Future<List<S3MultipartUpload>> listMultipartUploads(String bucket, @Nullable String prefix);
 
   /**
    * The presigner for this client's options: URLs point to the

@@ -11,7 +11,10 @@ import io.github.emadalblueshi.vertx.s3.S3Bucket;
 import io.github.emadalblueshi.vertx.s3.S3ListBucketsResult;
 import io.github.emadalblueshi.vertx.s3.S3ListObjectsResult;
 import io.github.emadalblueshi.vertx.s3.S3ListedObject;
+import io.github.emadalblueshi.vertx.s3.S3MultipartUpload;
 import io.github.emadalblueshi.vertx.s3.S3Owner;
+import io.github.emadalblueshi.vertx.s3.S3ServiceException;
+import io.github.emadalblueshi.vertx.s3.S3UploadedPart;
 import io.vertx.core.buffer.Buffer;
 
 /**
@@ -80,6 +83,141 @@ final class ResponseParsers {
       .setCommonPrefixes(commonPrefixes)
       .setTruncated("true".equalsIgnoreCase(String.valueOf(root.childText("IsTruncated")).trim()))
       .setNextContinuationToken(emptyToNull(root.childText("NextContinuationToken")));
+  }
+
+  /**
+   * The {@code UploadId} of an {@code InitiateMultipartUploadResult}.
+   *
+   * @throws XmlParseException if the body is not a valid CreateMultipartUpload response
+   */
+  static String createMultipartUpload(Buffer body) {
+    XmlElement root = S3Xml.parse(body);
+    expectRoot(root, "InitiateMultipartUploadResult");
+    String uploadId = emptyToNull(root.childText("UploadId"));
+    if (uploadId == null) {
+      throw new XmlParseException("<InitiateMultipartUploadResult> without <UploadId>");
+    }
+    return uploadId;
+  }
+
+  /**
+   * The {@code ETag} of a {@code CompleteMultipartUploadResult}. S3 can report a failure after it
+   * has started a {@code 200} response, padding the body with whitespace while it works: leading
+   * whitespace is ignored, and an {@code <Error>} document becomes an {@link S3ServiceException}
+   * with the response's status code.
+   *
+   * @throws S3ServiceException if the body is an {@code <Error>} document
+   * @throws XmlParseException if the body is not a valid CompleteMultipartUpload response
+   */
+  static String completeMultipartUpload(S3Response response) {
+    Buffer body = withoutLeadingWhitespace(response.body);
+    XmlElement root = S3Xml.parse(body);
+    if ("Error".equals(root.name())) {
+      throw ErrorMapper.toException(new S3Response(response.statusCode, response.statusMessage, response.headers, body));
+    }
+    expectRoot(root, "CompleteMultipartUploadResult");
+    String etag = emptyToNull(root.childText("ETag"));
+    if (etag == null) {
+      throw new XmlParseException("<CompleteMultipartUploadResult> without <ETag>");
+    }
+    return etag;
+  }
+
+  /** One page of a {@code ListPartsResult}. */
+  static final class PartsPage {
+    final List<S3UploadedPart> parts;
+    final boolean truncated;
+    /** The marker for the next page, or {@code null} if absent. */
+    final Integer nextPartNumberMarker;
+
+    PartsPage(List<S3UploadedPart> parts, boolean truncated, Integer nextPartNumberMarker) {
+      this.parts = parts;
+      this.truncated = truncated;
+      this.nextPartNumberMarker = nextPartNumberMarker;
+    }
+  }
+
+  /**
+   * One page of a {@code ListPartsResult}.
+   *
+   * @throws XmlParseException if the body is not a valid ListParts response
+   */
+  static PartsPage listPartsPage(Buffer body) {
+    XmlElement root = S3Xml.parse(body);
+    expectRoot(root, "ListPartsResult");
+    List<S3UploadedPart> parts = new ArrayList<>();
+    for (XmlElement part : root.children("Part")) {
+      parts.add(new S3UploadedPart()
+        .setPartNumber(partNumber(part.childText("PartNumber")))
+        .setEtag(emptyToNull(part.childText("ETag")))
+        .setSize(size(part.childText("Size")))
+        .setLastModified(instant(part.childText("LastModified"))));
+    }
+    String next = emptyToNull(root.childText("NextPartNumberMarker"));
+    return new PartsPage(parts, truncated(root), next == null ? null : partNumber(next));
+  }
+
+  /** One page of a {@code ListMultipartUploadsResult}. */
+  static final class UploadsPage {
+    final List<S3MultipartUpload> uploads;
+    final boolean truncated;
+    /** The markers for the next page (decoded), or {@code null} if absent. */
+    final String nextKeyMarker;
+    final String nextUploadIdMarker;
+
+    UploadsPage(List<S3MultipartUpload> uploads, boolean truncated, String nextKeyMarker, String nextUploadIdMarker) {
+      this.uploads = uploads;
+      this.truncated = truncated;
+      this.nextKeyMarker = nextKeyMarker;
+      this.nextUploadIdMarker = nextUploadIdMarker;
+    }
+  }
+
+  /**
+   * One page of a {@code ListMultipartUploadsResult}. Keys and the key marker are decoded as in
+   * {@link #listObjects} when the response says {@code <EncodingType>url</EncodingType>}.
+   *
+   * @throws XmlParseException if the body is not a valid ListMultipartUploads response
+   */
+  static UploadsPage listMultipartUploadsPage(Buffer body) {
+    XmlElement root = S3Xml.parse(body);
+    expectRoot(root, "ListMultipartUploadsResult");
+    boolean urlEncoded = "url".equalsIgnoreCase(String.valueOf(root.childText("EncodingType")).trim());
+    List<S3MultipartUpload> uploads = new ArrayList<>();
+    for (XmlElement upload : root.children("Upload")) {
+      String key = upload.childText("Key");
+      String uploadId = emptyToNull(upload.childText("UploadId"));
+      if (key == null || uploadId == null) {
+        throw new XmlParseException("<Upload> without <Key> or <UploadId>");
+      }
+      uploads.add(new S3MultipartUpload()
+        .setKey(decode(key, urlEncoded))
+        .setUploadId(uploadId)
+        .setInitiated(instant(upload.childText("Initiated"))));
+    }
+    String nextKey = emptyToNull(root.childText("NextKeyMarker"));
+    return new UploadsPage(uploads, truncated(root), nextKey == null ? null : decode(nextKey, urlEncoded),
+      emptyToNull(root.childText("NextUploadIdMarker")));
+  }
+
+  private static boolean truncated(XmlElement root) {
+    return "true".equalsIgnoreCase(String.valueOf(root.childText("IsTruncated")).trim());
+  }
+
+  private static int partNumber(String value) {
+    try {
+      return Integer.parseInt(String.valueOf(value).trim());
+    } catch (NumberFormatException e) {
+      throw new XmlParseException("Invalid part number: " + value, e);
+    }
+  }
+
+  private static Buffer withoutLeadingWhitespace(Buffer body) {
+    int start = 0;
+    while (start < body.length() && Character.isWhitespace(body.getByte(start))) {
+      start++;
+    }
+    return start == 0 ? body : body.slice(start, body.length());
   }
 
   private static String decode(String value, boolean urlEncoded) {

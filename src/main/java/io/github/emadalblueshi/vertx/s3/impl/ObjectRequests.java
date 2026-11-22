@@ -96,7 +96,7 @@ final class ObjectRequests {
   }
 
   /** The UTF-8 length of {@code value}, or {@code -1} if it isn't valid Unicode. */
-  private static int utf8Length(String value) {
+  static int utf8Length(String value) {
     try {
       return StandardCharsets.UTF_8.newEncoder()
         .onMalformedInput(CodingErrorAction.REPORT)

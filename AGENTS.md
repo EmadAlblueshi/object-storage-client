@@ -8,21 +8,27 @@ plus a presigner. **Not** a clone of the AWS SDK.
 - Buckets: create, head, delete, list (ListBuckets, without pagination).
 - Objects: `putObject` (Buffer); `getObject` (Buffer, size-capped, small objects only);
   `getObjectStream`; `headObject`; `deleteObject`.
-- `putObject` from a stream or file. Multipart is used internally, only when required, and is
-  never exposed as a public multipart API.
+- `putObject` from a stream or file. Multipart is used internally, only when required, through
+  the same operations as the public multipart API below.
+- Multipart uploads of large files uploaded directly by browser and mobile clients (owner
+  decision, 2026-11-22): `createMultipartUpload`, `completeMultipartUpload`,
+  `abortMultipartUpload`, `listParts`, `listMultipartUploads`, and
+  `S3Presigner.presignUploadPart`. Files of hundreds of MB to GB need resumable, parallel part
+  uploads, which a single presigned PUT can't provide (S3 also caps a single PUT at 5 GiB).
+  `listMultipartUploads` lets a cleanup job find uploads that were created but never recorded,
+  without depending on lifecycle-rule support, which varies between S3-compatible servers.
 - ListObjectsV2.
 - `S3Presigner`: GET and PUT. Optional `S3PresignPutOptions` (signed `Content-Type`,
   `Content-MD5`) and `S3PresignGetOptions` (`Content-Type`, `Content-Disposition`, `Cache-Control`
   response overrides) (owner decision D5, 2026-11-22). Deferred, non-breaking to add in 1.x:
   `x-amz-checksum-*`, `If-None-Match`, signed user metadata, `Cache-Control`/`Content-Disposition`
-  on PUT, GET `Content-Encoding`/`Content-Language`/`Expires` overrides, presigned DELETE/HEAD,
-  multipart presigning.
+  on PUT, GET `Content-Encoding`/`Content-Language`/`Expires` overrides, presigned DELETE/HEAD.
 - Dropped for 1.0 (owner decision, 2026-11-21): CopyObject, DeleteObjects. Either can be added
   in 1.x without breaking anything, if the owner asks.
 
-**Non-goals** (never add unless the owner explicitly asks): a public multipart API, ACLs, bucket
-policies, lifecycle, versioning, tagging, SSE/encryption options, object lock, presigned POST,
-ListBuckets pagination, per-operation timeout settings, a retry framework.
+**Non-goals** (never add unless the owner explicitly asks): a public server-side `uploadPart`,
+ACLs, bucket policies, lifecycle, versioning, tagging, SSE/encryption options, object lock,
+presigned POST, ListBuckets pagination, per-operation timeout settings, a retry framework.
 
 **Rules:**
 - Prefer fewer options with good defaults over configurability.
@@ -222,9 +228,16 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   the cache holds only the current entry, so rotated-out secrets aren't kept in memory.
 - `Mac`/`MessageDigest` are not thread-safe: use per-thread instances or `clone()` a prototype per
   use, and never share one instance.
-- Multipart is internal only: `putObject` from a stream or file uses it when required, and no
-  multipart type or method is public. Abort on every failure path; close every opened
-  `AsyncFile`; an empty or small body uses a single PutObject.
+- Multipart: the public operations serve uploads whose parts clients send through presigned part
+  URLs; there is no public server-side `uploadPart`. `completeMultipartUpload` checks the list
+  before any I/O (1 to 10,000 parts, numbers 1 to 10,000, no duplicates, an ETag each) and sends
+  the parts in ascending order, whatever order it gets; a CompleteMultipartUpload `<Error>` inside
+  a `200` response (leading whitespace ignored) is an `S3ServiceException` with status 200.
+  `listParts` and `listMultipartUploads` return every page in one call, with guards against
+  markers that don't advance and a page limit (10,000 parts; 100,000 uploads). Abort's
+  `404 NoSuchUpload` is passed through. `putObject` from a stream or file (Phase 4) reuses these
+  operations internally (`impl.MultipartRequests`): abort on every failure path; close every
+  opened `AsyncFile`; an empty or small body uses a single PutObject.
 - Large objects are never buffered in memory. `getObject` (Buffer) is for small objects only and
   is size-capped: it fails with an `S3ClientException` pointing to `getObjectStream` instead of
   buffering a body over the cap. `getObjectStream` streams the body with backpressure.

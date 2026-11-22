@@ -8,21 +8,27 @@ plus a presigner. **Not** a clone of the AWS SDK.
 - Buckets: create, head, delete, list (ListBuckets, without pagination).
 - Objects: `putObject` (Buffer); `getObject` (Buffer, size-capped, small objects only);
   `getObjectStream`; `headObject`; `deleteObject`.
-- `putObject` from a stream or file. Multipart is used internally, only when required, and is
-  never exposed as a public multipart API.
+- `putObject` from a stream or file. Multipart is used internally, only when required, through
+  the same operations as the public multipart API below.
+- Multipart uploads of large files uploaded directly by browser and mobile clients (owner
+  decision, 2026-11-22): `createMultipartUpload`, `completeMultipartUpload`,
+  `abortMultipartUpload`, `listParts`, `listMultipartUploads`, and
+  `S3Presigner.presignUploadPart`. Files of hundreds of MB to GB need resumable, parallel part
+  uploads, which a single presigned PUT can't provide (S3 also caps a single PUT at 5 GiB).
+  `listMultipartUploads` lets a cleanup job find uploads that were created but never recorded,
+  without depending on lifecycle-rule support, which varies between S3-compatible servers.
 - ListObjectsV2.
 - `S3Presigner`: GET and PUT. Optional `S3PresignPutOptions` (signed `Content-Type`,
   `Content-MD5`) and `S3PresignGetOptions` (`Content-Type`, `Content-Disposition`, `Cache-Control`
   response overrides) (owner decision D5, 2026-11-22). Deferred, non-breaking to add in 1.x:
   `x-amz-checksum-*`, `If-None-Match`, signed user metadata, `Cache-Control`/`Content-Disposition`
-  on PUT, GET `Content-Encoding`/`Content-Language`/`Expires` overrides, presigned DELETE/HEAD,
-  multipart presigning.
+  on PUT, GET `Content-Encoding`/`Content-Language`/`Expires` overrides, presigned DELETE/HEAD.
 - Dropped for 1.0 (owner decision, 2026-11-21): CopyObject, DeleteObjects. Either can be added
   in 1.x without breaking anything, if the owner asks.
 
-**Non-goals** (never add unless the owner explicitly asks): a public multipart API, ACLs, bucket
-policies, lifecycle, versioning, tagging, SSE/encryption options, object lock, presigned POST,
-ListBuckets pagination, per-operation timeout settings, a retry framework.
+**Non-goals** (never add unless the owner explicitly asks): a public server-side `uploadPart`,
+ACLs, bucket policies, lifecycle, versioning, tagging, SSE/encryption options, object lock,
+presigned POST, ListBuckets pagination, per-operation timeout settings, a retry framework.
 
 **Rules:**
 - Prefer fewer options with good defaults over configurability.
@@ -345,7 +351,7 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 | **1. Rename + skeleton** ⚠️BREAKING | New identity, green build | pom coordinates; delete `objectstorage` tree; new package + `module-info` + docgen-ready `package-info`; Vert.x 5.2.3 pinned; `--release 11`; JUnit 5.14.4 BOM; Testcontainers 2.0.5; codegen **and docgen** processors via `annotationProcessorPaths`; remove web-client and Jackson; `java11` surefire profile; CI: the two JDK jobs only; test TLS certificate + MinIO container; **context-test harness first** (event-loop / worker / virtual-thread verticle fixtures + `assertSameContext` helper). Everything else in build/site/docs stays as is. | Old code can't compile once web-client/Jackson are removed (see Phase 1 steps) |
 | **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy) with copy ctor + toJson/fromJson; SigV4 signer **ported** from git history and fixed (sorted/encoded query, RFC3986 path, canonical headers, no options mutation, host:port, session token), unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: list/create/head/delete bucket, put(Buffer)/get(Buffer, capped)/getObjectStream/head/delete object, ListObjectsV2, optionally CopyObject and DeleteObjects (dropped for 1.0, owner decision 2026-11-21) | Encoding edge cases; Spaces quirks |
 | **3. Presigned URLs** (own phase, right after the core client) | GET/PUT presign | Synchronous `S3Presigner` (standalone via `S3Presigner.create(options)` without `Vertx`, also exposed from the client) returning the URL as a `String`; shared SigV4 signer (query auth, `UNSIGNED-PAYLOAD`, cached signing key); separate presigner endpoint; expiry as `long` + `TimeUnit` (plus Java-only `Duration` overloads), positive, whole seconds, ≤ 604800 s; optional extra signed headers; `response-*` overrides; `X-Amz-Security-Token`; `Clock` only as an impl test hook; all signatures codegen-legal (see "Phase 3 — presigner API"); unit tests on AWS published examples; integration via plain HTTP client against Silo (including a non-default port). Presigned POST is out of scope. | Host/port mismatch, clock skew |
-| **4. Streaming uploads** | Backpressure-correct uploads | `putObject` from a `ReadStream<Buffer>` and from a file (AsyncFile): pause-before-async, payload hashing per the payload-signing policy, single PUT for small/empty bodies, multipart **internally and only when required** (part size internal, no public option), **AbortMultipartUpload on every failure**, file close on all paths. No public multipart API. (`getObjectStream` moved to Phase 2 step 6.) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
+| **4. Streaming uploads** | Backpressure-correct uploads | `putObject` from a `ReadStream<Buffer>` and from a file (AsyncFile): pause-before-async, payload hashing per the payload-signing policy, single PUT for small/empty bodies, multipart **internally and only when required** (part size internal, no public option), reusing the public multipart operations of step 3.6 (`impl.MultipartRequests`, the same create, complete and abort) plus an internal `uploadPart`, **AbortMultipartUpload on every failure**, file close on all paths. (`getObjectStream` moved to Phase 2 step 6.) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
 | **5. Hardening** (lean) | Production-ready | Closing the client aborts in-flight internal multipart uploads; log-redaction audit. The external backend profile stays local (the owner runs it); a CI job only if the owner asks. No retry framework and no per-operation timeout settings (non-goals). | Internal API drift on Vert.x bumps |
 | **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `1.0.0-RC1`, then `1.0.0`, as decided by the "1.0.0 release gates" section; see the Phase 6 release checklist below | — |
 
@@ -475,7 +481,8 @@ support.
   US-ASCII; `contentMd5` is the canonical padded base64 of exactly 16 bytes.
 - **Deferred** (non-breaking to add in 1.x): `x-amz-checksum-*`, `If-None-Match`, signed user
   metadata, `Cache-Control`/`Content-Disposition` on PUT, GET `Content-Encoding`/
-  `Content-Language`/`Expires`, presigned DELETE/HEAD, multipart presigning.
+  `Content-Language`/`Expires`, presigned DELETE/HEAD, multipart presigning (moved into scope by
+  step 3.6).
 - **Steps** (each diff first, verified, committed by the owner):
   1. (3.5b) API, implementation and unit tests, with this decision recorded in the scope
      section, `AGENTS.md` and the plan.
@@ -712,6 +719,47 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
 - **Confirmed on Silo (HTTP and HTTPS):** a wrong signed header value (including an added
   `; charset=utf-8`) is 403 `SignatureDoesNotMatch`; the signed `Content-MD5` with other bytes is
   400 `BadDigest`; GET overrides, including an RFC 8187 `filename*`, come back exactly.
+
+### Phase 3 — step 3.6: presigned multipart uploads (owner decision, 2026-11-22)
+Scope change: the public multipart API and multipart presigning move into scope, for large files
+(hundreds of MB to GB) uploaded directly by browser and mobile clients with resumable, parallel
+part uploads. Design decisions (owner, 2026-11-22):
+- `S3Client`: `createMultipartUpload(bucket, key, @Nullable S3PutObjectOptions)` returns the
+  upload id (the object's content type and user metadata are set here, validated like
+  `putObject`); `completeMultipartUpload(bucket, key, uploadId, List<S3CompletedPart>)` returns
+  the ETag; `abortMultipartUpload(bucket, key, uploadId)`; `listParts(bucket, key, uploadId)`
+  returns every part in one call (pages of 1,000, at most 10); `listMultipartUploads(bucket,
+  @Nullable prefix)` returns every open upload (key, upload id, initiated) in one call (pages of
+  1,000, at most 100), with the same guards as ListObjectsV2 (a truncated page must advance its
+  markers). Data objects: `S3CompletedPart`, `S3UploadedPart`, `S3MultipartUpload`.
+- `completeMultipartUpload` sorts the parts by number; duplicates, numbers outside 1 to 10,000,
+  more than 10,000 parts and missing ETags fail before any I/O. S3's part-size rules (5 MiB to
+  5 GiB, except the last) are documented, not enforced: the server checks them on completion.
+  The `200` response with an `<Error>` body becomes an `S3ServiceException` with status 200.
+- Abort passes S3's `404 NoSuchUpload` through; the docs tell cleanup jobs to treat it as done.
+- `S3Presigner.presignUploadPart(bucket, key, uploadId, partNumber, expiry, unit)` plus the
+  Java-only `Duration` overload, and overloads with `S3PresignUploadPartOptions`
+  (`contentMd5`) returning `S3PresignedRequest`, as in step 3.5.
+- Phase 4's internal multipart reuses these operations.
+- **Steps** (each diff first, verified, committed by the owner):
+  1. (3.6a) This decision in the scope section, `AGENTS.md` and the plan; the five client
+     operations; unit, stub and context tests.
+  2. (3.6b) `presignUploadPart`, its options, unit tests.
+  3. (3.6c) The multipart integration suite (Silo, Silo-TLS, External) and the manual and README:
+     presigned part round trip, parallel parts, resume via `listParts`, abort, a wrong ETag, part
+     order, `EntityTooSmall`, per-part `Content-MD5`, and an orphaned upload found by
+     `listMultipartUploads` and aborted.
+
+### Phase 3 — step 3.6 findings (Silo `RELEASE.2026-11-12T00-00-00Z`, verified 2026-11-22)
+- **ListMultipartUploads:** without a prefix, Silo lists every open upload, but it ignores
+  `max-uploads` and `key-marker` (everything in one response, `IsTruncated=false`), so paging is
+  covered by the stub tests only. A prefix only matches whole keys: `orphans/` finds nothing,
+  `orphans/a.mp4` finds that upload. AWS matches the start of keys. The integration suite makes
+  this an explicit expectation; the docs tell cleanup jobs to list without a prefix and filter.
+- **AbortMultipartUpload** is idempotent on Silo: `204` for an unknown, aborted or completed
+  upload, where AWS answers `404 NoSuchUpload`. `ListParts` after an abort is `404 NoSuchUpload`.
+- **ListParts** pages correctly (`max-parts`, `NextPartNumberMarker`).
+- **CompleteMultipartUpload** with a wrong ETag is `400 InvalidPart`.
 
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds

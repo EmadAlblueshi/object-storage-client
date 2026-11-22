@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -17,6 +19,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import io.github.emadalblueshi.vertx.s3.backend.S3TestBackend;
 import io.github.emadalblueshi.vertx.s3.context.CallerContext;
 import io.github.emadalblueshi.vertx.s3.context.CallerKind;
+import io.github.emadalblueshi.vertx.s3.impl.MultipartTestSupport;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.junit5.VertxExtension;
@@ -207,6 +211,85 @@ abstract class S3ClientContextTestBase {
       .onComplete(testContext.failing(e -> testContext.verify(() -> {
         assertInstanceOf(S3ClientException.class, e);
         assertEquals("The object key must not be empty", e.getMessage());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void multipartOperationsCompleteOnCallerContext(VertxTestContext testContext) {
+    String key = "multipart-" + kind();
+    AtomicReference<String> uploadId = new AtomicReference<>();
+    caller.assertCompletesOnCallerContext(ctx -> client.createMultipartUpload(objectBucket, key,
+        new S3PutObjectOptions().setContentType("video/mp4")))
+      .compose(id -> {
+        uploadId.set(id);
+        // A fixture, outside the caller: the client has no public uploadPart
+        return MultipartTestSupport.uploadPart(vertx, backend, objectBucket, key, id, 1, Buffer.buffer("one part"));
+      })
+      .compose(etag -> caller.assertCompletesOnCallerContext(ctx -> client.listParts(objectBucket, key, uploadId.get())))
+      .compose(parts -> {
+        testContext.verify(() -> assertEquals(1, parts.size()));
+        return caller.assertCompletesOnCallerContext(ctx -> client.listMultipartUploads(objectBucket, null))
+          .map(uploads -> {
+            testContext.verify(() -> assertTrue(uploads.stream().anyMatch(u -> u.getUploadId().equals(uploadId.get()))));
+            return parts;
+          });
+      })
+      .compose(parts -> caller.assertCompletesOnCallerContext(ctx -> client.completeMultipartUpload(objectBucket, key,
+        uploadId.get(), List.of(new S3CompletedPart(1, parts.get(0).getEtag())))))
+      .compose(etag -> client.headObject(objectBucket, key))
+      .onComplete(testContext.succeeding(head -> testContext.verify(() -> {
+        assertEquals("video/mp4", head.getContentType());
+        assertEquals(8, head.getContentLength());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void abortCompletesOnCallerContextAndLaterCallsFailThere(VertxTestContext testContext) {
+    String key = "aborted-" + kind();
+    AtomicReference<String> uploadId = new AtomicReference<>();
+    client.createMultipartUpload(objectBucket, key, null)
+      .compose(id -> {
+        uploadId.set(id);
+        return caller.assertCompletesOnCallerContext(ctx -> client.abortMultipartUpload(objectBucket, key, id));
+      })
+      .compose(v -> caller.assertCompletesOnCallerContext(ctx -> client.listParts(objectBucket, key, uploadId.get())))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals("NoSuchUpload", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void completeServerFailureCompletesOnCallerContext(VertxTestContext testContext) {
+    String key = "wrong-etag-" + kind();
+    AtomicReference<String> uploadId = new AtomicReference<>();
+    client.createMultipartUpload(objectBucket, key, null)
+      .compose(id -> {
+        uploadId.set(id);
+        return caller.assertCompletesOnCallerContext(ctx -> client.completeMultipartUpload(objectBucket, key, id,
+          List.of(new S3CompletedPart(1, "\"not-an-etag\""))));
+      })
+      .transform(ar -> client.abortMultipartUpload(objectBucket, key, uploadId.get()).transform(cleanup -> ar.failed()
+        ? Future.<String>failedFuture(ar.cause())
+        : Future.<String>succeededFuture(ar.result())))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals("InvalidPart", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void invalidMultipartArgumentsFailOnCallerContext(VertxTestContext testContext) {
+    // Fail before any I/O: the immediate-failure path must still complete on the caller's context
+    caller.assertCompletesOnCallerContext(ctx -> client.completeMultipartUpload(objectBucket, "k", "up-1", List.of()))
+      .transform(empty -> {
+        testContext.verify(() -> assertInstanceOf(S3ClientException.class, empty.cause()));
+        return caller.assertCompletesOnCallerContext(ctx -> client.listMultipartUploads(objectBucket, "bad\uD800"));
+      })
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
         testContext.completeNow();
       })));
   }
