@@ -356,7 +356,7 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
 | **2. Signer + core ops** ⚠️BREAKING | Correct SigV4, idiomatic core | `S3ClientOptions` (endpoint URI, region required, pathStyle, credentials provider, payload strategy) with copy ctor + toJson/fromJson; SigV4 signer **ported** from git history and fixed (sorted/encoded query, RFC3986 path, canonical headers, no options mutation, host:port, session token), unit-tested with AWS SigV4 test-suite vectors; HttpClient transport; context-bound promises; `S3Exception` hierarchy (status, code, requestId, hostId; bodiless + non-XML handling); StAX XML; ops: list/create/head/delete bucket, put(Buffer)/get(Buffer, capped)/getObjectStream/head/delete object, ListObjectsV2, optionally CopyObject and DeleteObjects (dropped for 1.0, owner decision 2026-11-21) | Encoding edge cases; Spaces quirks |
 | **3. Presigned URLs** (own phase, right after the core client) | GET/PUT presign | Synchronous `S3Presigner` (standalone via `S3Presigner.create(options)` without `Vertx`, also exposed from the client) returning the URL as a `String`; shared SigV4 signer (query auth, `UNSIGNED-PAYLOAD`, cached signing key); separate presigner endpoint; expiry as `long` + `TimeUnit` (plus Java-only `Duration` overloads), positive, whole seconds, ≤ 604800 s; optional extra signed headers; `response-*` overrides; `X-Amz-Security-Token`; `Clock` only as an impl test hook; all signatures codegen-legal (see "Phase 3 — presigner API"); unit tests on AWS published examples; integration via plain HTTP client against Silo (including a non-default port). Presigned POST is out of scope. | Host/port mismatch, clock skew |
 | **4. Streaming uploads** | Backpressure-correct uploads | `putObject` from a `ReadStream<Buffer>` and from a file (AsyncFile): pause-before-async, payload hashing per the payload-signing policy, single PUT for small/empty bodies, multipart **internally and only when required** (part size internal, no public option), reusing the public multipart operations of step 3.6 (`impl.MultipartRequests`, the same create, complete and abort) plus an internal `uploadPart`, **AbortMultipartUpload on every failure**, file close on all paths. (`getObjectStream` moved to Phase 2 step 6.) | Hidden backpressure bugs → test empty, exact-multiple, 1-byte-over, slow-consumer, foreign-context stream |
-| **5. Hardening** (lean) | Production-ready | Closing the client aborts in-flight internal multipart uploads; log-redaction audit. The external backend profile stays local (the owner runs it); a CI job only if the owner asks. No retry framework and no per-operation timeout settings (non-goals). | Internal API drift on Vert.x bumps |
+| **5. Hardening** (lean) | Production-ready | ~~Closing the client aborts in-flight internal multipart uploads~~ (done in Phase 4, owner decision 2026-11-22); log-redaction audit. The external backend profile stays local (the owner runs it); a CI job only if the owner asks. No retry framework and no per-operation timeout settings (non-goals). | Internal API drift on Vert.x bumps |
 | **6. Docs + release** | First release `vertx-s3-client` | README rewrite (Spaces + MinIO config, context guarantees), docgen manual (`src/main/asciidoc` + `examples`) rewritten for the new API, javadoc, CHANGELOG, Central release `1.0.0-RC1`, then `1.0.0`, as decided by the "1.0.0 release gates" section; see the Phase 6 release checklist below | — |
 
 ---
@@ -755,6 +755,27 @@ part uploads. Design decisions (owner, 2026-11-22):
      order, `EntityTooSmall`, per-part `Content-MD5`, and an orphaned upload found by
      `listMultipartUploads` and aborted.
 
+### Phase 4 — streaming uploads (owner decisions, 2026-11-22)
+- **API:** `putObject(bucket, key, ReadStream<Buffer>[, S3PutObjectOptions])` and
+  `putFile(bucket, key, filename[, S3PutObjectOptions])`, returning the ETag; no new options.
+  Codegen accepted both forms (probe, 2026-11-22).
+- **Pipeline (`impl.StreamingUpload`):** the source is paused before any async step; a stream
+  that ends within the first part is one PutObject; otherwise a multipart upload through the
+  step 3.6 operations plus an internal `uploadPart`. Fixed 8 MiB parts for streams, one uploading
+  while the next fills (at most about 16 MiB buffered per upload); a full part is shipped only
+  when the next byte arrives, so no empty last part. Streams over 10,000 parts (78 GiB) fail with
+  an `S3ClientException`; files size their parts from their length (max(8 MiB,
+  ⌈size / 10,000⌉)). Over plain HTTP, parts are hashed incrementally as they arrive.
+- **Failures** abort the multipart upload and fail with the original cause (a failed abort
+  attached as suppressed). **Closing the client aborts streamed uploads in progress**, moved here
+  from Phase 5. `S3ServiceException` now keeps suppressed exceptions (still no stack trace), so a
+  failed abort isn't lost when the server reported the original failure.
+- **Steps** (each diff first, verified, committed by the owner): (4a) the pipeline,
+  `putObject(ReadStream)`, abort on close, stub, fake-stream and context tests; (4b) `putFile`
+  (open first, close always, part size from the file size); (4c) integration in the shared
+  suites (every backend) and the docs, including the memory note (about 16 MiB per concurrent
+  streamed upload).
+
 ### Phase 3 — step 3.6 findings (Silo `RELEASE.2026-11-12T00-00-00Z`, verified 2026-11-22)
 - **ListMultipartUploads:** without a prefix, Silo lists every open upload, but it ignores
   `max-uploads` and `key-marker` (everything in one response, `IsTruncated=false`), so paging is
@@ -839,7 +860,8 @@ the concrete steps.
   (`src/main/asciidoc/index.adoc`) and the "under active development" WARNING from `README.adoc`.
 - [ ] Gate 3: a "Running in Kubernetes" section in `README.adoc`: memory limits and why large
   objects must be streamed, pool sizing, closing the client on graceful shutdown, and the
-  presigner's public vs internal endpoint.
+  presigner's public vs internal endpoint. Buffer memory is up to about 16 MiB per concurrent
+  streamed upload (two 8 MiB parts): size pod memory for the expected concurrency.
 - [ ] Gate 3: a migration note from `object-storage-client` 0.4.x: new coordinates and package;
   the old API is replaced, not migrated.
 - [ ] After the GitHub rename to `vertx-s3-client`: point the README's CI badge and links at the

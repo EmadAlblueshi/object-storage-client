@@ -294,6 +294,58 @@ abstract class S3ClientContextTestBase {
       })));
   }
 
+  /**
+   * Streamed uploads from an {@code AsyncFile} opened outside the caller, so its events arrive on
+   * another context: a small one (a single PutObject) and one just over a part (multipart; over
+   * Silo's plain HTTP each part's SHA-256 is computed as it streams in and verified by Silo).
+   */
+  @Test
+  void streamedUploadsCompleteOnCallerContext(VertxTestContext testContext) {
+    byte[] small = new byte[1024];
+    byte[] large = new byte[8 * 1024 * 1024 + 1];
+    new java.util.Random(7).nextBytes(small);
+    new java.util.Random(8).nextBytes(large);
+    String smallKey = "streamed-small-" + kind();
+    String largeKey = "streamed-large-" + kind();
+    openTemp(small)
+      .compose(file -> caller.assertCompletesOnCallerContext(ctx -> client.putObject(objectBucket, smallKey, file)))
+      .compose(etag -> openTemp(large))
+      .compose(file -> caller.assertCompletesOnCallerContext(ctx -> client.putObject(objectBucket, largeKey, file,
+        new S3PutObjectOptions().setContentType("video/mp4"))))
+      .compose(etag -> {
+        testContext.verify(() -> assertTrue(etag.endsWith("-2\""), etag));
+        return client.getObject(objectBucket, smallKey);
+      })
+      .compose(body -> {
+        testContext.verify(() -> assertArrayEquals(small, body.getBytes()));
+        return client.headObject(objectBucket, largeKey);
+      })
+      .onComplete(testContext.succeeding(head -> testContext.verify(() -> {
+        assertEquals(large.length, head.getContentLength());
+        assertEquals("video/mp4", head.getContentType());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void streamedUploadFailureCompletesOnCallerContext(VertxTestContext testContext) {
+    String missing = "ctx-missing-" + UUID.randomUUID().toString().substring(0, 8);
+    openTemp(new byte[10])
+      .compose(file -> caller.assertCompletesOnCallerContext(ctx -> client.putObject(missing, "k", file)))
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals("NoSuchBucket", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  /** A temporary file with {@code content}, opened for reading: a real stream owned by another context. */
+  private Future<io.vertx.core.file.AsyncFile> openTemp(byte[] content) {
+    return vertx.fileSystem().createTempFile("vertx-s3-ctx-", ".bin")
+      .compose(path -> vertx.fileSystem().writeFile(path, Buffer.buffer(content))
+        .compose(v -> vertx.fileSystem().open(path, new io.vertx.core.file.OpenOptions().setRead(true)
+          .setDeleteOnClose(true))));
+  }
+
   @Test
   void closeCompletesOnCallerContext(VertxTestContext testContext) {
     caller.assertCompletesOnCallerContext(ctx -> S3Client.create(vertx, options(backend)).close())

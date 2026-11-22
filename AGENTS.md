@@ -246,6 +246,18 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   `404 NoSuchUpload` is passed through. `putObject` from a stream or file (Phase 4) reuses these
   operations internally (`impl.MultipartRequests`): abort on every failure path; close every
   opened `AsyncFile`; an empty or small body uses a single PutObject.
+- Streamed uploads (`putObject(ReadStream)`, `impl.StreamingUpload`; owner decisions,
+  2026-11-22): the source is paused synchronously, before any async step or argument check, and
+  stays paused (unread) if the upload doesn't start. Its events are handled on the caller's
+  context (handed over in order when the source runs elsewhere). Fixed 8 MiB parts
+  (`S3ClientImpl.STREAM_PART_SIZE`); a full part is shipped only when the next byte or the end
+  arrives, so a stream within one part is one PutObject and the last part is never empty. One part
+  uploads while the next fills; the source is paused while a full part waits, so at most about
+  16 MiB is buffered per upload. Over plain HTTP each part is hashed incrementally as its chunks
+  arrive. A stream over 10,000 parts (78 GiB) fails with an `S3ClientException`. Every failure
+  (source, part, completion, limit, client close) lets an in-flight request settle, aborts the
+  multipart upload and fails with the original cause; a failed abort is attached as suppressed.
+  Closing the client aborts the streamed uploads in progress before the transport closes.
 - Large objects are never buffered in memory. `getObject` (Buffer) is for small objects only and
   is size-capped: it fails with an `S3ClientException` pointing to `getObjectStream` instead of
   buffering a body over the cap. `getObjectStream` streams the body with backpressure.
@@ -287,8 +299,9 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   (HTTP status, S3 code, request ids, details; bodiless and non-XML responses included) and
   `S3ClientException` for everything else (connection, TLS, unreadable response, invalid argument,
   closed client). Redirects are never followed. `S3Exception` extends `VertxException`;
-  `S3ServiceException` carries no stack trace (as Vert.x's server-reported errors), while
-  `S3ClientException` keeps it.
+  `S3ServiceException` carries no stack trace (as Vert.x's server-reported errors) but keeps
+  suppressed exceptions (it overrides `fillInStackTrace()` rather than using Vert.x's
+  `noStackTrace` flag, which also drops them), while `S3ClientException` keeps both.
 
 ## Presigned URLs
 - A synchronous `@VertxGen` API returning the URL as a `String`, with no `Future`. It's usable

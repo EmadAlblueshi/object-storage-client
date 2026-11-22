@@ -119,6 +119,9 @@ final class Transport {
 
   /** The {@code x-amz-content-sha256} value for {@code request}. Package-private for tests. */
   Future<String> payloadHash(ContextSupport.Caller caller, S3Request request) {
+    if (request.payloadHash != null) {
+      return caller.succeeded(request.payloadHash);
+    }
     Buffer body = request.body;
     switch (PayloadMode.decide(config.tls, body == null ? -1 : body.length())) {
       case EMPTY:

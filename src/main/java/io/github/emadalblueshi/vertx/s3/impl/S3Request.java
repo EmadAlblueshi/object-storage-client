@@ -22,9 +22,19 @@ final class S3Request {
   final List<Map.Entry<String, String>> headers;
   /** A buffered body, or {@code null}. */
   final Buffer body;
+  /**
+   * The body's SHA-256 (hex), already computed (e.g. incrementally, as a streamed part arrived),
+   * or {@code null} to let the transport decide by the payload-signing policy.
+   */
+  final String payloadHash;
 
   S3Request(HttpMethod method, String bucket, String key, List<Map.Entry<String, String>> query,
             List<Map.Entry<String, String>> headers, Buffer body) {
+    this(method, bucket, key, query, headers, body, null);
+  }
+
+  private S3Request(HttpMethod method, String bucket, String key, List<Map.Entry<String, String>> query,
+                    List<Map.Entry<String, String>> headers, Buffer body, String payloadHash) {
     this.method = Objects.requireNonNull(method, "method");
     if (key != null && bucket == null) {
       throw new IllegalArgumentException("a key needs a bucket");
@@ -34,6 +44,12 @@ final class S3Request {
     this.query = List.copyOf(query);
     this.headers = List.copyOf(headers);
     this.body = body;
+    this.payloadHash = payloadHash;
+  }
+
+  /** This request with the body's SHA-256 already computed ({@code null}: let the transport decide). */
+  S3Request withPayloadHash(String sha256Hex) {
+    return new S3Request(method, bucket, key, query, headers, body, sha256Hex);
   }
 
   /** A service-level request without query, headers or body. */

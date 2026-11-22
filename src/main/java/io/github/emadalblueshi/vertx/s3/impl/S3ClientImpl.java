@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import io.github.emadalblueshi.vertx.s3.S3Client;
@@ -25,6 +27,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.streams.ReadStream;
 
 /**
  * The {@link S3Client} implementation.
@@ -40,6 +43,8 @@ public final class S3ClientImpl implements S3Client {
 
   /** AWS rejects a {@code LocationConstraint} for this region: it is the default. */
   private static final String US_EAST_1 = "us-east-1";
+  /** The part size of streamed uploads, whose length isn't known: 10,000 parts make 78 GiB. */
+  static final int STREAM_PART_SIZE = 8 * 1024 * 1024;
 
   private final Vertx vertx;
   private final ClientConfig config;
@@ -49,6 +54,8 @@ public final class S3ClientImpl implements S3Client {
   private final ContextSupport.Registration registration;
   /** The shutdown Future, set by the first close (explicit or by the owner); non-null means closed. */
   private volatile Future<Void> shutdown;
+  /** Streamed uploads in progress, aborted when the client closes. Guarded by {@code this} for additions. */
+  private final Set<StreamingUpload> uploads = ConcurrentHashMap.newKeySet();
 
   public S3ClientImpl(Vertx vertx, S3ClientOptions options) {
     this.vertx = Objects.requireNonNull(vertx, "vertx");
@@ -143,9 +150,51 @@ public final class S3ClientImpl implements S3Client {
       }
     }
     List<Map.Entry<String, String>> putHeaders = headers;
-    return call(caller, problem, () -> transport.execute(caller,
-        S3Request.object(HttpMethod.PUT, bucket, key, putHeaders, body)))
-      .map(response -> response.headers.get(HttpHeaders.ETAG));
+    return call(caller, problem, () -> putBuffered(caller, bucket, key, putHeaders, body, null));
+  }
+
+  @Override
+  public Future<String> putObject(String bucket, String key, ReadStream<Buffer> body) {
+    return putObject(bucket, key, body, null);
+  }
+
+  @Override
+  public Future<String> putObject(String bucket, String key, ReadStream<Buffer> body, S3PutObjectOptions options) {
+    return putObject(bucket, key, body, options, STREAM_PART_SIZE, MultipartRequests.MAX_PARTS);
+  }
+
+  /** {@link #putObject(String, String, ReadStream, S3PutObjectOptions)} with another part size and limit. For tests. */
+  Future<String> putObject(String bucket, String key, ReadStream<Buffer> body, S3PutObjectOptions options, int partSize,
+                           int maxParts) {
+    ContextSupport.Caller caller = ContextSupport.capture(vertx);
+    if (body != null) {
+      // Before any async step, so no data is lost; it stays paused if the upload doesn't start
+      body.pause();
+    }
+    String problem = objectProblem(bucket, key);
+    List<Map.Entry<String, String>> headers = null;
+    if (problem == null && body == null) {
+      problem = "The body is required";
+    }
+    if (problem == null) {
+      try {
+        headers = ObjectRequests.putHeaders(options);
+      } catch (IllegalArgumentException e) {
+        problem = e.getMessage();
+      }
+    }
+    List<Map.Entry<String, String>> putHeaders = headers;
+    return call(caller, problem, () -> {
+      StreamingUpload upload = new StreamingUpload(this, caller, bucket, key, putHeaders, body, partSize, maxParts,
+        !config.tls);
+      synchronized (this) {
+        if (shutdown != null) {
+          return caller.failed(new S3ClientException("The S3 client is closed", null));
+        }
+        uploads.add(upload);
+      }
+      return upload.start();
+    });
   }
 
   @Override
@@ -205,15 +254,7 @@ public final class S3ClientImpl implements S3Client {
       }
     }
     List<Map.Entry<String, String>> createHeaders = headers;
-    return call(caller, problem, () -> transport.execute(caller,
-        new S3Request(HttpMethod.POST, bucket, key, List.of(Map.entry("uploads", "")), createHeaders, null)))
-      .compose(response -> {
-        try {
-          return caller.succeeded(ResponseParsers.createMultipartUpload(response.body));
-        } catch (XmlParseException e) {
-          return caller.failed(new S3ClientException("Invalid CreateMultipartUpload response: " + e.getMessage(), e));
-        }
-      });
+    return call(caller, problem, () -> createUpload(caller, bucket, key, createHeaders));
   }
 
   @Override
@@ -229,25 +270,13 @@ public final class S3ClientImpl implements S3Client {
       }
     }
     Buffer completeBody = body;
-    return call(caller, problem, () -> transport.execute(caller,
-        new S3Request(HttpMethod.POST, bucket, key, List.of(Map.entry("uploadId", uploadId)), List.of(), completeBody)))
-      .compose(response -> {
-        try {
-          return caller.succeeded(ResponseParsers.completeMultipartUpload(response));
-        } catch (S3ServiceException e) {
-          return caller.failed(e);
-        } catch (XmlParseException e) {
-          return caller.failed(new S3ClientException("Invalid CompleteMultipartUpload response: " + e.getMessage(), e));
-        }
-      });
+    return call(caller, problem, () -> sendComplete(caller, bucket, key, uploadId, completeBody));
   }
 
   @Override
   public Future<Void> abortMultipartUpload(String bucket, String key, String uploadId) {
     ContextSupport.Caller caller = ContextSupport.capture(vertx);
-    return call(caller, uploadProblem(bucket, key, uploadId), () -> transport.execute(caller,
-        new S3Request(HttpMethod.DELETE, bucket, key, List.of(Map.entry("uploadId", uploadId)), List.of(), null)))
-      .mapEmpty();
+    return call(caller, uploadProblem(bucket, key, uploadId), () -> abortUpload(caller, bucket, key, uploadId));
   }
 
   @Override
@@ -354,6 +383,79 @@ public final class S3ClientImpl implements S3Client {
       });
   }
 
+  // --- Requests without argument checks, for the public operations and for streamed uploads ---
+
+  /** PutObject with a buffered body; {@code sha256Hex} if already computed, else {@code null}. */
+  Future<String> putBuffered(ContextSupport.Caller caller, String bucket, String key,
+                             List<Map.Entry<String, String>> headers, Buffer body, String sha256Hex) {
+    return transport.execute(caller, S3Request.object(HttpMethod.PUT, bucket, key, headers, body).withPayloadHash(sha256Hex))
+      .map(response -> response.headers.get(HttpHeaders.ETAG));
+  }
+
+  Future<String> createUpload(ContextSupport.Caller caller, String bucket, String key,
+                              List<Map.Entry<String, String>> headers) {
+    return transport.execute(caller,
+        new S3Request(HttpMethod.POST, bucket, key, List.of(Map.entry("uploads", "")), headers, null))
+      .compose(response -> {
+        try {
+          return caller.succeeded(ResponseParsers.createMultipartUpload(response.body));
+        } catch (XmlParseException e) {
+          return caller.failed(new S3ClientException("Invalid CreateMultipartUpload response: " + e.getMessage(), e));
+        }
+      });
+  }
+
+  /** UploadPart, which the client only uses for streamed uploads; the Future gives the part's ETag. */
+  Future<String> uploadPart(ContextSupport.Caller caller, String bucket, String key, String uploadId, int partNumber,
+                            Buffer body, String sha256Hex) {
+    return transport.execute(caller, new S3Request(HttpMethod.PUT, bucket, key,
+          List.of(Map.entry("partNumber", Integer.toString(partNumber)), Map.entry("uploadId", uploadId)), List.of(), body)
+        .withPayloadHash(sha256Hex))
+      .compose(response -> {
+        String etag = response.headers.get(HttpHeaders.ETAG);
+        return etag == null || etag.isEmpty()
+          ? caller.failed(new S3ClientException("UploadPart response without an ETag (part " + partNumber + ")", null))
+          : caller.succeeded(etag);
+      });
+  }
+
+  Future<String> completeUpload(ContextSupport.Caller caller, String bucket, String key, String uploadId,
+                                List<S3CompletedPart> parts) {
+    Buffer body;
+    try {
+      body = MultipartRequests.completeBody(parts);
+    } catch (IllegalArgumentException e) {
+      return caller.failed(new S3ClientException(e.getMessage(), e));
+    }
+    return sendComplete(caller, bucket, key, uploadId, body);
+  }
+
+  private Future<String> sendComplete(ContextSupport.Caller caller, String bucket, String key, String uploadId,
+                                      Buffer body) {
+    return transport.execute(caller,
+        new S3Request(HttpMethod.POST, bucket, key, List.of(Map.entry("uploadId", uploadId)), List.of(), body))
+      .compose(response -> {
+        try {
+          return caller.succeeded(ResponseParsers.completeMultipartUpload(response));
+        } catch (S3ServiceException e) {
+          return caller.failed(e);
+        } catch (XmlParseException e) {
+          return caller.failed(new S3ClientException("Invalid CompleteMultipartUpload response: " + e.getMessage(), e));
+        }
+      });
+  }
+
+  Future<Void> abortUpload(ContextSupport.Caller caller, String bucket, String key, String uploadId) {
+    return transport.execute(caller,
+        new S3Request(HttpMethod.DELETE, bucket, key, List.of(Map.entry("uploadId", uploadId)), List.of(), null))
+      .mapEmpty();
+  }
+
+  /** A streamed upload that finished (or failed) no longer needs aborting on close. */
+  void unregister(StreamingUpload upload) {
+    uploads.remove(upload);
+  }
+
   @Override
   public Future<Void> close() {
     ContextSupport.Caller caller = ContextSupport.capture(vertx);
@@ -420,7 +522,10 @@ public final class S3ClientImpl implements S3Client {
     return caller.bind(operation.get());
   }
 
-  /** Closes the transport exactly once; every caller gets the same shutdown Future. */
+  /**
+   * Aborts the streamed uploads in progress, one after the other, then closes the transport;
+   * exactly once, and every caller gets the same shutdown Future.
+   */
   private Future<Void> shutdown() {
     Future<Void> current = shutdown;
     if (current != null) {
@@ -428,7 +533,11 @@ public final class S3ClientImpl implements S3Client {
     }
     synchronized (this) {
       if (shutdown == null) {
-        shutdown = transport.close();
+        Future<Void> aborted = null;
+        for (StreamingUpload upload : List.copyOf(uploads)) {
+          aborted = aborted == null ? upload.abortOnClose() : aborted.transform(ar -> upload.abortOnClose());
+        }
+        shutdown = aborted == null ? transport.close() : aborted.transform(ar -> transport.close());
       }
       return shutdown;
     }

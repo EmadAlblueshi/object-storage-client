@@ -144,5 +144,18 @@ final class ContextSupport {
     void runOnContext(Runnable action) {
       context.runOnContext(v -> action.run());
     }
+
+    /**
+     * Runs {@code action} on the caller's context: now when already running on it, otherwise
+     * dispatched to it. Events from one thread keep their order either way, e.g. the events of a
+     * user stream owned by another context.
+     */
+    void execute(Runnable action) {
+      if (context.isRunningOnContext()) {
+        action.run();
+      } else {
+        context.runOnContext(v -> action.run());
+      }
+    }
   }
 }

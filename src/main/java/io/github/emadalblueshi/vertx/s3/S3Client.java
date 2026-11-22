@@ -9,6 +9,7 @@ import io.vertx.codegen.annotations.VertxGen;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.streams.ReadStream;
 
 /**
  * Asynchronous client for Amazon S3 and S3-compatible storage.
@@ -138,6 +139,38 @@ public interface S3Client {
    * @see #putObject(String, String, Buffer)
    */
   Future<@Nullable String> putObject(String bucket, String key, Buffer body, @Nullable S3PutObjectOptions options);
+
+  /**
+   * Uploads an object from a stream of unknown length, e.g. an {@code HttpServerRequest} or an
+   * {@code AsyncFile}, with real backpressure: the stream is paused at once, before any request,
+   * and read only as fast as the upload proceeds.
+   * <p>
+   * A stream that ends within the first 8 MiB is sent as one PutObject; a longer one as a multipart
+   * upload of 8 MiB parts, one uploading while the next one is read, so at most about 16 MiB is
+   * buffered per upload. A stream is limited to 10,000 parts (78 GiB). If the stream fails, a part
+   * or the completion fails, or the client is closed, the multipart upload is aborted and the
+   * Future fails. With invalid arguments the stream isn't read and stays paused.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param body the content; the upload sets its handlers
+   * @return the object's ETag as sent by the server, or {@code null} if a single PutObject's
+   *     response had none
+   */
+  Future<@Nullable String> putObject(String bucket, String key, ReadStream<Buffer> body);
+
+  /**
+   * As {@link #putObject(String, String, ReadStream)}, with a content type and user metadata.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param body the content; the upload sets its handlers
+   * @param options the content type and user metadata; {@code null} for none
+   * @return the object's ETag as sent by the server, or {@code null} if a single PutObject's
+   *     response had none
+   */
+  Future<@Nullable String> putObject(String bucket, String key, ReadStream<Buffer> body,
+                                     @Nullable S3PutObjectOptions options);
 
   /**
    * Downloads a <strong>small</strong> object into memory (GetObject).

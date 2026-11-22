@@ -24,6 +24,16 @@ class S3ExceptionTest {
     assertEquals(404, e.getStatusCode());
   }
 
+  /** A failed abort after a failed streamed upload is attached to the server's error. */
+  @Test
+  void serviceExceptionKeepsSuppressedExceptions() {
+    S3ServiceException e = new S3ServiceException("InternalError", 500, "InternalError", null, null, null, null);
+    S3ClientException abort = new S3ClientException("abort failed", null);
+    e.addSuppressed(abort);
+    assertEquals(1, e.getSuppressed().length);
+    assertEquals(abort, e.getSuppressed()[0]);
+  }
+
   @Test
   void clientExceptionIsAVertxExceptionWithStackTraceAndCause() {
     IllegalStateException cause = new IllegalStateException("boom");

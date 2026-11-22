@@ -38,13 +38,23 @@ public class S3ServiceException extends S3Exception {
    */
   public S3ServiceException(String message, int statusCode, String errorCode, String requestId, String hostId,
                             String resource, Map<String, String> details) {
-    super(message, null, true);
+    super(message, null);
     this.statusCode = statusCode;
     this.errorCode = errorCode;
     this.requestId = requestId;
     this.hostId = hostId;
     this.resource = resource;
     this.details = details == null ? Collections.emptyMap() : Collections.unmodifiableMap(new LinkedHashMap<>(details));
+  }
+
+  /**
+   * Captures no stack trace: the error was reported by the server, as with Vert.x's own
+   * server-reported errors. Unlike Vert.x's {@code noStackTrace} flag, this keeps suppressed
+   * exceptions, e.g. a failed abort after a failed streamed upload.
+   */
+  @Override
+  public synchronized Throwable fillInStackTrace() {
+    return this;
   }
 
   /** The HTTP status code. */
