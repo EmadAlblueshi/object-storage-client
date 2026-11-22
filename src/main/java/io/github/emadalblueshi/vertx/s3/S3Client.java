@@ -208,8 +208,8 @@ public interface S3Client {
 
   /**
    * Starts a multipart upload (CreateMultipartUpload), for a large object whose parts are then
-   * uploaded separately, typically by a browser or mobile app through presigned part URLs (see
-   * {@link S3Presigner}), and in parallel or resumed later.
+   * uploaded separately, typically by a browser or mobile app through
+   * {@link S3Presigner#presignUploadPart presigned part URLs}, and in parallel or resumed later.
    * <p>
    * The options are those of {@link #putObject(String, String, Buffer, S3PutObjectOptions)}: the
    * content type and user metadata are stored with the completed object, and can't be changed by

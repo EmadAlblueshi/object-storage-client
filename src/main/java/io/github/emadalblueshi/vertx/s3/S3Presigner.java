@@ -24,7 +24,8 @@ import io.vertx.codegen.annotations.VertxGen;
  * stores. With {@link S3PresignPutOptions}, the uploader must send the {@code Content-Type} and
  * {@code Content-MD5} they set; with {@link S3PresignGetOptions}, the URL overrides response
  * headers of the download. The methods taking options return an {@link S3PresignedRequest}: the
- * URL, the method and the headers to send.
+ * URL, the method and the headers to send. {@link #presignUploadPart} presigns the parts of a
+ * multipart upload, for large files uploaded in parallel and resumably.
  * <p>
  * The expiry is at most 7 days and a whole number of seconds. Invalid arguments throw
  * {@link IllegalArgumentException}, {@code null} arguments {@link NullPointerException}; the
@@ -124,4 +125,54 @@ public interface S3Presigner {
    */
   @GenIgnore(GenIgnore.PERMITTED_TYPE)
   S3PresignedRequest presignGet(String bucket, String key, Duration expiry, @Nullable S3PresignGetOptions options);
+
+  /**
+   * A URL to upload one part of a multipart upload ({@code PUT}), created with
+   * {@link S3Client#createMultipartUpload}. The upload of a part returns its {@code ETag} in a
+   * response header, which {@link S3Client#completeMultipartUpload} needs. Parts can be uploaded in
+   * parallel, retried, and resumed later with fresh URLs. S3's rules: part numbers 1 to 10,000; each
+   * part 5 MiB to 5 GiB, except the last.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param uploadId the upload id
+   * @param partNumber the part number, 1 to 10,000
+   * @param expiry how long the URL is valid, in {@code unit}: positive, a whole number of
+   *     seconds, at most 7 days
+   * @param unit the unit of {@code expiry}
+   * @return the URL
+   */
+  String presignUploadPart(String bucket, String key, String uploadId, int partNumber, long expiry, TimeUnit unit);
+
+  /**
+   * As {@link #presignUploadPart(String, String, String, int, long, TimeUnit)}, with signed headers
+   * the part upload must send.
+   *
+   * @param bucket the bucket name
+   * @param key the object key
+   * @param uploadId the upload id
+   * @param partNumber the part number, 1 to 10,000
+   * @param expiry how long the URL is valid, in {@code unit}: positive, a whole number of
+   *     seconds, at most 7 days
+   * @param unit the unit of {@code expiry}
+   * @param options the headers to sign, or {@code null} for none
+   * @return the URL, the method and the headers the part upload must send
+   */
+  S3PresignedRequest presignUploadPart(String bucket, String key, String uploadId, int partNumber, long expiry,
+                                       TimeUnit unit, @Nullable S3PresignUploadPartOptions options);
+
+  /**
+   * As {@link #presignUploadPart(String, String, String, int, long, TimeUnit)}, with the expiry as a
+   * {@link Duration}.
+   */
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  String presignUploadPart(String bucket, String key, String uploadId, int partNumber, Duration expiry);
+
+  /**
+   * As {@link #presignUploadPart(String, String, String, int, long, TimeUnit, S3PresignUploadPartOptions)},
+   * with the expiry as a {@link Duration}.
+   */
+  @GenIgnore(GenIgnore.PERMITTED_TYPE)
+  S3PresignedRequest presignUploadPart(String bucket, String key, String uploadId, int partNumber, Duration expiry,
+                                       @Nullable S3PresignUploadPartOptions options);
 }

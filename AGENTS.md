@@ -312,6 +312,11 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   `S3PresignGetOptions.attachment`/`inline` (RFC 6266/8187). Invalid values throw
   `IllegalArgumentException`. Don't add other presign options unless the owner asks (the deferred
   list is in the scope section).
+- Multipart parts (owner decision, 2026-11-22, step 3.6): `presignUploadPart(bucket, key,
+  uploadId, partNumber, expiry, unit)` plus the Java-only `Duration` overload, and overloads with
+  `S3PresignUploadPartOptions` (`contentMd5` only: a part has no content type of its own)
+  returning `S3PresignedRequest`. The part number and upload id are signed query parameters;
+  part numbers 1 to 10,000 and a non-empty upload id, else `IllegalArgumentException`.
 - Time comes from the system UTC clock. A `java.time.Clock` is only an impl test hook (a
   package-private constructor), never part of the public API.
 - Presigned POST (browser form policy) is out of scope.

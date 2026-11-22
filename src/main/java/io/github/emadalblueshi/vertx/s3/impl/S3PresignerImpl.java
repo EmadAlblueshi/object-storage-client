@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3PresignGetOptions;
 import io.github.emadalblueshi.vertx.s3.S3PresignPutOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignUploadPartOptions;
 import io.github.emadalblueshi.vertx.s3.S3PresignedRequest;
 import io.github.emadalblueshi.vertx.s3.S3Presigner;
 
@@ -81,8 +82,49 @@ public final class S3PresignerImpl implements S3Presigner {
     return presign("GET", bucket, key, seconds(expiry), responseOverrides(options), List.of());
   }
 
+  @Override
+  public String presignUploadPart(String bucket, String key, String uploadId, int partNumber, long expiry, TimeUnit unit) {
+    return uploadPart(bucket, key, uploadId, partNumber, seconds(expiry, unit), null).getUrl();
+  }
+
+  @Override
+  public S3PresignedRequest presignUploadPart(String bucket, String key, String uploadId, int partNumber, long expiry,
+                                              TimeUnit unit, S3PresignUploadPartOptions options) {
+    return uploadPart(bucket, key, uploadId, partNumber, seconds(expiry, unit), options);
+  }
+
+  @Override
+  public String presignUploadPart(String bucket, String key, String uploadId, int partNumber, Duration expiry) {
+    return uploadPart(bucket, key, uploadId, partNumber, seconds(expiry), null).getUrl();
+  }
+
+  @Override
+  public S3PresignedRequest presignUploadPart(String bucket, String key, String uploadId, int partNumber, Duration expiry,
+                                              S3PresignUploadPartOptions options) {
+    return uploadPart(bucket, key, uploadId, partNumber, seconds(expiry), options);
+  }
+
+  /** UploadPart: a PUT with the part number and upload id as signed query parameters. */
+  private S3PresignedRequest uploadPart(String bucket, String key, String uploadId, int partNumber, long expirySeconds,
+                                        S3PresignUploadPartOptions options) {
+    Objects.requireNonNull(uploadId, "uploadId");
+    String problem = MultipartRequests.uploadIdProblem(uploadId);
+    if (problem == null) {
+      problem = MultipartRequests.partNumberProblem(partNumber);
+    }
+    if (problem != null) {
+      throw new IllegalArgumentException(problem);
+    }
+    List<Map.Entry<String, String>> headers = new ArrayList<>();
+    if (options != null && options.getContentMd5() != null) {
+      headers.add(Map.entry("Content-MD5", contentMd5(options.getContentMd5())));
+    }
+    return presign("PUT", bucket, key, expirySeconds,
+      List.of(Map.entry("partNumber", Integer.toString(partNumber)), Map.entry("uploadId", uploadId)), headers);
+  }
+
   /**
-   * @param query signed query parameters (the {@code response-*} overrides)
+   * @param query signed query parameters (the {@code response-*} overrides, or the part number and upload id)
    * @param headers signed headers the request must send
    */
   private S3PresignedRequest presign(String method, String bucket, String key, long expirySeconds,

@@ -25,6 +25,7 @@ import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.github.emadalblueshi.vertx.s3.S3PresignGetOptions;
 import io.github.emadalblueshi.vertx.s3.S3PresignPutOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignUploadPartOptions;
 import io.github.emadalblueshi.vertx.s3.S3PresignedRequest;
 import io.github.emadalblueshi.vertx.s3.S3Presigner;
 import io.vertx.core.Vertx;
@@ -290,6 +291,64 @@ class S3PresignerTest {
     // the bucket, key and expiry rules still apply
     assertRejected(() -> presigner.presignPut("B", "k", 60, TimeUnit.SECONDS, new S3PresignPutOptions()), "");
     assertRejected(() -> presigner.presignGet("b-1", "k", 0, TimeUnit.SECONDS, new S3PresignGetOptions()), "positive");
+  }
+
+  // --- multipart upload parts -------------------------------------------------------------------------------
+
+  /** The part number and upload id are signed query parameters: the URL carries exactly what the signer signed. */
+  @Test
+  void uploadPartUrlSignsThePartNumberAndTheUploadId() {
+    S3PresignedRequest request = presigner(local(), NOW).presignUploadPart("my-bucket", "videos/a b.mp4", "up/1+=", 3,
+      600, TimeUnit.SECONDS, null);
+    assertEquals("PUT", request.getMethod());
+    assertEquals(Map.of(), request.getHeaders());
+    List<Map.Entry<String, String>> query = List.of(Map.entry("partNumber", "3"), Map.entry("uploadId", "up/1+="));
+    S3SignatureV4.Presigned signed = new S3SignatureV4("test-west-1", NOW).presign(
+      new S3SignatureV4.Request("PUT", "localhost:9000", "/my-bucket/videos/a b.mp4", query, List.of(),
+        S3SignatureV4.UNSIGNED_PAYLOAD), 600, "AKIDEXAMPLE", "secret", "token");
+    assertEquals("http://localhost:9000/my-bucket/videos/a%20b.mp4?" + signed.query, request.getUrl());
+    assertTrue(request.getUrl().contains("&X-Amz-SignedHeaders=host&partNumber=3&uploadId=up%2F1%2B%3D&X-Amz-Signature="),
+      request.getUrl());
+  }
+
+  @Test
+  void uploadPartOptionsSignTheContentMd5() {
+    S3PresignedRequest request = presigner(local(), NOW).presignUploadPart("my-bucket", "k", "up-1", 1, 600,
+      TimeUnit.SECONDS, new S3PresignUploadPartOptions().setContentMd5(MD5));
+    assertEquals(Map.of("Content-MD5", MD5), request.getHeaders());
+    assertTrue(request.getUrl().contains("&X-Amz-SignedHeaders=content-md5%3Bhost&"), request.getUrl());
+  }
+
+  @Test
+  void uploadPartOverloadsAgree() {
+    S3Presigner presigner = presigner(local(), NOW);
+    String url = presigner.presignUploadPart("b-1", "k", "up-1", 10_000, 15, TimeUnit.MINUTES);
+    assertEquals(url, presigner.presignUploadPart("b-1", "k", "up-1", 10_000, Duration.ofMinutes(15)));
+    assertEquals(url, presigner.presignUploadPart("b-1", "k", "up-1", 10_000, 15, TimeUnit.MINUTES, null).getUrl());
+    assertEquals(url, presigner.presignUploadPart("b-1", "k", "up-1", 10_000, 15, TimeUnit.MINUTES,
+      new S3PresignUploadPartOptions()).getUrl());
+    S3PresignUploadPartOptions md5 = new S3PresignUploadPartOptions().setContentMd5(MD5);
+    assertEquals(presigner.presignUploadPart("b-1", "k", "up-1", 2, 15, TimeUnit.MINUTES, md5).toJson(),
+      presigner.presignUploadPart("b-1", "k", "up-1", 2, Duration.ofMinutes(15), md5).toJson());
+  }
+
+  @Test
+  void invalidUploadPartArgumentsAreRejected() {
+    S3Presigner presigner = presigner(local(), NOW);
+    for (int partNumber : new int[] {0, -1, 10_001}) {
+      assertRejected(() -> presigner.presignUploadPart("b-1", "k", "up-1", partNumber, 60, TimeUnit.SECONDS),
+        "The part number must be 1 to 10000: " + partNumber);
+    }
+    assertRejected(() -> presigner.presignUploadPart("b-1", "k", "", 1, 60, TimeUnit.SECONDS), "The upload id is required");
+    assertRejected(() -> presigner.presignUploadPart("b-1", "k", "bad\uD800", 1, 60, TimeUnit.SECONDS), "Unicode");
+    assertThrows(NullPointerException.class, () -> presigner.presignUploadPart("b-1", "k", null, 1, 60, TimeUnit.SECONDS));
+    assertRejected(() -> presigner.presignUploadPart("b-1", "k", "up-1", 1, 60, TimeUnit.SECONDS,
+      new S3PresignUploadPartOptions().setContentMd5("1B2M2Y8AsgTpgAmY7PhCfg")), "Content-MD5");
+    // the bucket, key and expiry rules still apply
+    assertRejected(() -> presigner.presignUploadPart("B", "k", "up-1", 1, 60, TimeUnit.SECONDS), "");
+    assertRejected(() -> presigner.presignUploadPart("b-1", "", "up-1", 1, 60, TimeUnit.SECONDS), "key");
+    assertRejected(() -> presigner.presignUploadPart("b-1", "k", "up-1", 1, 8, TimeUnit.DAYS), "at most 7 days");
+    assertThrows(NullPointerException.class, () -> presigner.presignUploadPart(null, "k", "up-1", 1, 60, TimeUnit.SECONDS));
   }
 
   // --- helpers --------------------------------------------------------------------------------------------

@@ -40,6 +40,16 @@ class S3PresignDataObjectsTest {
   }
 
   @Test
+  void uploadPartOptionsCopyAndJson() {
+    S3PresignUploadPartOptions options = new S3PresignUploadPartOptions().setContentMd5("1B2M2Y8AsgTpgAmY7PhCfg==");
+    JsonObject json = options.toJson();
+    assertEquals(new JsonObject().put("contentMd5", "1B2M2Y8AsgTpgAmY7PhCfg=="), json);
+    assertEquals(json, new S3PresignUploadPartOptions(json).toJson());
+    assertEquals(json, new S3PresignUploadPartOptions(options).toJson());
+    assertNull(new S3PresignUploadPartOptions().getContentMd5());
+  }
+
+  @Test
   void presignedRequestCopyJsonAndToString() {
     Map<String, String> headers = new HashMap<>(Map.of("Content-Type", "image/jpeg"));
     S3PresignedRequest request = new S3PresignedRequest().setUrl("https://files.example.com/b/k?X-Amz-Signature=abc")
