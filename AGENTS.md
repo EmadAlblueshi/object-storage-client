@@ -389,6 +389,12 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - Small, focused commits, imperative subject (≤72 chars), body explains why.
 - Mark breaking API changes with `BREAKING:` in the commit body.
 - No `Co-Authored-By` or other trailers in commit messages.
+- The repository is public. Repo files and commit messages are library-focused only: nothing
+  about the owner's personal projects, applications, deployments or business. Owner decisions are
+  recorded as "owner decision (date)" with library-focused reasons.
+- Docs and javadoc never quote commit hashes from the `revamping` branch: they change if the
+  branch is rewritten. Name the commit by its subject instead. Hashes of commits on `master`
+  (e.g. `b7dc1f2`) are fine.
 
 ## Do / Don't for AI agents
 **Do**

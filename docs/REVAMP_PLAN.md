@@ -471,7 +471,7 @@ Steps 1 and 2 land as **one change**. Once web-client and Jackson are removed th
 - **Silo is the only container backend** (owner decision, 2026-11-20). Besides it, step 7 adds one opt-in, generic external backend profile driven by environment variables. Credentials are never committed.
 
 ### Phase 1 — additional concrete items
-- **Testcontainers 2.0.5** (the latest stable release; the owner already upgraded it in `14a9fd5`). The existing suite passes against Docker 29 with plain `mvn test`. Java 8 bytecode, so it works on the JDK 11 job.
+- **Testcontainers 2.0.5** (the latest stable release; the owner already upgraded it in "Upgrade Testcontainers to fix Docker 29 compatibility"). The existing suite passes against Docker 29 with plain `mvn test`. Java 8 bytecode, so it works on the JDK 11 job.
 - **JUnit:** import `junit-bom` **5.14.4** in `dependencyManagement` *before* `vertx-dependencies`. The Vert.x 5.2.3 BOM manages JUnit Jupiter 6.0.0, which is Java 17 bytecode and would break the JDK 11 job. vertx-junit5 5.2.3 (Java 11 bytecode) is built against JUnit 5.14.0.
 - **Pin Vert.x** to an exact version (5.2.3). The only runtime dependency is `vertx-core`. Remove `vertx-web-client` and Jackson (databind, dataformat-xml, jsr310). **Keep docgen**: `vertx-docgen-processor`/`-api` at the BOM-managed 0.9.9.
 - **Compiler:** `maven.compiler.release=11` for main and test. Codegen and docgen processors run via `annotationProcessorPaths`, replacing maven-processor-plugin. The processors are listed explicitly, because the docgen processor jar has no `META-INF/services` entry.
@@ -596,9 +596,9 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
 - The same commit updates AGENTS.md's payload-signing section and decision 4.
 
 ### GitHub issues (checked 2026-11-20)
-- #31 "Supports list buckets": implemented in step 4 (`8582fe1`). Closed by the step 8 commit message ("Closes #31").
+- #31 "Supports list buckets": implemented in step 4 ("Add S3Client lifecycle, transport, error mapping and ListBuckets"). Closed by the step 8 commit message ("Closes #31").
 - #32 "Supports list objects": implemented by step 8 (`listObjects`, ListObjectsV2). Closed by the step 8 commit message ("Closes #32").
-- #36 "Supports get object as stream": implemented by step 6 (`577f135`, `getObjectStream`), whose commit closed it.
+- #36 "Supports get object as stream": implemented by step 6 ("Add object operations: put, get (capped), getObjectStream, head, delete"), whose commit closed it.
 
 ### Phase 2 — step 8: ListObjectsV2 (2026-11-20)
 - **API:** one method, `listObjects(bucket, S3ListObjectsOptions)`, which returns one page as `S3ListObjectsResult`. `null` options means none.

@@ -10,10 +10,11 @@ official Vert.x client, with nothing AWS-SDK-flavoured. This audit is release ga
   `vert-x3/vertx-redis-client`, `eclipse-vertx/vertx-codegen` and `vert-x3/vertx-lang-kotlin`,
   plus `smallrye/smallrye-mutiny-vertx-bindings` 4.1.1 (built on Vert.x 5.2.3). File references
   below are relative to those repositories.
-- **Codegen claims were compiled, not assumed:** a copy of the library at `38c3f56` with
-  `@VertxGen` added, plus deliberately illegal probe methods.
-- **The UX program** (item 7) was written and compiled in four styles against the library at
-  `38c3f56`.
+- **Codegen claims were compiled, not assumed:** a copy of the library as audited (at the
+  commit "Replace deprecated addCloseHook with registerResource") with `@VertxGen` added, plus
+  deliberately illegal probe methods.
+- **The UX program** (item 7) was written and compiled in four styles against the library as
+  audited.
 
 ## Owner decisions (2026-11-21)
 Where a decision differs from the recommendation in the item below, the decision wins.
@@ -38,7 +39,7 @@ exceptions.
 - **Official:** every API interface is `@VertxGen`: `MailClient`, `Redis`, `RowStream`,
   `HttpClientResponse`. The codegen processor rejects any type outside the Vert.x vocabulary at
   compile time.
-- **Ours (at `38c3f56`):** nothing is `@VertxGen`.
+- **Ours (as audited):** nothing is `@VertxGen`.
 - **Prototype:** `@VertxGen` on `S3Client` and `S3ObjectStream` compiled with no other change.
   - A deliberately illegal probe method was rejected ("type java.time.Instant is not legal for
     use for a return type in code generation"), so the processor really checks, and our
