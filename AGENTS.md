@@ -11,7 +11,12 @@ plus a presigner. **Not** a clone of the AWS SDK.
 - `putObject` from a stream or file. Multipart is used internally, only when required, and is
   never exposed as a public multipart API.
 - ListObjectsV2.
-- `S3Presigner`: GET and PUT.
+- `S3Presigner`: GET and PUT. Optional `S3PresignPutOptions` (signed `Content-Type`,
+  `Content-MD5`) and `S3PresignGetOptions` (`Content-Type`, `Content-Disposition`, `Cache-Control`
+  response overrides) (owner decision D5, 2026-11-22). Deferred, non-breaking to add in 1.x:
+  `x-amz-checksum-*`, `If-None-Match`, signed user metadata, `Cache-Control`/`Content-Disposition`
+  on PUT, GET `Content-Encoding`/`Content-Language`/`Expires` overrides, presigned DELETE/HEAD,
+  multipart presigning.
 - Dropped for 1.0 (owner decision, 2026-11-21): CopyObject, DeleteObjects. Either can be added
   in 1.x without breaking anything, if the owner asks.
 
@@ -280,10 +285,20 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   credentials of its options (there is no credentials provider).
 - The presigner endpoint is configurable separately from the client endpoint (public host vs
   internal Kubernetes address). Host is signed with the port when it's non-default.
-- GET and PUT. Only `host` is signed, so the uploader may send any `Content-Type`.
-  `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved. Extra signed
-  headers and `response-*` overrides are deferred to 1.x (owner decision D3, 2026-11-21); if
-  added, they come as a codegen-legal `S3PresignOptions` data object and overloads.
+- GET and PUT. Without options only `host` is signed, so the uploader may send any
+  `Content-Type`. `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved.
+- Options (owner decision D5, 2026-11-22, partly reversing D3): two data objects, so a GET option
+  can't be passed to a PUT. `S3PresignPutOptions` (`contentType`, `contentMd5`) become signed
+  headers the uploader must send exactly; `S3PresignGetOptions` (`contentType`,
+  `contentDisposition`, `cacheControl`) become signed `response-*` query parameters that override
+  the download's response headers. Setter names have no `response` prefix. The options overloads
+  (`TimeUnit` and Java-only `Duration` forms, `@Nullable` options) return an `S3PresignedRequest`
+  data object (`url`, `method`, `headers` to send); the `String` methods stay for the simple
+  case. `S3PresignedRequest.toString()` never includes the URL. Values are non-empty printable
+  US-ASCII; `contentMd5` is canonical padded base64 of 16 bytes; non-ASCII file names go through
+  `S3PresignGetOptions.attachment`/`inline` (RFC 6266/8187). Invalid values throw
+  `IllegalArgumentException`. Don't add other presign options unless the owner asks (the deferred
+  list is in the scope section).
 - Time comes from the system UTC clock. A `java.time.Clock` is only an impl test hook (a
   package-private constructor), never part of the public API.
 - Presigned POST (browser form policy) is out of scope.

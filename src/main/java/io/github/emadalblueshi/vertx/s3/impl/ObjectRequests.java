@@ -126,6 +126,11 @@ final class ObjectRequests {
     return null;
   }
 
+  /** Whether {@code value} can be sent as a header value by this client: non-empty printable US-ASCII. */
+  static boolean isHeaderValue(String value) {
+    return value != null && !value.isEmpty() && HEADER_VALUE.matcher(value).matches();
+  }
+
   /** The PutObject headers for {@code options} ({@code null} means none); throws {@link IllegalArgumentException} with the problem. */
   static List<Map.Entry<String, String>> putHeaders(S3PutObjectOptions options) {
     List<Map.Entry<String, String>> headers = new ArrayList<>();
@@ -133,7 +138,7 @@ final class ObjectRequests {
       return headers;
     }
     if (options.getContentType() != null) {
-      if (options.getContentType().isEmpty() || !HEADER_VALUE.matcher(options.getContentType()).matches()) {
+      if (!isHeaderValue(options.getContentType())) {
         throw new IllegalArgumentException("The content type must be non-empty printable US-ASCII");
       }
       headers.add(Map.entry(HttpHeaders.CONTENT_TYPE.toString(), options.getContentType()));

@@ -11,6 +11,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
@@ -21,6 +23,9 @@ import org.junit.jupiter.params.provider.ValueSource;
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
+import io.github.emadalblueshi.vertx.s3.S3PresignGetOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignPutOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignedRequest;
 import io.github.emadalblueshi.vertx.s3.S3Presigner;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -184,6 +189,107 @@ class S3PresignerTest {
       assertTrue(presigner.presignGet("my-bucket", "a", 1, TimeUnit.HOURS).startsWith("http://127.0.0.1:9000/my-bucket/a?"));
       testContext.completeNow();
     })));
+  }
+
+  // --- options ----------------------------------------------------------------------------------------------
+
+  private static final String MD5 = "1B2M2Y8AsgTpgAmY7PhCfg==";
+
+  /** PUT options become signed headers: the URL carries exactly what the signer signed with them. */
+  @Test
+  void putOptionsAreSignedHeadersTheUploaderMustSend() {
+    S3PresignedRequest request = presigner(local(), NOW).presignPut("my-bucket", "photos/a.jpg", 600, TimeUnit.SECONDS,
+      new S3PresignPutOptions().setContentType("image/jpeg").setContentMd5(MD5));
+
+    assertEquals("PUT", request.getMethod());
+    assertEquals(Map.of("Content-Type", "image/jpeg", "Content-MD5", MD5), request.getHeaders());
+    assertEquals(List.of("Content-Type", "Content-MD5"), List.copyOf(request.getHeaders().keySet()), "in a stable order");
+    S3SignatureV4.Presigned signed = new S3SignatureV4("test-west-1", NOW).presign(
+      new S3SignatureV4.Request("PUT", "localhost:9000", "/my-bucket/photos/a.jpg", List.of(),
+        List.of(Map.entry("Content-Type", "image/jpeg"), Map.entry("Content-MD5", MD5)), S3SignatureV4.UNSIGNED_PAYLOAD),
+      600, "AKIDEXAMPLE", "secret", "token");
+    assertEquals("http://localhost:9000/my-bucket/photos/a.jpg?" + signed.query, request.getUrl());
+    assertTrue(request.getUrl().contains("&X-Amz-SignedHeaders=content-md5%3Bcontent-type%3Bhost&"), request.getUrl());
+    assertTrue(signed.canonicalRequest.contains("\ncontent-md5:" + MD5 + "\ncontent-type:image/jpeg\nhost:localhost:9000\n"),
+      signed.canonicalRequest);
+  }
+
+  @Test
+  void onlyTheHeadersThatAreSetAreSigned() {
+    S3PresignedRequest request = presigner(local(), NOW).presignPut("my-bucket", "a.bin", 600, TimeUnit.SECONDS,
+      new S3PresignPutOptions().setContentType("application/pdf"));
+    assertEquals(Map.of("Content-Type", "application/pdf"), request.getHeaders());
+    assertTrue(request.getUrl().contains("&X-Amz-SignedHeaders=content-type%3Bhost&"), request.getUrl());
+  }
+
+  /** GET options become signed response-* query parameters, in canonical order, with nothing to send. */
+  @Test
+  void getOptionsAreSignedResponseOverrides() {
+    String disposition = S3PresignGetOptions.attachment("فاتورة 7.pdf");
+    S3PresignedRequest request = presigner(local(), NOW).presignGet("my-bucket", "invoices/7.pdf", 300, TimeUnit.SECONDS,
+      new S3PresignGetOptions().setContentType("application/pdf").setContentDisposition(disposition).setCacheControl("no-store"));
+
+    assertEquals("GET", request.getMethod());
+    assertEquals(Map.of(), request.getHeaders());
+    List<Map.Entry<String, String>> overrides = List.of(Map.entry("response-cache-control", "no-store"),
+      Map.entry("response-content-disposition", disposition), Map.entry("response-content-type", "application/pdf"));
+    S3SignatureV4.Presigned signed = new S3SignatureV4("test-west-1", NOW).presign(
+      new S3SignatureV4.Request("GET", "localhost:9000", "/my-bucket/invoices/7.pdf", overrides, List.of(),
+        S3SignatureV4.UNSIGNED_PAYLOAD), 300, "AKIDEXAMPLE", "secret", "token");
+    assertEquals("http://localhost:9000/my-bucket/invoices/7.pdf?" + signed.query, request.getUrl());
+    assertTrue(request.getUrl().contains("&X-Amz-SignedHeaders=host&" + S3SignatureV4.canonicalQuery(overrides)
+      + "&X-Amz-Signature="), request.getUrl());
+  }
+
+  @Test
+  void noOptionsGiveTheSimpleUrl() {
+    S3Presigner presigner = presigner(local(), NOW);
+    String put = presigner.presignPut("my-bucket", "k", 60, TimeUnit.SECONDS);
+    String get = presigner.presignGet("my-bucket", "k", 60, TimeUnit.SECONDS);
+    assertEquals(put, presigner.presignPut("my-bucket", "k", 60, TimeUnit.SECONDS, null).getUrl());
+    assertEquals(put, presigner.presignPut("my-bucket", "k", 60, TimeUnit.SECONDS, new S3PresignPutOptions()).getUrl());
+    assertEquals(get, presigner.presignGet("my-bucket", "k", 60, TimeUnit.SECONDS, null).getUrl());
+    assertEquals(get, presigner.presignGet("my-bucket", "k", 60, TimeUnit.SECONDS, new S3PresignGetOptions()).getUrl());
+    assertEquals(Map.of(), presigner.presignPut("my-bucket", "k", 60, TimeUnit.SECONDS, null).getHeaders());
+  }
+
+  @Test
+  void durationOverloadsWithOptionsMatchTheTimeUnitOnes() {
+    S3Presigner presigner = presigner(local(), NOW);
+    S3PresignPutOptions put = new S3PresignPutOptions().setContentType("image/png");
+    S3PresignGetOptions get = new S3PresignGetOptions().setCacheControl("no-store");
+    assertEquals(presigner.presignPut("b-1", "k", 2, TimeUnit.MINUTES, put).toJson(),
+      presigner.presignPut("b-1", "k", Duration.ofMinutes(2), put).toJson());
+    assertEquals(presigner.presignGet("b-1", "k", 2, TimeUnit.MINUTES, get).toJson(),
+      presigner.presignGet("b-1", "k", Duration.ofMinutes(2), get).toJson());
+  }
+
+  @Test
+  void invalidOptionsAreRejected() {
+    S3Presigner presigner = presigner(local(), NOW);
+    for (String contentType : new String[] {"", "image/é", "text/plain\r\nX-Evil: 1", "tab\there"}) {
+      assertRejected(() -> presigner.presignPut("b-1", "k", 60, TimeUnit.SECONDS,
+        new S3PresignPutOptions().setContentType(contentType)), "content type");
+      assertRejected(() -> presigner.presignGet("b-1", "k", 60, TimeUnit.SECONDS,
+        new S3PresignGetOptions().setContentType(contentType)), "content type");
+    }
+    // not base64, no padding, 15 and 17 bytes, non-canonical trailing bits, whitespace
+    for (String md5 : new String[] {"not base64!", "1B2M2Y8AsgTpgAmY7PhCfg", "AAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAA=",
+      "1B2M2Y8AsgTpgAmY7PhCfh==", " 1B2M2Y8AsgTpgAmY7PhCfg==", ""}) {
+      assertRejected(() -> presigner.presignPut("b-1", "k", 60, TimeUnit.SECONDS,
+        new S3PresignPutOptions().setContentMd5(md5)), "Content-MD5");
+    }
+    assertRejected(() -> presigner.presignGet("b-1", "k", 60, TimeUnit.SECONDS,
+      new S3PresignGetOptions().setContentDisposition("attachment; filename=\"فاتورة.pdf\"")), "attachment or inline");
+    assertRejected(() -> presigner.presignGet("b-1", "k", 60, TimeUnit.SECONDS,
+      new S3PresignGetOptions().setContentDisposition("")), "content disposition");
+    for (String cacheControl : new String[] {"", "no-store\r\nX-Evil: 1"}) {
+      assertRejected(() -> presigner.presignGet("b-1", "k", 60, TimeUnit.SECONDS,
+        new S3PresignGetOptions().setCacheControl(cacheControl)), "cache control");
+    }
+    // the bucket, key and expiry rules still apply
+    assertRejected(() -> presigner.presignPut("B", "k", 60, TimeUnit.SECONDS, new S3PresignPutOptions()), "");
+    assertRejected(() -> presigner.presignGet("b-1", "k", 0, TimeUnit.SECONDS, new S3PresignGetOptions()), "positive");
   }
 
   // --- helpers --------------------------------------------------------------------------------------------

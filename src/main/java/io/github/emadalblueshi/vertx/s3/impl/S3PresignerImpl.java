@@ -2,11 +2,18 @@ package io.github.emadalblueshi.vertx.s3.impl;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignGetOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignPutOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignedRequest;
 import io.github.emadalblueshi.vertx.s3.S3Presigner;
 
 /**
@@ -36,25 +43,50 @@ public final class S3PresignerImpl implements S3Presigner {
 
   @Override
   public String presignGet(String bucket, String key, long expiry, TimeUnit unit) {
-    return presign("GET", bucket, key, seconds(expiry, unit));
+    return presign("GET", bucket, key, seconds(expiry, unit), List.of(), List.of()).getUrl();
   }
 
   @Override
   public String presignPut(String bucket, String key, long expiry, TimeUnit unit) {
-    return presign("PUT", bucket, key, seconds(expiry, unit));
+    return presign("PUT", bucket, key, seconds(expiry, unit), List.of(), List.of()).getUrl();
   }
 
   @Override
   public String presignGet(String bucket, String key, Duration expiry) {
-    return presign("GET", bucket, key, seconds(expiry));
+    return presign("GET", bucket, key, seconds(expiry), List.of(), List.of()).getUrl();
   }
 
   @Override
   public String presignPut(String bucket, String key, Duration expiry) {
-    return presign("PUT", bucket, key, seconds(expiry));
+    return presign("PUT", bucket, key, seconds(expiry), List.of(), List.of()).getUrl();
   }
 
-  private String presign(String method, String bucket, String key, long expirySeconds) {
+  @Override
+  public S3PresignedRequest presignPut(String bucket, String key, long expiry, TimeUnit unit, S3PresignPutOptions options) {
+    return presign("PUT", bucket, key, seconds(expiry, unit), List.of(), signedHeaders(options));
+  }
+
+  @Override
+  public S3PresignedRequest presignGet(String bucket, String key, long expiry, TimeUnit unit, S3PresignGetOptions options) {
+    return presign("GET", bucket, key, seconds(expiry, unit), responseOverrides(options), List.of());
+  }
+
+  @Override
+  public S3PresignedRequest presignPut(String bucket, String key, Duration expiry, S3PresignPutOptions options) {
+    return presign("PUT", bucket, key, seconds(expiry), List.of(), signedHeaders(options));
+  }
+
+  @Override
+  public S3PresignedRequest presignGet(String bucket, String key, Duration expiry, S3PresignGetOptions options) {
+    return presign("GET", bucket, key, seconds(expiry), responseOverrides(options), List.of());
+  }
+
+  /**
+   * @param query signed query parameters (the {@code response-*} overrides)
+   * @param headers signed headers the request must send
+   */
+  private S3PresignedRequest presign(String method, String bucket, String key, long expirySeconds,
+                                     List<Map.Entry<String, String>> query, List<Map.Entry<String, String>> headers) {
     Objects.requireNonNull(bucket, "bucket");
     Objects.requireNonNull(key, "key");
     String problem = BucketNames.problem(bucket, config.pathStyleAccess, config.publicTls);
@@ -68,10 +100,73 @@ public final class S3PresignerImpl implements S3Presigner {
       config.publicTls);
     String path = config.pathFor(bucket, key);
     S3SignatureV4.Presigned presigned = signer.presign(
-      new S3SignatureV4.Request(method, host, path, List.of(), List.of(), S3SignatureV4.UNSIGNED_PAYLOAD),
+      new S3SignatureV4.Request(method, host, path, query, headers, S3SignatureV4.UNSIGNED_PAYLOAD),
       expirySeconds, config.credentials.getAccessKey(), config.credentials.getSecretKey(),
       config.credentials.getSessionToken());
-    return (config.publicTls ? "https://" : "http://") + host + S3SignatureV4.encodePath(path) + "?" + presigned.query;
+    Map<String, String> toSend = new LinkedHashMap<>();
+    headers.forEach(header -> toSend.put(header.getKey(), header.getValue()));
+    return new S3PresignedRequest()
+      .setUrl((config.publicTls ? "https://" : "http://") + host + S3SignatureV4.encodePath(path) + "?" + presigned.query)
+      .setMethod(method)
+      .setHeaders(toSend);
+  }
+
+  /** The headers to sign for {@code options} ({@code null} means none); throws {@link IllegalArgumentException}. */
+  static List<Map.Entry<String, String>> signedHeaders(S3PresignPutOptions options) {
+    List<Map.Entry<String, String>> headers = new ArrayList<>();
+    if (options == null) {
+      return headers;
+    }
+    if (options.getContentType() != null) {
+      headers.add(Map.entry("Content-Type", headerValue(options.getContentType(), "content type")));
+    }
+    if (options.getContentMd5() != null) {
+      headers.add(Map.entry("Content-MD5", contentMd5(options.getContentMd5())));
+    }
+    return headers;
+  }
+
+  /** The {@code response-*} query parameters for {@code options} ({@code null} means none); throws {@link IllegalArgumentException}. */
+  static List<Map.Entry<String, String>> responseOverrides(S3PresignGetOptions options) {
+    List<Map.Entry<String, String>> query = new ArrayList<>();
+    if (options == null) {
+      return query;
+    }
+    if (options.getContentType() != null) {
+      query.add(Map.entry("response-content-type", headerValue(options.getContentType(), "content type")));
+    }
+    if (options.getContentDisposition() != null) {
+      if (!ObjectRequests.isHeaderValue(options.getContentDisposition())) {
+        throw new IllegalArgumentException("The content disposition must be non-empty printable US-ASCII; for a "
+          + "non-ASCII file name use S3PresignGetOptions.attachment or inline");
+      }
+      query.add(Map.entry("response-content-disposition", options.getContentDisposition()));
+    }
+    if (options.getCacheControl() != null) {
+      query.add(Map.entry("response-cache-control", headerValue(options.getCacheControl(), "cache control")));
+    }
+    return query;
+  }
+
+  private static String headerValue(String value, String name) {
+    if (!ObjectRequests.isHeaderValue(value)) {
+      throw new IllegalArgumentException("The " + name + " must be non-empty printable US-ASCII");
+    }
+    return value;
+  }
+
+  /** A {@code Content-MD5} value: the canonical, padded base64 of exactly 16 bytes. */
+  private static String contentMd5(String value) {
+    byte[] digest;
+    try {
+      digest = Base64.getDecoder().decode(value);
+    } catch (IllegalArgumentException e) {
+      digest = null;
+    }
+    if (digest == null || digest.length != 16 || !Base64.getEncoder().encodeToString(digest).equals(value)) {
+      throw new IllegalArgumentException("The Content-MD5 must be the base64 encoding (with padding) of a 16-byte MD5 digest");
+    }
+    return value;
   }
 
   /** The expiry in seconds: positive, a whole number of seconds, at most 7 days; never rounded. */

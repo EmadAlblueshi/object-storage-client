@@ -11,7 +11,12 @@ plus a presigner. **Not** a clone of the AWS SDK.
 - `putObject` from a stream or file. Multipart is used internally, only when required, and is
   never exposed as a public multipart API.
 - ListObjectsV2.
-- `S3Presigner`: GET and PUT.
+- `S3Presigner`: GET and PUT. Optional `S3PresignPutOptions` (signed `Content-Type`,
+  `Content-MD5`) and `S3PresignGetOptions` (`Content-Type`, `Content-Disposition`, `Cache-Control`
+  response overrides) (owner decision D5, 2026-11-22). Deferred, non-breaking to add in 1.x:
+  `x-amz-checksum-*`, `If-None-Match`, signed user metadata, `Cache-Control`/`Content-Disposition`
+  on PUT, GET `Content-Encoding`/`Content-Language`/`Expires` overrides, presigned DELETE/HEAD,
+  multipart presigning.
 - Dropped for 1.0 (owner decision, 2026-11-21): CopyObject, DeleteObjects. Either can be added
   in 1.x without breaking anything, if the owner asks.
 
@@ -423,7 +428,7 @@ public interface S3Presigner {
   `@CacheReturn` accessor, built once from the client's options, sharing the client's signer, and
   still usable after `close()`. `impl.S3PresignerImpl` joins the public-impl allowlist, for the
   same reason as `S3ClientImpl`.
-- **D3, deferred to 1.x:** extra signed headers (e.g. `Content-Type`) and `response-*` overrides
+- **D3, deferred to 1.x** (partly reversed by D5 in step 3.5, 2026-11-22): extra signed headers (e.g. `Content-Type`) and `response-*` overrides
   (e.g. `response-content-disposition`). If added, they come as a codegen-legal
   `S3PresignOptions` data object and overloads of the `TimeUnit` methods, which breaks nothing.
   Until then, a presigned PUT accepts any `Content-Type` the uploader sends (unsigned headers are
@@ -444,6 +449,45 @@ public interface S3Presigner {
 Complete (2026-11-22): signer presigning, the public API (`S3Presigner`, `S3Client.presigner()`,
 `publicEndpoint`), the integration suites against Silo, Silo-TLS and External, and the manual's
 "Presigned URLs" section. The External presign suite awaits the owner's local run (release gate 6).
+Reopened for step 3.5 (D5).
+
+### Phase 3 — step 3.5: presign options (owner decision D5, 2026-11-22)
+D3 is partly reversed: a trimmed set of options with clear value and broad S3-compatible
+support.
+- **Two data objects**, so invalid combinations don't compile. Setter names are the familiar
+  header names, without a `response` prefix:
+  - `S3PresignPutOptions`: `contentType`, `contentMd5`. Signed headers the uploader must send
+    exactly (a wrong or missing value is rejected; S3 also checks the body against
+    `Content-MD5`).
+  - `S3PresignGetOptions`: `contentType`, `contentDisposition`, `cacheControl`. Signed
+    `response-*` query parameters that override the download's response headers.
+    `contentDisposition` is the raw header value (printable US-ASCII); the static helpers
+    `attachment(filename)` and `inline(filename)` encode any file name (RFC 6266/8187, with an
+    ASCII fallback).
+- **Overloads** for the `TimeUnit` and Java-only `Duration` forms, with `@Nullable` options
+  (`null` means none, consistent with `putObject`), return an `S3PresignedRequest` data object:
+  `url`, `method`, and the `headers` to send. Its `toJson()` can be returned to an app as is; its
+  `toString()` never includes the URL. The `String` methods stay for the simple case. Verified by
+  compiling a probe with the real codegen processor: overloads with a data-object return next to
+  the `String` methods, `@Nullable` options, a `Map<String, String>` property and static helpers
+  are all legal.
+- **Validation** at presign time (`IllegalArgumentException`): values are non-empty printable
+  US-ASCII; `contentMd5` is the canonical padded base64 of exactly 16 bytes.
+- **Deferred** (non-breaking to add in 1.x): `x-amz-checksum-*`, `If-None-Match`, signed user
+  metadata, `Cache-Control`/`Content-Disposition` on PUT, GET `Content-Encoding`/
+  `Content-Language`/`Expires`, presigned DELETE/HEAD, multipart presigning.
+- **Steps** (each diff first, verified, committed by the owner):
+  1. (3.5b) API, implementation and unit tests, with this decision recorded in the scope
+     section, `AGENTS.md` and the plan.
+  2. (3.5c) Integration tests in the presign suite (Silo, Silo-TLS, External): a wrong or missing
+     signed `Content-Type` and `Content-MD5` are rejected, a body that doesn't match its
+     `Content-MD5` is rejected, and GET overrides appear in the response headers, including a
+     non-ASCII file name. The external suite asserts the same, so gate 6 checks Spaces.
+  3. (3.5d) Manual and README: options, `S3PresignedRequest`, and the rules (a PUT can't enforce
+     a maximum size, so verify with `headObject`, while `Content-MD5` pins the exact bytes; unique
+     backend-chosen keys instead of overwrite protection; `no-store` and the storage endpoint, not
+     a CDN-proxied domain, for private documents; send bytes with the exact `Content-Type`, e.g.
+     Dart's `http` adds `; charset=...` to string bodies; CORS must allow the signed headers).
 
 ### Correction (2026-11-20): build tooling policy
 - **Keep docgen. Do not remove it.** The revamp is about the API. Build tooling changes only where a recorded decision requires it: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the processor wiring for codegen and docgen.
