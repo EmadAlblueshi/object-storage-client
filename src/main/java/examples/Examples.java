@@ -45,6 +45,8 @@ public class Examples {
     S3ClientOptions options = new S3ClientOptions()
       .setEndpoint("https://nyc3.digitaloceanspaces.com")
       .setRegion("nyc3")
+      // Spaces documents virtual-hosted-style addressing: https://bucket.nyc3.digitaloceanspaces.com/key
+      .setPathStyleAccess(false)
       .setCredentials(new S3Credentials("ACCESS_KEY", "SECRET_KEY"));
 
     S3Client client = S3Client.create(vertx, options);

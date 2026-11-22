@@ -792,6 +792,46 @@ part uploads. Design decisions (owner, 2026-11-22):
   manually dispatched workflows from the default branch, so the job starts once `revamping` is
   merged into `master`.
 
+### Server behaviour: Silo, Ceph RGW v20 and AWS (verified 2026-11-22)
+Silo `RELEASE.2026-11-12T00-00-00Z` and Ceph RGW `v20.2.5` (single node, RADOS on memstore) were
+checked with the shared suites and with `curl --aws-sigv4`; AWS is as documented and as the suites
+expect by default. Each difference is an explicit expectation in the backend's subclasses.
+
+| Behaviour | AWS | Silo | Ceph RGW v20 |
+|---|---|---|---|
+| ListMultipartUploads prefix | Matches the start of keys | Whole keys only | Start of keys |
+| ListMultipartUploads paging | Pages | Doesn't page (everything at once) | Pages |
+| Abort of an unknown or finished upload | `404 NoSuchUpload` | `204` | `404 NoSuchUpload` |
+| ListParts after an abort | `404 NoSuchUpload` | `404 NoSuchUpload` | `404 NoSuchKey` |
+| Part upload after an abort | `404 NoSuchUpload` | `404` | `404 NoSuchUpload` |
+| Presigned request missing a signed header | `403 SignatureDoesNotMatch` | `400 AccessDenied` | `403 SignatureDoesNotMatch` |
+| `LocationConstraint` | Must match the region | Accepted | Must equal the zonegroup name (else `400 InvalidLocationConstraint`) |
+| Region in the SigV4 credential scope | Enforced | Enforced (`400 AuthorizationHeaderMalformed`) | Not enforced |
+| `UNSIGNED-PAYLOAD` over HTTPS; signed payloads over HTTP | Accepted | Accepted | Accepted |
+| Keys with `.`/`..` segments; a leading `/` | Stored as is; distinct keys | Rejected; `/` stripped | Stored as is; distinct keys |
+| `BadDigest`, `InvalidPart`, `EntityTooSmall`, `InvalidPartOrder`, GET overrides | As documented | Same | Same |
+
+Ceph RGW behaves like AWS almost everywhere Silo differs. Spaces runs its own Ceph version and
+configuration, so gate 7 (the external profile against real Spaces) still decides, in particular
+for the `LocationConstraint` against the region slug and ListObjectsV2 pagination.
+
+### DigitalOcean Spaces notes (from the Spaces documentation, recorded 2026-11-22)
+Library-relevant points; to be confirmed at gate 7 where testable.
+- **CDN body limit:** the Spaces CDN endpoint accepts request bodies of at most 8100 KiB, so
+  presigned uploads and multipart parts go to the origin endpoint
+  (`<region>.digitaloceanspaces.com`). The manual says so for `publicEndpoint` and part sizes.
+- **Addressing:** Spaces documents virtual-hosted-style addressing; the manual's and README's Spaces
+  examples set `setPathStyleAccess(false)`. Path-style stays the library default, which every
+  S3-compatible server supports.
+- **`503 SlowDown`:** Spaces limits request rates and answers `503 SlowDown`, with guidance to
+  retry with backoff. The library has no retry framework (non-goal): the manual tells applications
+  to retry idempotent requests with exponential backoff and jitter.
+- **ListObjectsV2 pagination:** the Spaces documentation lists a known issue with ListObjectsV2
+  pagination; the manual documents `startAfter` (the last key of the previous page) as the fallback
+  for listings without a delimiter. No helper is added (the caller pages).
+- **Incomplete multipart uploads** are deleted automatically after 30 days on Spaces; the manual
+  still recommends a cleanup job with `listMultipartUploads`, which works on every server.
+
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
 the concrete steps.
@@ -819,7 +859,7 @@ the concrete steps.
   S3_PATH_STYLE=false mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false
   unset S3_ENDPOINT S3_REGION S3_ACCESS_KEY S3_SECRET_KEY
   ```
-  Unverified until then: LocationConstraint, UNSIGNED-PAYLOAD on Spaces, virtual-hosted addressing, dot-segment and leading-slash key behavior, the presign options (how a missing signed header is reported, `BadDigest`, GET response overrides), and multipart uploads (ListMultipartUploads prefix matching, a second abort, `EntityTooSmall`/`InvalidPart`/`BadDigest`).
+  Unverified until then: LocationConstraint, UNSIGNED-PAYLOAD on Spaces, virtual-hosted addressing, dot-segment and leading-slash key behavior, the presign options (how a missing signed header is reported, `BadDigest`, GET response overrides), multipart uploads (ListMultipartUploads prefix matching and paging, a second abort, ListParts after an abort, `EntityTooSmall`/`InvalidPart`/`BadDigest`), the `LocationConstraint` against the region slug (e.g. `nyc3`), ListObjectsV2 pagination (a known issue in the Spaces documentation; see "DigitalOcean Spaces notes"), and `503 SlowDown` under load.
 
 ## Decision questions for you (answer before Phase 1)
 1. **Coordinates/package:** keep groupId `io.github.emadalblueshi`, root package `io.github.emadalblueshi.vertx.s3`, module `io.github.emadalblueshi.vertx.s3`? (alt: `io.github.emadalblueshi.s3`)

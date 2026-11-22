@@ -65,6 +65,9 @@ virtual-hosted-style (`https://bucket.host/key`). To use virtual-hosted-style:
 {@link examples.Examples#virtualHostedStyle}
 ----
 
+DigitalOcean Spaces documents virtual-hosted-style addressing, as in the Spaces example above. With
+it over HTTPS, bucket names can't contain dots (see "Buckets").
+
 === Transport options
 
 TLS trust, timeouts and connection pool sizes are configured on the composed Vert.x
@@ -251,6 +254,11 @@ is truncated, ask for the next one with its continuation token.
 {@link examples.Examples#listAllKeys}
 ----
 
+Continuation tokens haven't always been reliable on S3-compatible servers (the DigitalOcean Spaces
+documentation lists a ListObjectsV2 pagination issue). If a listing without a delimiter repeats keys
+or stops early, ask for the next page with `setStartAfter` set to the last key of the previous page
+instead of the continuation token.
+
 Keys of any characters (spaces, `+`, `%`, Arabic, ...) are returned decoded.
 
 === Metadata and deletion
@@ -305,6 +313,10 @@ cluster can't reach. Set `publicEndpoint` to the endpoint that URLs should point
 
 The URL's host, with its port when it isn't the default, is part of the signature. A proxy or
 ingress in front of the storage must pass the `Host` header through unchanged.
+
+Point upload URLs at the storage endpoint, not at a CDN: on DigitalOcean Spaces, the CDN endpoint
+accepts request bodies of at most 8100 KiB, so larger presigned uploads and multipart parts must go
+to the origin endpoint (`<region>.digitaloceanspaces.com`).
 
 === Uploads from browsers and mobile apps
 
@@ -424,7 +436,9 @@ lets the backend check the part sizes before completing, and `headObject` checks
 
 To resume, the app comes back with the upload id the backend stored. If it lost the `ETag`s of the
 parts already uploaded, `listParts` returns them, with their sizes; the app then uploads only the
-missing parts, with fresh URLs.
+missing parts, with fresh URLs. If `listParts` fails with `404`, the upload is gone (aborted,
+completed or cleaned up): AWS answers `NoSuchUpload` and Ceph RGW-based servers `NoSuchKey`. Start a
+new upload.
 
 [source,$lang]
 ----
@@ -447,11 +461,14 @@ that created an upload but crashed before storing its id. A cleanup job finds th
 ----
 
 For an upload that is already gone, AWS answers `404 NoSuchUpload` while some S3-compatible servers
-answer success: treat both as done. On AWS, a prefix limits the listing to keys that start with it;
+answer success: treat both as done. (Asked to list the parts of an aborted upload, Ceph RGW-based
+servers answer `404 NoSuchKey`, which means the same.) On AWS, a prefix limits the listing to keys that start with it;
 some servers (MinIO-compatible ones, for example) only match whole keys, so a cleanup job should
 list the whole bucket and filter. As an extra safety net, a bucket lifecycle rule
 (`AbortIncompleteMultipartUpload`) can abort old uploads on servers that support it; configure it
-with your storage provider's tools, as this library doesn't manage lifecycle rules.
+with your storage provider's tools, as this library doesn't manage lifecycle rules. DigitalOcean
+Spaces deletes incomplete multipart uploads automatically after 30 days, according to its
+documentation; a cleanup job removes them sooner, and works on every server.
 
 === Part sizes and rules
 
@@ -459,6 +476,8 @@ with your storage provider's tools, as this library doesn't manage lifecycle rul
 a 2 GiB video in 16 MiB parts takes 128 requests. Files above 78 GiB (10,000 parts of 8 MiB) need
 larger parts; the `startMultipartUpload` example computes the size.
 * *Parallelism*: 3 or 4 parts at a time is usually enough to fill a mobile connection.
+* *DigitalOcean Spaces*: upload parts to the origin endpoint, not the CDN endpoint, which accepts
+request bodies of at most 8100 KiB, less than the part sizes above.
 * *Browsers* need a CORS rule on the bucket that allows `PUT` and *exposes the `ETag` header*;
 without it the app can't read the part `ETag`s.
 * *Completion*: S3 can report a failure after it has started a `200` response; such a response
@@ -476,6 +495,10 @@ an unreadable response, an invalid argument, a closed client) is an `S3ClientExc
 ----
 {@link examples.Examples#handleErrors}
 ----
+
+A server that is overloaded, or that limits a client's request rate, answers `503 SlowDown`
+(DigitalOcean Spaces documents such limits). The library doesn't retry: retry these failures in the
+application, with exponential backoff and jitter, and only for requests that are safe to repeat.
 
 == Closing
 

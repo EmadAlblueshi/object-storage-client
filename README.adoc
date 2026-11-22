@@ -51,6 +51,7 @@ The endpoint URI gives the scheme, host and port; the region is required:
 S3ClientOptions options = new S3ClientOptions()
   .setEndpoint("https://nyc3.digitaloceanspaces.com")
   .setRegion("nyc3")
+  .setPathStyleAccess(false) // virtual-hosted-style, as Spaces documents
   .setCredentials(new S3Credentials(accessKey, secretKey));
 
 S3Client client = S3Client.create(vertx, options);
@@ -65,8 +66,9 @@ or from JSON configuration:
 S3Client client = S3Client.create(vertx, new S3ClientOptions(config.getJsonObject("s3")));
 ----
 
-Buckets are addressed path-style by default (`https://host/bucket/key`); call
-`setPathStyleAccess(false)` for virtual-hosted-style. A client created in a verticle is closed when
+Buckets are addressed path-style by default (`https://host/bucket/key`), which every S3-compatible
+server supports; `setPathStyleAccess(false)` selects virtual-hosted-style (`https://bucket.host/key`),
+which DigitalOcean Spaces documents. A client created in a verticle is closed when
 the verticle is undeployed; otherwise call `client.close()`.
 
 === Buckets
