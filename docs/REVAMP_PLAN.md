@@ -68,12 +68,16 @@ published before these gates pass, and the next published version is `1.0.0-RC1`
    - presigned URLs.
 
    It asserts flat memory and no leaked connections. It runs on demand, never in regular CI.
+6. **Ceph RGW suites pass:** the shared suites against the opt-in Ceph RGW backend, the gateway
+   DigitalOcean Spaces is built on (the `Ceph RGW` workflow, or
+   `S3_TEST_CEPH=true mvn test -Dtest='S3Client*CephTest,S3Client*CephTlsTest' -Dsurefire.failIfNoSpecifiedTests=false`)
+   (owner decision, 2026-11-22).
 
 **Gates for `1.0.0`:**
 
-6. **External profile green against real Spaces** in both addressing styles (see the Phase 6
+7. **External profile green against real Spaces** in both addressing styles (see the Phase 6
    release checklist for the commands).
-7. **Real-world use for 1–2 weeks with no API change.** The library runs in a staging
+8. **Real-world use for 1–2 weeks with no API change.** The library runs in a staging
    deployment on Kubernetes, including presigned browser and mobile uploads. Any API change
    means a new RC and restarts the clock.
 
@@ -454,7 +458,7 @@ public interface S3Presigner {
 ### Phase 3 — status
 Complete (2026-11-22): signer presigning, the public API (`S3Presigner`, `S3Client.presigner()`,
 `publicEndpoint`), the integration suites against Silo, Silo-TLS and External, and the manual's
-"Presigned URLs" section. The External presign suite awaits the owner's local run (release gate 6).
+"Presigned URLs" section. The External presign suite awaits the owner's local run (release gate 7).
 Reopened for step 3.5 (D5); step 3.5 complete (2026-11-22). Step 3.6 (multipart uploads)
 complete (2026-11-22).
 
@@ -491,7 +495,7 @@ support.
   2. (3.5c) Integration tests in the presign suite (Silo, Silo-TLS, External): a wrong or missing
      signed `Content-Type` and `Content-MD5` are rejected, a body that doesn't match its
      `Content-MD5` is rejected, and GET overrides appear in the response headers, including a
-     non-ASCII file name. The external suite asserts the same, so gate 6 checks Spaces.
+     non-ASCII file name. The external suite asserts the same, so gate 7 checks Spaces.
   3. (3.5d) Manual and README: options, `S3PresignedRequest`, and the rules (a PUT can't enforce
      a maximum size, so verify with `headObject`, while `Content-MD5` pins the exact bytes; unique
      backend-chosen keys instead of overwrite protection; `no-store` and the storage endpoint, not
@@ -716,7 +720,7 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
 - **Missing signed header:** Silo (like MinIO) answers 400 `AccessDenied` ("There were headers
   present in the request which were not signed"); AWS is expected to answer 403
   `SignatureDoesNotMatch`. The presign suite makes it an explicit expectation per backend; the
-  External subclass keeps the AWS default, so gate 6 checks it against Spaces.
+  External subclass keeps the AWS default, so gate 7 checks it against Spaces.
 - **Confirmed on Silo (HTTP and HTTPS):** a wrong signed header value (including an added
   `; charset=utf-8`) is 403 `SignatureDoesNotMatch`; the signed `Content-MD5` with other bytes is
   400 `BadDigest`; GET overrides, including an RFC 8187 `filename*`, come back exactly.
@@ -782,8 +786,11 @@ part uploads. Design decisions (owner, 2026-11-22):
   (`S3TestBackend.sharedCeph()`/`sharedCephTls()`); `*CephTest`/`*CephTlsTest` subclasses of the
   four shared suites, with AWS expectations except ListParts after an abort (`NoSuchKey`). Opt-in
   with `S3_TEST_CEPH=true`; skipped otherwise. Silo stays the default for regular runs.
-- **Steps:** (1) backend and suites; (2) a separate CI job, manual trigger and weekly schedule,
-  and a `1.0.0-RC1` gate; (3) docs: the Silo/Ceph/AWS behaviour table and the Spaces notes.
+- **Steps:** (1) backend and suites; (2) a separate CI job (`.github/workflows/ceph.yml`, manual
+  trigger and weekly schedule, JDK 21), and `1.0.0-RC1` gate 6 (the `1.0.0` gates become 7 and
+  8); (3) docs: the Silo/Ceph/AWS behaviour table and the Spaces notes. GitHub runs scheduled and
+  manually dispatched workflows from the default branch, so the job starts once `revamping` is
+  merged into `master`.
 
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
@@ -799,7 +806,9 @@ the concrete steps.
   new repository.
 - [ ] Publish the generated manual (e.g. GitHub Pages, from `mvn -DskipTests package site`) and
   link it from the README's "Documentation" section instead of the manual's source.
-- [ ] Gate 6 (required for `1.0.0`, not for `1.0.0-RC1`): run the external profile against real
+- [ ] Gate 6 (required for `1.0.0-RC1`): the `Ceph RGW` workflow is green (it runs from the default
+  branch, so after `revamping` is merged; until then, run the Ceph suites locally).
+- [ ] Gate 7 (required for `1.0.0`, not for `1.0.0-RC1`): run the external profile against real
   Spaces, in both addressing styles:
   ```
   export S3_ENDPOINT=https://<region>.digitaloceanspaces.com

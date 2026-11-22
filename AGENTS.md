@@ -138,7 +138,7 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   `mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false`. Without all
   four, the external tests are reported as skipped. Optional, test-only `S3_PATH_STYLE=false` runs
   them with virtual-hosted-style addressing (default: path-style).
-- Ceph RGW backend (opt-in): `S3_TEST_CEPH=true mvn test -Dtest='S3Client*CephTest,S3Client*CephTlsTest'
+- Ceph RGW backend (opt-in; also a weekly CI job, see "CI"): `S3_TEST_CEPH=true mvn test -Dtest='S3Client*CephTest,S3Client*CephTlsTest'
   -Dsurefire.failIfNoSpecifiedTests=false`. Without the variable, the Ceph tests are reported as
   skipped. One container (about 150 MiB, ready in about 15 s once the image is present) serves
   both the HTTP and the HTTPS suites.
@@ -439,6 +439,9 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - JDK 11 job: `mvn verify` with virtual-thread tests excluded. It proves the main artifact
   builds and the rest of the suite passes on 11.
 - Both jobs must pass without `-Dapi.version` or other Docker workarounds.
+- Ceph RGW job (`.github/workflows/ceph.yml`): the `S3Client*CephTest`/`*CephTlsTest` suites on JDK
+  21 with `S3_TEST_CEPH=true`, on demand and weekly, never on every push (owner decision,
+  2026-11-22). GitHub runs it from the default branch only.
 
 ## Branch & commit conventions
 - Work on feature branches off `revamping` (or `master` after the merge). Never commit to `master` directly.
