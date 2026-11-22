@@ -369,7 +369,7 @@ In effect this is a greenfield rewrite in the new package. Delete the old packag
     - Synchronous API returning the URL as a `String` (pure computation, no `Future`; `URI` dropped by audit R4). Usable standalone via `S3Presigner.create(options)` without a `Vertx` instance, and also exposed from the client.
     - One shared SigV4 signer for requests and presigning (query-string auth, `UNSIGNED-PAYLOAD`). The derived signing key is cached per (date, region, service), keyed by credentials too so rotation is safe. The cache holds **only the current entry**, so rotated-out secrets aren't kept in memory.
     - The presigner endpoint is configurable separately from the client endpoint (public host vs internal Kubernetes address). Host is signed with the port when it's non-default.
-    - GET and PUT. Expiry is validated (see "Phase 3 — presigner API"). Optional extra signed headers (e.g. `Content-Type`); by default only `host` is signed. `response-*` overrides, `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved.
+    - GET and PUT. Expiry is validated (see "Phase 3 — presigner API"). Optional extra signed headers (e.g. `Content-Type`); by default only `host` is signed. `response-*` overrides, `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved. *(Extra signed headers and `response-*` overrides deferred to 1.x by D3, 2026-11-21.)*
     - A `java.time.Clock` only as an impl test hook (audit R4). Unit tests against the AWS SigV4 published examples. Integration tests download and upload via presigned URLs against Silo with a plain HTTP client.
     - Presigned POST (browser form policy) is out of scope for now.
     - ~~*Consequence:* presigning needs credentials synchronously, so the credentials abstraction must expose the current credentials without a `Future`.~~ **Superseded (2026-11-21, audit R3):** credentials are static (`S3ClientOptions.setCredentials`, fully JSON) and there is no credentials provider. The presigner signs with the static credentials of its options.
@@ -382,8 +382,8 @@ commit. `S3Presigner` is `@VertxGen` (`PackagePolicyTest` requires it of every A
 @VertxGen
 public interface S3Presigner {
 
-  // options type and the client accessor are designed in Phase 3
-  static S3Presigner create(/* presigner options */);
+  // S3ClientOptions (D1); the client accessor is S3Client.presigner() (D2)
+  static S3Presigner create(S3ClientOptions options);
 
   String presignGet(String bucket, String key, long expiry, TimeUnit unit);
   String presignPut(String bucket, String key, long expiry, TimeUnit unit);
@@ -410,8 +410,8 @@ public interface S3Presigner {
   order, and a `Duration` parameter without `@GenIgnore(GenIgnore.PERMITTED_TYPE)` is rejected
   ("type java.time.Duration is not legal for use for a parameter").
 - Extra signed headers and `response-*` overrides need more parameters. They come as a
-  codegen-legal data object overload, designed in Phase 3. Every other public signature stays
-  codegen-legal as well (no `URI`, `Instant`, `Clock`, `Duration`).
+  codegen-legal data object overload, deferred to 1.x (D3 below). Every other public signature
+  stays codegen-legal as well (no `URI`, `Instant`, `Clock`, `Duration`).
 
 ### Phase 3 — design decisions and steps (owner decisions, 2026-11-21)
 - **D1, options:** the presigner reuses `S3ClientOptions` (endpoint, region, path-style, static
@@ -439,6 +439,11 @@ public interface S3Presigner {
      trip, expired URL (signed in the past through the `Clock` hook, no waiting), tampered URLs,
      special-character and Arabic keys, `publicEndpoint`, HTTPS, non-default port.
   4. Manual "Presigned URLs" section and examples; `AGENTS.md` and plan updates.
+
+### Phase 3 — status
+Complete (2026-11-22): signer presigning, the public API (`S3Presigner`, `S3Client.presigner()`,
+`publicEndpoint`), the integration suites against Silo, Silo-TLS and External, and the manual's
+"Presigned URLs" section. The External presign suite awaits the owner's local run (release gate 6).
 
 ### Correction (2026-11-20): build tooling policy
 - **Keep docgen. Do not remove it.** The revamp is about the API. Build tooling changes only where a recorded decision requires it: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the processor wiring for codegen and docgen.

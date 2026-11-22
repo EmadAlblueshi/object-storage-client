@@ -270,6 +270,87 @@ missing object fails with an `S3ServiceException` with status code 404.
 
 Deleting a key that doesn't exist succeeds.
 
+== Presigned URLs
+
+A presigned URL lets whoever holds it download (`GET`) or upload (`PUT`) one object until it
+expires, without credentials. A browser or a mobile app transfers the bytes directly with the
+storage, and your backend never handles them.
+
+Presigning is pure computation with no I/O, so it is synchronous and returns the URL as a `String`.
+Get a presigner from a client, or create one without a `Vertx` instance:
+
+[source,$lang]
+----
+{@link examples.Examples#createPresigner}
+----
+
+A presigner uses the endpoint, region, addressing style and credentials of its options, and ignores
+the transport settings. It holds no resources, is thread-safe, and keeps working after the client is
+closed.
+
+The expiry is an amount and a `TimeUnit`, or a `Duration` in Java: positive, a whole number of
+seconds, and at most 7 days. Invalid arguments throw `IllegalArgumentException`; bucket names and
+keys follow the same rules as for the client.
+
+=== Public endpoint
+
+On Kubernetes, your backend often reaches the storage at an in-cluster address that apps outside the
+cluster can't reach. Set `publicEndpoint` to the endpoint that URLs should point to. It defaults to
+`endpoint`, and only presigning uses it:
+
+[source,$lang]
+----
+{@link examples.Examples#presignerWithPublicEndpoint}
+----
+
+The URL's host, with its port when it isn't the default, is part of the signature. A proxy or
+ingress in front of the storage must pass the `Host` header through unchanged.
+
+=== Uploads from browsers and mobile apps
+
+The backend stays in charge of what gets stored:
+
+. The backend authorizes the user, chooses the key (never the app), and returns a presigned `PUT`
+URL.
+. The app sends the file as the body of an HTTP `PUT` to that URL.
+. The app tells the backend that the upload is done, and the backend checks the object with
+`headObject` before trusting it.
+
+[source,$lang]
+----
+{@link examples.Examples#presignUpload}
+----
+
+[source,$lang]
+----
+{@link examples.Examples#verifyUpload}
+----
+
+The key to verify is the one the backend issued, not one sent by the app. `headObject` returns what
+S3 recorded; it doesn't inspect the bytes.
+
+=== Downloads
+
+A presigned `GET` URL can be returned to the app, or used directly, e.g. as an image source:
+
+[source,$lang]
+----
+{@link examples.Examples#presignDownload}
+----
+
+=== Rules for presigned URLs
+
+* *Keep the expiry short*: minutes, just enough for the transfer to start.
+* *A URL is a bearer token.* Anyone who has it can use it until it expires, and it can't be revoked.
+Never log presigned URLs, and hand them out only over HTTPS.
+* *A presigned `PUT` can't limit the upload size.* Verify the object with `headObject` after the
+upload, and delete it if it isn't acceptable.
+* *Only `Host` is signed*, so the uploader may send any `Content-Type`, which S3 stores and serves
+back. Treat it as untrusted input.
+* *Browser uploads* (e.g. Flutter web) are cross-origin requests: the bucket needs a CORS rule that
+allows your app's origin, the `PUT` method and the headers it sends. Configure it with your storage
+provider's tools; this library doesn't manage it. Native mobile apps don't need one.
+
 == Errors
 
 Failures are `S3Exception` instances. An `S3ServiceException` means the server answered with an

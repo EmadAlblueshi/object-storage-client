@@ -276,9 +276,10 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   credentials of its options (there is no credentials provider).
 - The presigner endpoint is configurable separately from the client endpoint (public host vs
   internal Kubernetes address). Host is signed with the port when it's non-default.
-- GET and PUT. Only `host` is signed by default; optional extra signed headers (e.g.
-  `Content-Type`) are allowed. `response-*` overrides, `X-Amz-Security-Token` support, and
-  RFC 3986 key encoding with `/` preserved.
+- GET and PUT. Only `host` is signed, so the uploader may send any `Content-Type`.
+  `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved. Extra signed
+  headers and `response-*` overrides are deferred to 1.x (owner decision D3, 2026-11-21); if
+  added, they come as a codegen-legal `S3PresignOptions` data object and overloads.
 - Time comes from the system UTC clock. A `java.time.Clock` is only an impl test hook (a
   package-private constructor), never part of the public API.
 - Presigned POST (browser form policy) is out of scope.
@@ -365,8 +366,10 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   vectors). S3-specific rules are unit-tested and verified against Silo, which checks signatures
   server-side.
 - Presigning has unit tests against the AWS SigV4 published presign examples, using a fixed
-  `Clock` through the impl test hook. Integration tests download and upload through presigned
-  URLs against Silo, using a plain HTTP client.
+  `Clock` through the impl test hook. The `S3ClientPresign*` suites (Silo, Silo-TLS, External)
+  download and upload through presigned URLs with a plain Vert.x `HttpClient`, sending each URL
+  exactly as returned (`setAbsoluteURI`). Expired URLs are signed in the past through the `Clock`
+  hook; tests never wait for a URL to expire.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
   shared static client state across test classes).

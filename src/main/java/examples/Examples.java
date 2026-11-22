@@ -1,6 +1,9 @@
 package examples;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
@@ -8,6 +11,7 @@ import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
 import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
+import io.github.emadalblueshi.vertx.s3.S3Presigner;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.github.emadalblueshi.vertx.s3.S3ServiceException;
 import io.vertx.core.Future;
@@ -193,6 +197,53 @@ public class Examples {
 
   public void deleteObject(S3Client client) {
     client.deleteObject("my-bucket", "avatars/user-42.png");
+  }
+
+  public void createPresigner(Vertx vertx, S3ClientOptions options) {
+    S3Client client = S3Client.create(vertx, options);
+    // From a client: the client's options, always the same instance
+    S3Presigner presigner = client.presigner();
+
+    // Without Vert.x, e.g. in a service that only presigns
+    S3Presigner standalone = S3Presigner.create(options);
+  }
+
+  public void presignerWithPublicEndpoint(Vertx vertx) {
+    S3ClientOptions options = new S3ClientOptions()
+      // The backend reaches the storage inside the cluster
+      .setEndpoint("http://minio.storage.svc.cluster.local:9000")
+      // Apps outside the cluster use the public host
+      .setPublicEndpoint("https://files.example.com")
+      .setRegion("us-east-1")
+      .setCredentials(new S3Credentials("ACCESS_KEY", "SECRET_KEY"));
+    S3Client client = S3Client.create(vertx, options);
+
+    // https://files.example.com/my-bucket/avatars/user-42.png?X-Amz-Algorithm=...
+    String url = client.presigner().presignPut("my-bucket", "avatars/user-42.png", 10, TimeUnit.MINUTES);
+  }
+
+  public JsonObject presignUpload(S3Presigner presigner, String userId) {
+    String key = "uploads/" + userId + "/" + UUID.randomUUID() + ".jpg";
+    String url = presigner.presignPut("my-bucket", key, 10, TimeUnit.MINUTES);
+    // Remember the key as this user's pending upload; the app sends PUT <url> with the file as the body
+    return new JsonObject().put("key", key).put("url", url);
+  }
+
+  public Future<Void> verifyUpload(S3Client client, String key) {
+    return client.headObject("my-bucket", key).compose(metadata -> {
+      if (metadata.getContentLength() <= 10 * 1024 * 1024 && "image/jpeg".equals(metadata.getContentType())) {
+        return Future.succeededFuture();
+      }
+      // Too large, or another type: don't keep it
+      return client.deleteObject("my-bucket", key).compose(v -> Future.failedFuture("upload rejected"));
+    });
+  }
+
+  public void presignDownload(S3Presigner presigner) {
+    String url = presigner.presignGet("my-bucket", "uploads/user-42/photo.jpg", 5, TimeUnit.MINUTES);
+
+    // In Java, a Duration works too
+    String same = presigner.presignGet("my-bucket", "uploads/user-42/photo.jpg", Duration.ofMinutes(5));
   }
 
   public void listBuckets(S3Client client) {
