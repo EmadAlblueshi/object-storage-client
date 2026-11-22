@@ -663,7 +663,16 @@ Done in a separate **BREAKING** commit between steps 5 and 6, which revised deci
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
 the concrete steps.
 - [ ] For `1.0.0-RC1`: remove the "being rewritten" WARNING banner from the manual
-  (`src/main/asciidoc/index.adoc`).
+  (`src/main/asciidoc/index.adoc`) and the "under active development" WARNING from `README.adoc`.
+- [ ] Gate 3: a "Running in Kubernetes" section in `README.adoc`: memory limits and why large
+  objects must be streamed, pool sizing, closing the client on graceful shutdown, and the
+  presigner's public vs internal endpoint.
+- [ ] Gate 3: a migration note from `object-storage-client` 0.4.x: new coordinates and package;
+  the old API is replaced, not migrated.
+- [ ] After the GitHub rename to `vertx-s3-client`: point the README's CI badge and links at the
+  new repository.
+- [ ] Publish the generated manual (e.g. GitHub Pages, from `mvn -DskipTests package site`) and
+  link it from the README's "Documentation" section instead of the manual's source.
 - [ ] Gate 6 (required for `1.0.0`, not for `1.0.0-RC1`): run the external profile against real
   Spaces, in both addressing styles:
   ```

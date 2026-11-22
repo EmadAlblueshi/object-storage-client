@@ -1,88 +1,166 @@
-= Object Storage Client
+= vertx-s3-client
 :icons: font
 
 image:https://github.com/EmadAlblueshi/object-storage-client/actions/workflows/ci.yml/badge.svg?branch=master["Build Status", link="https://github.com/EmadAlblueshi/object-storage-client/actions?query=workflow%3ACI"]
 
-A convenient S3 client based on Vert.x that is compatible with
-https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html[Amazon S3 REST API protocol]
+A simple, lean, idiomatic https://vertx.io[Vert.x] 5 client for buckets, objects and presigned
+URLs on S3-compatible storage: Amazon S3, DigitalOcean Spaces, MinIO, …
 
-WARNING: The module in active development, this means the API can change between versions.
+It is not a clone of the AWS SDK. It covers the basic operations with a `Future`-based API whose
+results complete on the caller's Vert.x context, streams large objects with backpressure, and
+depends only on `vertx-core`.
 
-== Example
+WARNING: Under active development: the API may change until `1.0.0-RC1`.
+
+== Requirements
+
+* Java 11 or later
+* Vert.x 5.2
+
+== Dependency
+
+Maven:
+
+[source,xml]
+----
+<dependency>
+  <groupId>io.github.emadalblueshi</groupId>
+  <artifactId>vertx-s3-client</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+</dependency>
+----
+
+Gradle:
+
+[source,groovy]
+----
+implementation 'io.github.emadalblueshi:vertx-s3-client:1.0.0-SNAPSHOT'
+----
+
+No version has been released yet. Until then, build and install it locally with
+`mvn -DskipTests install`.
+
+== Quick start
+
+=== Creating a client
+
+The endpoint URI gives the scheme, host and port; the region is required:
+
 [source,java]
 ----
-// Create auth options
-var authOptions = new S3AuthOptions()
-    .setSignatureVersion(S3SignatureVersion.V4)
-    .setAccessKey("access-key")
-    .setSecretKey("secret-key");
+S3ClientOptions options = new S3ClientOptions()
+  .setEndpoint("https://nyc3.digitaloceanspaces.com")
+  .setRegion("nyc3")
+  .setCredentials(new S3Credentials(accessKey, secretKey));
 
-// Create client options
-var clientOptions = new S3ClientOptions()
-    .setAuthOptions(authOptions)
-    .setRegion("region")
-    .setWebClientOptions(new WebClientOptions()
-        .setHost("s3.example.com")
-        .setPort(443)
-        .setSsl(true));
+S3Client client = S3Client.create(vertx, options);
+----
 
-// Create the client
-var client = S3Client.create(vertx, clientOptions);
+or from JSON configuration:
 
-// Create new bucket
-client.putBucket(new S3BucketOptions(), "/my-bucket").onComplete(r -> {
-  if (r.succeeded()) {
-    System.out.println("Put bucket succeeded");
-  } else {
-    System.out.println("Put bucket failed!");
+[source,java]
+----
+// {"s3": {"endpoint": "http://localhost:9000", "region": "us-east-1",
+//         "credentials": {"accessKey": "...", "secretKey": "..."}}}
+S3Client client = S3Client.create(vertx, new S3ClientOptions(config.getJsonObject("s3")));
+----
+
+Buckets are addressed path-style by default (`https://host/bucket/key`); call
+`setPathStyleAccess(false)` for virtual-hosted-style. A client created in a verticle is closed when
+the verticle is undeployed; otherwise call `client.close()`.
+
+=== Buckets
+
+[source,java]
+----
+client.createBucket("my-bucket")
+  .compose(v -> client.listBuckets())
+  .onSuccess(result -> result.getBuckets().forEach(bucket -> System.out.println(bucket.getName())));
+----
+
+=== Objects
+
+[source,java]
+----
+client.putObject("my-bucket", "notes/hello.txt", Buffer.buffer("hello"))
+  .onSuccess(etag -> System.out.println("stored, ETag " + etag));
+
+client.getObject("my-bucket", "notes/hello.txt")
+  .onSuccess(body -> System.out.println(body.toString()));
+
+client.headObject("my-bucket", "notes/hello.txt")
+  .onSuccess(metadata -> System.out.println(metadata.getContentLength() + " bytes"));
+
+client.listObjects("my-bucket", new S3ListObjectsOptions().setPrefix("notes/"))
+  .onSuccess(page -> page.getObjects().forEach(object -> System.out.println(object.getKey())));
+
+client.deleteObject("my-bucket", "notes/hello.txt");
+----
+
+`getObject` buffers the object in memory, so it is for small objects only: above
+`maxBufferedObjectSize` (4 MiB by default) it fails and points to `getObjectStream`.
+
+=== Streaming an object to an HTTP response
+
+`getObjectStream` streams an object of any size with backpressure. The stream must be read to the
+end or cancelled; cancel it when the HTTP client goes away or the send fails, so its S3 connection
+is released:
+
+[source,java]
+----
+HttpServerResponse response = request.response();
+client.getObjectStream("my-bucket", "videos/big.mp4").onComplete(ar -> {
+  if (ar.failed()) {
+    boolean missing = ar.cause() instanceof S3ServiceException
+      && ((S3ServiceException) ar.cause()).getStatusCode() == 404;
+    response.setStatusCode(missing ? 404 : 502).end();
+    return;
   }
-});
-
-// Create object request options with content type
-var objectOptions = new S3ObjectOptions()
-    .contentType("text/plain");
-
-// Read existing text file
-var fileBuffer = vertx.fileSystem().readFileBlocking("readme.txt");
-
-// Create new object
-client.putObject(objectOptions, "/my-bucket/my-file.txt", fileBuffer).onComplete(r -> {
-  if (r.succeeded()) {
-    System.out.println("Put object succeeded");
-  } else {
-    System.out.println("Put object failed!");
+  S3ObjectStream stream = ar.result();
+  if (stream.metadata().getContentLength() >= 0) {
+    response.putHeader("Content-Length", Long.toString(stream.metadata().getContentLength()));
   }
+  response.closeHandler(v -> stream.cancel());
+  response.send(stream).onFailure(err -> stream.cancel());
 });
+----
 
-// The S3 Client now supports streaming for large objects
-var asyncFile = vertx.fileSystem().openBlocking("large-image.png", new OpenOptions().setRead(true));
-// Object content type
-var options = new S3ObjectOptions().contentType("image/png");
-// Upload large object as ReadStream<Buffer>
-client.putObjectAsStream(options, "/my-bucket/large-object.png", asyncFile).onComplete(res -> {
-  if(res.succeeded()) {
-    System.out.println("Put large object as stream succeeded");
-  } else {
-    System.out.println("Put large object as stream failed!");
-  }
-});
+=== Presigned URLs
+
+A presigned URL lets a browser or mobile app upload or download one object directly, without
+credentials, until it expires:
+
+[source,java]
+----
+S3Presigner presigner = client.presigner();
+String uploadUrl = presigner.presignPut("my-bucket", "uploads/photo.jpg", 10, TimeUnit.MINUTES);
+String downloadUrl = presigner.presignGet("my-bucket", "uploads/photo.jpg", 5, TimeUnit.MINUTES);
+----
+
+`S3Presigner.create(options)` presigns without a `Vertx` instance, and `setPublicEndpoint` makes
+URLs point to a public host while the client uses an in-cluster address. URLs are bearer tokens:
+never log them, and verify uploads with `headObject` before trusting them.
+
+== Documentation
+
+The link:src/main/asciidoc/index.adoc[manual] covers everything else: contexts and threading,
+addressing styles, transport options and credentials, ranges and cancellation, listing pages, the
+presigned upload flow, and errors. Its code snippets are in
+link:src/main/java/examples/Examples.java[`Examples.java`]. To build it as HTML
+(`target/docs/vertx-s3-client/java/index.html`), with the javadoc (`target/docs/apidocs`):
+
+----
+mvn -DskipTests package site
 ----
 
 == Building
 
-To launch the tests:
 ----
-mvn clean test
-----
-
-To package:
-----
-mvn clean package -DskipTests
+mvn verify
 ----
 
-To package with site
-----
-mvn clean package -DskipTests site
-----
+The integration tests run against a MinIO-compatible server in a container, so they need Docker.
 
+== License
 
+Apache License 2.0, see link:LICENSE[LICENSE].
