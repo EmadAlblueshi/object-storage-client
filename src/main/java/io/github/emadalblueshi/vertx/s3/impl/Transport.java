@@ -108,6 +108,11 @@ final class Transport {
     })));
   }
 
+  /** The signer, shared with the client's presigner (one signing-key cache). */
+  S3SignatureV4 signer() {
+    return signer;
+  }
+
   Future<Void> close() {
     return http.close();
   }

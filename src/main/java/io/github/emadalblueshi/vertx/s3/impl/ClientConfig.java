@@ -29,6 +29,11 @@ final class ClientConfig {
   final boolean defaultPort;
   final String region;
   final boolean pathStyleAccess;
+  /** Where presigned URLs point: the public endpoint, or the endpoint when none is set. */
+  final boolean publicTls;
+  final String publicHost;
+  final int publicPort;
+  final boolean publicDefaultPort;
   /** A copy of the options' credentials, validated. */
   final S3Credentials credentials;
   final int maxBufferedObjectSize;
@@ -36,12 +41,15 @@ final class ClientConfig {
   final PoolOptions poolOptions;
   final Clock clock;
 
-  private ClientConfig(boolean tls, String host, int port, boolean defaultPort, S3ClientOptions options,
-                       S3Credentials credentials) {
-    this.tls = tls;
-    this.host = host;
-    this.port = port;
-    this.defaultPort = defaultPort;
+  private ClientConfig(URI endpoint, URI publicEndpoint, S3ClientOptions options, S3Credentials credentials) {
+    this.tls = isTls(endpoint);
+    this.host = endpoint.getHost();
+    this.port = port(endpoint);
+    this.defaultPort = port == (tls ? 443 : 80);
+    this.publicTls = isTls(publicEndpoint);
+    this.publicHost = publicEndpoint.getHost();
+    this.publicPort = port(publicEndpoint);
+    this.publicDefaultPort = publicPort == (publicTls ? 443 : 80);
     this.region = options.getRegion().trim();
     this.pathStyleAccess = options.isPathStyleAccess();
     this.credentials = credentials;
@@ -59,11 +67,9 @@ final class ClientConfig {
   static ClientConfig from(S3ClientOptions options) {
     Objects.requireNonNull(options, "options");
 
-    URI endpoint = parseEndpoint(options.getEndpoint());
-    boolean tls = "https".equals(endpoint.getScheme().toLowerCase(Locale.ROOT));
-    String host = endpoint.getHost();
-    int port = endpoint.getPort() == -1 ? (tls ? 443 : 80) : endpoint.getPort();
-    boolean defaultPort = port == (tls ? 443 : 80);
+    URI endpoint = parseEndpoint(options.getEndpoint(), "endpoint");
+    URI publicEndpoint = options.getPublicEndpoint() == null ? endpoint
+      : parseEndpoint(options.getPublicEndpoint(), "publicEndpoint");
 
     if (options.getRegion() == null || options.getRegion().trim().isEmpty()) {
       throw new IllegalArgumentException("region is required (e.g. us-east-1, nyc3)");
@@ -79,37 +85,53 @@ final class ClientConfig {
         + "host and port come from the endpoint");
     }
 
-    if (!options.isPathStyleAccess() && isIpOrLocalhost(host)) {
-      throw new IllegalArgumentException("virtual-hosted-style access needs a DNS endpoint, not " + host
-        + "; use pathStyleAccess = true");
+    if (!options.isPathStyleAccess()) {
+      for (URI uri : new URI[] {endpoint, publicEndpoint}) {
+        if (isIpOrLocalhost(uri.getHost())) {
+          throw new IllegalArgumentException("virtual-hosted-style access needs a DNS endpoint, not " + uri.getHost()
+            + "; use pathStyleAccess = true");
+        }
+      }
     }
 
-    return new ClientConfig(tls, host, port, defaultPort, options, credentials);
+    return new ClientConfig(endpoint, publicEndpoint, options, credentials);
   }
 
-  private static URI parseEndpoint(String endpoint) {
+  private static boolean isTls(URI endpoint) {
+    return "https".equals(endpoint.getScheme().toLowerCase(Locale.ROOT));
+  }
+
+  /** The port to connect to: the endpoint's, or 80/443 when it has none. */
+  private static int port(URI endpoint) {
+    return endpoint.getPort() == -1 ? (isTls(endpoint) ? 443 : 80) : endpoint.getPort();
+  }
+
+  /**
+   * @param name the option's name, for messages ({@code endpoint} or {@code publicEndpoint})
+   */
+  private static URI parseEndpoint(String endpoint, String name) {
     if (endpoint == null || endpoint.trim().isEmpty()) {
-      throw new IllegalArgumentException("endpoint is required (e.g. https://nyc3.digitaloceanspaces.com)");
+      throw new IllegalArgumentException(name + " is required (e.g. https://nyc3.digitaloceanspaces.com)");
     }
     URI uri;
     try {
       uri = new URI(endpoint.trim());
     } catch (URISyntaxException e) {
-      throw new IllegalArgumentException("endpoint is not a valid URI: " + endpoint, e);
+      throw new IllegalArgumentException(name + " is not a valid URI: " + endpoint, e);
     }
     String scheme = uri.getScheme() == null ? null : uri.getScheme().toLowerCase(Locale.ROOT);
     if (!"http".equals(scheme) && !"https".equals(scheme)) {
-      throw new IllegalArgumentException("endpoint must use http or https: " + endpoint);
+      throw new IllegalArgumentException(name + " must use http or https: " + endpoint);
     }
     if (uri.getHost() == null || uri.getHost().isEmpty()) {
-      throw new IllegalArgumentException("endpoint has no valid host: " + endpoint);
+      throw new IllegalArgumentException(name + " has no valid host: " + endpoint);
     }
     if (uri.getRawUserInfo() != null) {
-      throw new IllegalArgumentException("endpoint must not contain user info: " + endpoint);
+      throw new IllegalArgumentException(name + " must not contain user info: " + endpoint);
     }
     String path = uri.getRawPath();
     if ((path != null && !path.isEmpty() && !"/".equals(path)) || uri.getRawQuery() != null || uri.getRawFragment() != null) {
-      throw new IllegalArgumentException("endpoint must not contain a path, query or fragment: " + endpoint);
+      throw new IllegalArgumentException(name + " must not contain a path, query or fragment: " + endpoint);
     }
     return uri;
   }
@@ -137,6 +159,11 @@ final class ClientConfig {
   /** The host to connect to and sign for: {@code bucket.host} for virtual-hosted-style access. */
   String hostFor(String bucket) {
     return bucket == null || pathStyleAccess ? host : bucket + "." + host;
+  }
+
+  /** The host presigned URLs use for {@code bucket}: as {@link #hostFor}, on the public endpoint. */
+  String publicHostFor(String bucket) {
+    return bucket == null || pathStyleAccess ? publicHost : bucket + "." + publicHost;
   }
 
   /** The request path (decoded): {@code /bucket/key} path-style, {@code /key} virtual-hosted-style. */

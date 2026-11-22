@@ -13,6 +13,7 @@ import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
 import io.github.emadalblueshi.vertx.s3.S3ListObjectsResult;
 import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
+import io.github.emadalblueshi.vertx.s3.S3Presigner;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -38,6 +39,7 @@ public final class S3ClientImpl implements S3Client {
   private final Vertx vertx;
   private final ClientConfig config;
   private final Transport transport;
+  private final S3Presigner presigner;
   /** Registration with the creating context (or the Vertx instance), which closes the client when it closes. */
   private final ContextSupport.Registration registration;
   /** The shutdown Future, set by the first close (explicit or by the owner); non-null means closed. */
@@ -47,6 +49,7 @@ public final class S3ClientImpl implements S3Client {
     this.vertx = Objects.requireNonNull(vertx, "vertx");
     this.config = ClientConfig.from(options);
     this.transport = new Transport(vertx, config);
+    this.presigner = new S3PresignerImpl(config, transport.signer());
     ContextSupport.Registration registered;
     try {
       registered = ContextSupport.registerResource(vertx, this::shutdown);
@@ -55,6 +58,11 @@ public final class S3ClientImpl implements S3Client {
       throw e;
     }
     this.registration = registered;
+  }
+
+  @Override
+  public S3Presigner presigner() {
+    return presigner;
   }
 
   @Override

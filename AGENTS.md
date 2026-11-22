@@ -84,8 +84,8 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - Impl is hidden on the class path too: every impl class that can be package-private is. No
   public API signature (return, parameter, throws, supertype, type bound, generics) mentions an
   impl type. Impl classes that must be public go on the explicit allowlist in
-  `PackagePolicyTest`, each with a reason. Currently there's one: `impl.S3ClientImpl`, which
-  `S3Client.create` instantiates.
+  `PackagePolicyTest`, each with a reason. Currently there are two: `impl.S3ClientImpl` and
+  `impl.S3PresignerImpl`, which `S3Client.create` and `S3Presigner.create` instantiate.
 - Public type names are `S3`-prefixed and must not clash with JDK, Vert.x or common library
   names. No generic names like `Credentials`, `Options` or `Bucket`. Deliberate exception:
   `S3Client`, `S3Presigner` and `S3Exception` keep the same names as AWS SDK v2 types (owner
@@ -96,8 +96,9 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   exactly that shape.
 - Options classes compose Vert.x options, never extend them. `S3ClientOptions` holds
   `HttpClientOptions` and `PoolOptions` (transport only); the endpoint URI is the single source of
-  scheme, host and port. Presigner-specific options (public endpoint) belong to Phase 3, not
-  `S3ClientOptions`.
+  scheme, host and port. The presigner reuses `S3ClientOptions` (owner decision D1, 2026-11-21):
+  its one presigner-only field is the optional `publicEndpoint` (where presigned URLs point;
+  defaults to `endpoint`, validated like it). Don't add a separate presigner options type.
 
 ## Build tooling policy
 - The revamp is about the API. Change build tooling **only where a recorded decision requires
@@ -261,8 +262,9 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 
 ## Presigned URLs
 - A synchronous `@VertxGen` API returning the URL as a `String`, with no `Future`. It's usable
-  standalone via `S3Presigner.create(options)` without a `Vertx` instance, and is also exposed
-  from the client.
+  standalone via `S3Presigner.create(S3ClientOptions)` without a `Vertx` instance, and from the
+  client as `S3Client.presigner()`: a `@CacheReturn` accessor sharing the client's signer, usable
+  after `close()` (owner decision D2, 2026-11-21). It holds no resources and is thread-safe.
 - Signatures (owner decision, 2026-11-21, audit R4 as revised): the expiry is an amount and a
   `TimeUnit`, in Vert.x's order (as `Future.timeout(long, TimeUnit)`), plus Java-only `Duration`
   overloads marked `@GenIgnore(GenIgnore.PERMITTED_TYPE)`:

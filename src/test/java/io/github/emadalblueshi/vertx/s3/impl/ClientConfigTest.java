@@ -141,6 +141,45 @@ class ClientConfigTest {
     assertThrows(NullPointerException.class, () -> ClientConfig.from(null));
   }
 
+  @Test
+  void publicEndpointDefaultsToTheEndpoint() {
+    ClientConfig config = ClientConfig.from(new S3ClientOptions(valid()).setEndpoint("http://localhost:9000")
+      .setPathStyleAccess(true));
+    assertFalse(config.publicTls);
+    assertEquals("localhost", config.publicHost);
+    assertEquals(9000, config.publicPort);
+    assertFalse(config.publicDefaultPort);
+  }
+
+  @Test
+  void publicEndpointIsParsedSeparately() {
+    ClientConfig config = ClientConfig.from(new S3ClientOptions(valid()).setEndpoint("http://minio.storage.svc:9000")
+      .setPublicEndpoint("https://files.example.com").setPathStyleAccess(false));
+    assertFalse(config.tls);
+    assertEquals("minio.storage.svc", config.host);
+    assertTrue(config.publicTls);
+    assertEquals("files.example.com", config.publicHost);
+    assertEquals(443, config.publicPort);
+    assertTrue(config.publicDefaultPort);
+    assertEquals("bucket.files.example.com", config.publicHostFor("bucket"));
+    assertEquals("bucket.minio.storage.svc", config.hostFor("bucket"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {" ", "ftp://files.example.com", "https://files.example.com/path", "https://user@files.example.com",
+    "https://files.example.com?x=1", "not a uri"})
+  void invalidPublicEndpointIsRejected(String publicEndpoint) {
+    IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+      () -> ClientConfig.from(new S3ClientOptions(valid()).setPublicEndpoint(publicEndpoint)));
+    assertTrue(e.getMessage().startsWith("publicEndpoint"), e.getMessage());
+  }
+
+  @Test
+  void virtualHostedStyleNeedsADnsPublicEndpoint() {
+    assertInvalid(o -> o.setPathStyleAccess(false).setPublicEndpoint("http://127.0.0.1:9000"));
+    ClientConfig.from(valid().setPathStyleAccess(true).setPublicEndpoint("http://127.0.0.1:9000"));
+  }
+
   private static S3ClientOptions valid() {
     return new S3ClientOptions()
       .setEndpoint("https://nyc3.digitaloceanspaces.com")

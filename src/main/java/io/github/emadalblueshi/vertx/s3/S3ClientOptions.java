@@ -26,6 +26,11 @@ import io.vertx.core.json.JsonObject;
  * credentials) are validated by {@code S3Client.create}, which throws
  * {@link IllegalArgumentException} for invalid options.
  * <p>
+ * The same options configure the {@link S3Presigner} ({@link S3Client#presigner()} or
+ * {@link S3Presigner#create(S3ClientOptions)}): it uses the endpoint, or the
+ * {@linkplain #setPublicEndpoint public endpoint} when set, the region, the addressing style and
+ * the credentials, and ignores the transport settings.
+ * <p>
  * Payload signing is not configurable: the endpoint scheme decides. Over HTTPS, payloads are sent
  * as {@code UNSIGNED-PAYLOAD} (TLS protects them); over plain HTTP, they are always signed.
  */
@@ -51,6 +56,7 @@ public class S3ClientOptions {
   private static final Set<String> SECRET_JSON_KEYS = Set.of("password", "aliasPassword");
 
   private String endpoint;
+  private String publicEndpoint;
   private String region;
   private boolean pathStyleAccess;
   private S3Credentials credentials;
@@ -68,6 +74,7 @@ public class S3ClientOptions {
   /** Deep copy: nested options and credentials are copied. */
   public S3ClientOptions(S3ClientOptions other) {
     endpoint = other.endpoint;
+    publicEndpoint = other.publicEndpoint;
     region = other.region;
     pathStyleAccess = other.pathStyleAccess;
     credentials = other.credentials == null ? null : new S3Credentials(other.credentials);
@@ -92,6 +99,25 @@ public class S3ClientOptions {
    */
   public S3ClientOptions setEndpoint(String endpoint) {
     this.endpoint = endpoint;
+    return this;
+  }
+
+  /**
+   * The endpoint that presigned URLs point to, or {@code null} (the default) to use the
+   * {@linkplain #getEndpoint() endpoint}.
+   */
+  public String getPublicEndpoint() {
+    return publicEndpoint;
+  }
+
+  /**
+   * Sets the endpoint that presigned URLs point to, when it differs from the endpoint the client
+   * talks to: e.g. the client uses an in-cluster address, while browsers and mobile apps need the
+   * public host. Same form and rules as {@link #setEndpoint}; the region, addressing style and
+   * credentials are shared. Only presigning uses it.
+   */
+  public S3ClientOptions setPublicEndpoint(String publicEndpoint) {
+    this.publicEndpoint = publicEndpoint;
     return this;
   }
 
@@ -205,6 +231,7 @@ public class S3ClientOptions {
   @Override
   public String toString() {
     return "S3ClientOptions{endpoint=" + endpoint
+      + ", publicEndpoint=" + publicEndpoint
       + ", region=" + region
       + ", pathStyleAccess=" + pathStyleAccess
       + ", credentials=" + credentials

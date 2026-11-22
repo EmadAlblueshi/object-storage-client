@@ -108,7 +108,14 @@ class S3ClientOptionsTest {
   @Test
   void jsonHasNoProviderKeyOrOtherFunctionalSettings() {
     assertEquals(java.util.Set.of("credentials", "endpoint", "httpClientOptions", "maxBufferedObjectSize",
-      "pathStyleAccess", "poolOptions", "region"), sample().toJson().fieldNames());
+      "pathStyleAccess", "poolOptions", "publicEndpoint", "region"), sample().toJson().fieldNames());
+  }
+
+  @Test
+  void publicEndpointDefaultsToNoneAndSurvivesJsonAndCopy() {
+    assertNull(new S3ClientOptions().getPublicEndpoint());
+    assertEquals("https://files.example.com", new S3ClientOptions(sample().toJson()).getPublicEndpoint());
+    assertEquals("https://files.example.com", new S3ClientOptions(sample()).getPublicEndpoint());
   }
 
   @Test
@@ -116,6 +123,7 @@ class S3ClientOptionsTest {
     String text = sample().toString();
     assertTrue(text.contains("https://nyc3.digitaloceanspaces.com"), text);
     assertTrue(text.contains("nyc3"), text);
+    assertTrue(text.contains("publicEndpoint=https://files.example.com"), text);
     assertFalse(text.contains(SECRET), text);
     assertFalse(text.contains(TOKEN), text);
   }
@@ -160,6 +168,7 @@ class S3ClientOptionsTest {
   private static S3ClientOptions sample() {
     S3ClientOptions options = new S3ClientOptions()
       .setEndpoint("https://nyc3.digitaloceanspaces.com")
+      .setPublicEndpoint("https://files.example.com")
       .setRegion("nyc3")
       .setPathStyleAccess(false)
       .setCredentials(new S3Credentials("AKIAEXAMPLE", SECRET).setSessionToken(TOKEN))

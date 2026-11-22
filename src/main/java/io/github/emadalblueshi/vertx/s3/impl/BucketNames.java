@@ -26,6 +26,14 @@ final class BucketNames {
    * @return why {@code bucket} can't be used with this configuration, or {@code null} if it can
    */
   static String problem(String bucket, ClientConfig config) {
+    return problem(bucket, config.pathStyleAccess, config.tls);
+  }
+
+  /**
+   * As {@link #problem(String, ClientConfig)}, for an explicit addressing style and scheme (the
+   * presigner checks against its public endpoint's scheme).
+   */
+  static String problem(String bucket, boolean pathStyleAccess, boolean tls) {
     if (bucket == null) {
       return "The bucket name is required";
     }
@@ -42,7 +50,7 @@ final class BucketNames {
     if (IPV4.matcher(bucket).matches()) {
       return invalid(bucket, "must not be formatted as an IP address");
     }
-    if (bucket.indexOf('.') >= 0 && !config.pathStyleAccess && config.tls) {
+    if (bucket.indexOf('.') >= 0 && !pathStyleAccess && tls) {
       return invalid(bucket, "contains dots, which don't work with virtual-hosted-style access over HTTPS (the "
         + "server's wildcard certificate doesn't match); use pathStyleAccess = true");
     }

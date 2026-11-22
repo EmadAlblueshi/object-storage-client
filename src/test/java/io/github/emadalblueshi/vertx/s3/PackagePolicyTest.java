@@ -67,7 +67,9 @@ class PackagePolicyTest {
    */
   private static final Set<String> PUBLIC_IMPL_ALLOWLIST = Set.of(
     // S3Client.create (API package) instantiates it across packages.
-    IMPL + ".S3ClientImpl");
+    IMPL + ".S3ClientImpl",
+    // S3Presigner.create (API package) instantiates it across packages (owner decision D2, 2026-11-21).
+    IMPL + ".S3PresignerImpl");
 
   /** Main sources of the API and impl packages, relative to the Maven base directory. */
   private static final Path MAIN_SOURCES = Path.of("src", "main", "java", "io", "github", "emadalblueshi", "vertx", "s3");

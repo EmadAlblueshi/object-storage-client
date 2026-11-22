@@ -1,6 +1,7 @@
 package io.github.emadalblueshi.vertx.s3;
 
 import io.github.emadalblueshi.vertx.s3.impl.S3ClientImpl;
+import io.vertx.codegen.annotations.CacheReturn;
 import io.vertx.codegen.annotations.Nullable;
 import io.vertx.codegen.annotations.VertxGen;
 import io.vertx.core.Future;
@@ -202,6 +203,16 @@ public interface S3Client {
    * @return a future completed when the object is deleted
    */
   Future<Void> deleteObject(String bucket, String key);
+
+  /**
+   * The presigner for this client's options: URLs point to the
+   * {@linkplain S3ClientOptions#setPublicEndpoint public endpoint} when one is set. Always the same
+   * instance; it holds no resources and keeps working after {@link #close()}.
+   *
+   * @return the presigner
+   */
+  @CacheReturn
+  S3Presigner presigner();
 
   /**
    * Closes the client and releases its HTTP connections. Idempotent. Operations started after
