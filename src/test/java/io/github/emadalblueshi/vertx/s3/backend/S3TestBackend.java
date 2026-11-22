@@ -8,8 +8,9 @@ import io.vertx.core.http.HttpClientOptions;
  * An S3-compatible server that integration tests run against.
  * <p>
  * Tests depend only on this abstraction (endpoint, region, credentials, TLS), never on a
- * concrete container. Implementations: Silo over HTTP and HTTPS (the only container backend) and
- * the opt-in {@link ExternalBackend}, configured from environment variables.
+ * concrete container. Implementations: Silo over HTTP and HTTPS (the default container backend),
+ * the opt-in {@link CephBackend} (Ceph RGW, enabled by {@code S3_TEST_CEPH=true}), and the opt-in
+ * {@link ExternalBackend}, configured from environment variables.
  * <p>
  * {@link #start()} and {@link #stop()} block. Call them from the JUnit thread (for example in
  * {@code @BeforeAll}/{@code @AfterAll}), never from a Vert.x event loop.
@@ -42,6 +43,19 @@ public interface S3TestBackend {
   /** Like {@link #sharedSilo()}, over HTTPS with the test-only self-signed certificate. */
   static S3TestBackend sharedSiloTls() {
     return SharedBackends.SILO_TLS.get();
+  }
+
+  /**
+   * Ceph RGW over plain HTTP, shared by all test classes in the JVM, like {@link #sharedSilo()}.
+   * Opt-in: only use it from classes enabled by {@link CephBackend#configured()}.
+   */
+  static S3TestBackend sharedCeph() {
+    return SharedBackends.CEPH.get();
+  }
+
+  /** Like {@link #sharedCeph()}, over HTTPS with the test-only self-signed certificate; the same container. */
+  static S3TestBackend sharedCephTls() {
+    return SharedBackends.CEPH_TLS.get();
   }
 
   /** Short name used in test display names, e.g. {@code silo-tls}. */

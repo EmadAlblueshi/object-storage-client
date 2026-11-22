@@ -82,6 +82,10 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - Test backend: **Silo** (`docker.io/pgsty/silo`), a maintained MinIO fork with the same S3 API,
   `MINIO_*` env vars and `/minio/health` routes. Upstream MinIO community edition no longer
   publishes images.
+- Opt-in second test backend: **Ceph RGW** (`quay.io/ceph/ceph`, pinned to `v20.2.5`), the S3
+  gateway DigitalOcean Spaces is built on. The test-only bootstrap
+  `src/test/resources/ceph/rados-rgw.sh` starts a single-node RADOS cluster (memstore) and one
+  radosgw serving HTTP and HTTPS (owner decision, 2026-11-22).
 
 ## Coordinates & layout
 - Maven: `io.github.emadalblueshi:vertx-s3-client`
@@ -134,6 +138,10 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   `mvn test -Dtest='S3Client*ExternalTest' -Dsurefire.failIfNoSpecifiedTests=false`. Without all
   four, the external tests are reported as skipped. Optional, test-only `S3_PATH_STYLE=false` runs
   them with virtual-hosted-style addressing (default: path-style).
+- Ceph RGW backend (opt-in): `S3_TEST_CEPH=true mvn test -Dtest='S3Client*CephTest,S3Client*CephTlsTest'
+  -Dsurefire.failIfNoSpecifiedTests=false`. Without the variable, the Ceph tests are reported as
+  skipped. One container (about 150 MiB, ready in about 15 s once the image is present) serves
+  both the HTTP and the HTTPS suites.
 - Site/docs: `mvn -DskipTests package site` (docgen output: `target/asciidoc/java`)
 
 ## Java 11 rules (`src/main` and `src/test`)
@@ -353,19 +361,21 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   test is treated as a bug in the code or the test and fixed at its root cause; it is never
   retried, re-run to green, or disabled. Timeouts are only a safety net that turns a hang into a
   failure, never part of what a test checks.
-- vertx-junit5. Integration tests run against Silo via Testcontainers. The image is pinned to an
-  exact release tag (never `latest`); don't change the tag without asking. Prefer the JVM-wide
-  `S3TestBackend.sharedSilo()`/`sharedSiloTls()` (never stop them; use unique bucket names) over
-  starting a container per test class.
-- **Silo is the only container backend.** Integration tests are backend-agnostic: `S3TestBackend`
-  supplies the endpoint, region, credentials and TLS. Besides Silo (HTTP and HTTPS) there is one
-  opt-in, generic `ExternalBackend`, configured only by the `S3_*` environment variables (no
-  provider names in variables, classes or tests). Backend credentials are never committed.
+- vertx-junit5. Integration tests run against Silo, and opt-in against Ceph RGW, via
+  Testcontainers. Both images are pinned to an exact release tag (never `latest`); don't change a
+  tag without asking. Prefer the JVM-wide `S3TestBackend.sharedSilo()`/`sharedSiloTls()` and
+  `sharedCeph()`/`sharedCephTls()` (one Ceph container for both; never stop them; use unique bucket
+  names) over starting a container per test class.
+- **Silo is the default container backend; Ceph RGW is the opt-in second** (`S3_TEST_CEPH=true`).
+  Integration tests are backend-agnostic: `S3TestBackend` supplies the endpoint, region,
+  credentials and TLS. Besides Silo and Ceph (HTTP and HTTPS each) there is one opt-in, generic
+  `ExternalBackend`, configured only by the `S3_*` environment variables (no provider names in
+  variables, classes or tests). Backend credentials are never committed.
 - Suites run against several backends without duplication: an abstract `*TestBase` holds the
-  tests; one subclass per backend (`*SiloTest`, `*SiloTlsTest`, `*ExternalTest`) supplies it.
-  Backend differences are explicit expectations in the subclasses, never skipped assertions.
-  External subclasses are `@EnabledIf` on a local `configured()` method, so they are skipped,
-  never failed, when the variables are missing.
+  tests; one subclass per backend (`*SiloTest`, `*SiloTlsTest`, `*CephTest`, `*CephTlsTest`,
+  `*ExternalTest`) supplies it. Backend differences are explicit expectations in the subclasses,
+  never skipped assertions. Ceph and External subclasses are `@EnabledIf` on a local
+  `configured()` method, so they are skipped, never failed, when their variables are missing.
 - **Tests must be safe on a real account:** buckets get unique `vertx-s3-it-` names
   (`TestResources.uniqueBucketName()`); every bucket and key is registered with `TestResources`
   before it is created, and cleanup deletes everything even when tests fail. Keep bucket
@@ -415,9 +425,11 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   `listParts`, `listParts` paging, abort, a wrong ETag, part-order rules, `EntityTooSmall`, a
   per-part `Content-MD5`, and an orphaned upload found by `listMultipartUploads` and aborted. How
   a backend matches a ListMultipartUploads prefix and answers a second abort are explicit
-  expectations in the subclasses (Silo: whole keys only; `204`). The suite aborts every upload
-  left open in its bucket before cleanup. Paging of ListMultipartUploads is stub-tested only,
-  since Silo doesn't page it.
+  expectations in the subclasses (Silo: whole keys only; `204`), as are the error code of
+  ListParts for an aborted upload (Ceph: `NoSuchKey`) and whether the server pages
+  ListMultipartUploads (Ceph does, so the paging test runs against a real server there; Silo
+  returns everything in one page). The suite aborts every upload left open in its bucket before
+  cleanup.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
   shared static client state across test classes).

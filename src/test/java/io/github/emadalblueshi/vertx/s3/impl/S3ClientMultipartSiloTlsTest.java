@@ -21,4 +21,10 @@ class S3ClientMultipartSiloTlsTest extends S3ClientMultipartTestBase {
   protected boolean abortOfFinishedUploadFails() {
     return false;
   }
+
+  /** Silo ignores max-uploads and the markers: every open upload comes back in one page. */
+  @Override
+  protected boolean pagesUploadListings() {
+    return false;
+  }
 }

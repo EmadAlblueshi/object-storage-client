@@ -766,6 +766,25 @@ part uploads. Design decisions (owner, 2026-11-22):
   completion; an unsorted part list is `400 InvalidPartOrder` (the client sorts, so this only
   shows without the sort); a signed per-part `Content-MD5` with other bytes is `400 BadDigest`.
 
+### Ceph RGW test backend (owner decision, 2026-11-22)
+- **Why:** DigitalOcean Spaces is built on Ceph RGW, and S3-compatible servers differ in ways that
+  matter to this library (multipart listing prefixes and paging, abort replies, how a missing
+  signed header is reported).
+- **Image:** the official `quay.io/ceph/ceph`, pinned to `v20.2.5`; the all-in-one images
+  (`ceph/demo`, `ceph/daemon`, `s3gw`) are no longer maintained. A test-only bootstrap script
+  (a test resource, the container's entrypoint) starts a single-node RADOS cluster (one monitor,
+  one memstore OSD) and one radosgw for HTTP and HTTPS, with a realm and a zonegroup named after
+  the test region (`test-west-1`, which RGW then accepts as the LocationConstraint).
+- **Measured (2026-11-22):** about 545 MB compressed (2.1 GB unpacked); ready in about 13 s once
+  the image is present (the first start after a pull took about 3 minutes, once); about 150 MiB of
+  memory; the Bucket, Object, Presign and Multipart suites over HTTP and HTTPS run in about 45 s.
+- **Integration:** `CephContainer`, `CephBackend` and one JVM-wide container
+  (`S3TestBackend.sharedCeph()`/`sharedCephTls()`); `*CephTest`/`*CephTlsTest` subclasses of the
+  four shared suites, with AWS expectations except ListParts after an abort (`NoSuchKey`). Opt-in
+  with `S3_TEST_CEPH=true`; skipped otherwise. Silo stays the default for regular runs.
+- **Steps:** (1) backend and suites; (2) a separate CI job, manual trigger and weekly schedule,
+  and a `1.0.0-RC1` gate; (3) docs: the Silo/Ceph/AWS behaviour table and the Spaces notes.
+
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
 the concrete steps.

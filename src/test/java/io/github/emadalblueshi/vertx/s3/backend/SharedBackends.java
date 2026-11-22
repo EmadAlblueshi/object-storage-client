@@ -12,6 +12,21 @@ final class SharedBackends {
   static final Supplier<S3TestBackend> SILO = new Lazy(S3TestBackend::silo);
   static final Supplier<S3TestBackend> SILO_TLS = new Lazy(S3TestBackend::siloTls);
 
+  /** One Ceph container serves both: its HTTP and HTTPS ports. */
+  static final Supplier<S3TestBackend> CEPH = () -> new CephBackend(ceph(), false);
+  static final Supplier<S3TestBackend> CEPH_TLS = () -> new CephBackend(ceph(), true);
+
+  private static CephContainer ceph;
+
+  private static synchronized CephContainer ceph() {
+    if (ceph == null) {
+      CephContainer container = new CephContainer();
+      container.start();
+      ceph = container;
+    }
+    return ceph;
+  }
+
   private SharedBackends() {
   }
 

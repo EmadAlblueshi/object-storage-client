@@ -14,6 +14,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -88,6 +89,16 @@ abstract class S3ClientMultipartTestBase {
 
   /** Whether aborting an upload that no longer exists fails with 404 NoSuchUpload (AWS), rather than succeeding. */
   protected boolean abortOfFinishedUploadFails() {
+    return true;
+  }
+
+  /** The 404 error code of ListParts for an aborted upload: NoSuchUpload on AWS. */
+  protected String listPartsAfterAbortCode() {
+    return "NoSuchUpload";
+  }
+
+  /** Whether the server pages ListMultipartUploads (honours max-uploads and the markers), as AWS does. */
+  protected boolean pagesUploadListings() {
     return true;
   }
 
@@ -240,7 +251,7 @@ abstract class S3ClientMultipartTestBase {
       .compose(uploadId -> uploadPart(key, uploadId, 1, random(100, 31))
         .compose(etag -> client.abortMultipartUpload(bucket, key, uploadId))
         .compose(v -> client.listParts(bucket, key, uploadId).transform(ar -> {
-          assertNoSuchUpload(ar.cause());
+          assertGone(ar.cause(), listPartsAfterAbortCode());
           return send(HttpMethod.PUT, presigner.presignUploadPart(bucket, key, uploadId, 2, 10, TimeUnit.MINUTES),
             random(100, 32), Map.of());
         }))
@@ -391,6 +402,49 @@ abstract class S3ClientMultipartTestBase {
       .onComplete(testContext.succeedingThenComplete());
   }
 
+  /**
+   * listMultipartUploads follows the key and upload-id markers across pages (pages of 1 here; two
+   * uploads share a key, so the upload-id marker matters) and returns every upload in key order.
+   * Where the server pages, a limit of 2 pages is reached; a server that returns everything at
+   * once never reaches it.
+   */
+  @Test
+  void listMultipartUploadsFollowsPages(VertxTestContext testContext) {
+    S3ClientImpl impl = (S3ClientImpl) client;
+    String prefix = "paging-" + UUID.randomUUID().toString().substring(0, 8) + "/";
+    List<String> keys = List.of(prefix + "a.mp4", prefix + "a.mp4", prefix + "b.mp4");
+    keys.forEach(key -> resources.key(bucket, key));
+    String listPrefix = prefixMatchesKeyStarts() ? prefix : null;
+    List<String> created = new ArrayList<>();
+    Future<Void> creates = Future.succeededFuture();
+    for (String key : keys) {
+      creates = creates.compose(v -> client.createMultipartUpload(bucket, key, null).map(id -> {
+        created.add(key + " " + id);
+        return null;
+      }));
+    }
+    creates
+      .compose(v -> impl.listMultipartUploads(bucket, listPrefix, 1, 100))
+      .compose(listed -> {
+        List<String> ours = listed.stream().filter(u -> u.getKey().startsWith(prefix))
+          .map(u -> u.getKey() + " " + u.getUploadId()).collect(Collectors.toList());
+        assertEquals(created.stream().sorted().collect(Collectors.toSet()), Set.copyOf(ours));
+        assertEquals(keys, ours.stream().map(s -> s.substring(0, s.indexOf(' '))).collect(Collectors.toList()), "key order");
+        return impl.listMultipartUploads(bucket, listPrefix, 1, 2).transform(Future::succeededFuture);
+      })
+      .compose(limited -> {
+        if (pagesUploadListings()) {
+          assertInstanceOf(S3ClientException.class, limited.cause());
+          assertTrue(limited.cause().getMessage().startsWith("More than 2 multipart uploads are open"), limited.cause().getMessage());
+        } else {
+          assertTrue(limited.succeeded(), String.valueOf(limited.cause()));
+        }
+        return Future.join(created.stream().map(s -> client.abortMultipartUpload(bucket, s.substring(0, s.indexOf(' ')),
+          s.substring(s.indexOf(' ') + 1))).collect(Collectors.toList()));
+      })
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
   // --- helpers -------------------------------------------------------------------------------------
 
   /** Uploads a part through a presigned URL; the future completes with its ETag. */
@@ -438,9 +492,13 @@ abstract class S3ClientMultipartTestBase {
   }
 
   private static void assertNoSuchUpload(Throwable failure) {
+    assertGone(failure, "NoSuchUpload");
+  }
+
+  private static void assertGone(Throwable failure, String code) {
     S3ServiceException e = assertInstanceOf(S3ServiceException.class, failure);
     assertEquals(404, e.getStatusCode(), e.getMessage());
-    assertEquals("NoSuchUpload", e.getErrorCode());
+    assertEquals(code, e.getErrorCode());
   }
 
   private static void expectError(Response response, int status, String code) {
