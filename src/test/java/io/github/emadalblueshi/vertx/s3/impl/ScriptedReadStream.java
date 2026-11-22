@@ -99,7 +99,11 @@ final class ScriptedReadStream implements ReadStream<Buffer> {
   }
 
   Future<Void> emit(String chunk) {
-    return deliver(() -> handler.handle(Buffer.buffer(chunk)));
+    return emit(Buffer.buffer(chunk));
+  }
+
+  Future<Void> emit(Buffer chunk) {
+    return deliver(() -> handler.handle(chunk));
   }
 
   Future<Void> end() {

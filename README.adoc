@@ -102,6 +102,24 @@ client.deleteObject("my-bucket", "notes/hello.txt");
 `getObject` buffers the object in memory, so it is for small objects only: above
 `maxBufferedObjectSize` (4 MiB by default) it fails and points to `getObjectStream`.
 
+=== Uploading files and streams
+
+`putFile` uploads a file of any size (up to 5 TiB) without buffering it; `putObject` also takes a
+`ReadStream<Buffer>`, such as an HTTP request body. Large uploads become multipart uploads, aborted
+on failure:
+
+[source,java]
+----
+client.putFile("my-bucket", "videos/big.mp4", "/data/big.mp4", new S3PutObjectOptions().setContentType("video/mp4"));
+
+client.putObject("my-bucket", "uploads/" + UUID.randomUUID(), request)
+  .onSuccess(etag -> request.response().setStatusCode(201).end())
+  .onFailure(err -> request.response().setStatusCode(502).end());
+----
+
+A streamed upload buffers up to about 16 MiB while it runs; size memory for the streamed uploads
+you run at once. `putFile` needs only a few chunks.
+
 === Streaming an object to an HTTP response
 
 `getObjectStream` streams an object of any size with backpressure. The stream must be read to the
@@ -177,8 +195,9 @@ client.createMultipartUpload("my-bucket", "videos/big.mp4", new S3PutObjectOptio
 == Documentation
 
 The link:src/main/asciidoc/index.adoc[manual] covers everything else: contexts and threading,
-addressing styles, transport options and credentials, ranges and cancellation, listing pages, the
-presigned upload flow, multipart uploads (part sizes, resuming, cleanup), and errors. Its code snippets are in
+addressing styles, transport options and credentials, file and stream uploads, ranges and
+cancellation, listing pages, the presigned upload flow, multipart uploads (part sizes, resuming,
+cleanup), and errors. Its code snippets are in
 link:src/main/java/examples/Examples.java[`Examples.java`]. To build it as HTML
 (`target/docs/vertx-s3-client/java/index.html`), with the javadoc (`target/docs/apidocs`):
 

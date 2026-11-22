@@ -123,6 +123,19 @@ public class Examples {
     client.putObject("my-bucket", "avatars/user-42.png", png, options);
   }
 
+  public void putFile(S3Client client) {
+    client.putFile("my-bucket", "videos/big.mp4", "/data/big.mp4", new S3PutObjectOptions().setContentType("video/mp4"))
+      .onSuccess(etag -> System.out.println("uploaded, ETag " + etag));
+  }
+
+  public void putObjectFromRequest(S3Client client, HttpServerRequest request) {
+    String key = "uploads/" + UUID.randomUUID();
+    // The client pauses the request body at once, so no chunk is lost while the upload starts
+    client.putObject("my-bucket", key, request, new S3PutObjectOptions().setContentType("application/octet-stream"))
+      .onSuccess(etag -> request.response().setStatusCode(201).end(key))
+      .onFailure(err -> request.response().setStatusCode(502).end());
+  }
+
   public void getObject(S3Client client) {
     client.getObject("my-bucket", "reports/2026/summary.txt")
       .onSuccess(body -> System.out.println(body.toString()));

@@ -425,6 +425,9 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   HTTP (signed: inline, and above the `executeBlocking` threshold). HTTPS uses a committed,
   test-only self-signed certificate with a long expiry under `src/test/resources` (named so it
   is obviously test-only).
+- The `S3ClientObject*` suites (every backend) round-trip `putObject(ReadStream)` and `putFile`
+  with 5 MiB parts through the package-private hooks: 0 and 1 byte, one part, one part and a byte,
+  exact and inexact multiples; a stream that fails mid-upload leaves no open upload and no object.
 - Streaming tests cover backpressure (slow consumer), empty stream, exact part-size multiples,
   failures, and abort.
 - Test data is generated at runtime: random bytes of exact sizes (e.g. 0, 1 byte, 5 MiB,

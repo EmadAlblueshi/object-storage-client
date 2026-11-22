@@ -166,6 +166,52 @@ Metadata values that aren't US-ASCII are rejected, not encoded. If you need them
 names), URL-encode them yourself, or keep such data in the object key (keys accept any Unicode
 character) or in your own database.
 
+=== Uploading files
+
+`putFile` uploads a file of any size up to S3's 5 TiB limit, without buffering it and without
+blocking the event loop:
+
+[source,$lang]
+----
+{@link examples.Examples#putFile}
+----
+
+The file's size is read and the file opened before any request, so a missing file or a directory
+fails with an `S3ClientException` without contacting the server. A file of up to 8 MiB is one
+PutObject. A larger file is a multipart upload with two parts in flight, each streamed straight
+from its byte range of the file; the part size grows with the file (8 MiB up to 78 GiB, then the
+smallest multiple of 8 MiB that fits 10,000 parts). Memory use stays at a few chunks per upload,
+whatever the file size.
+
+Don't change the file during the upload. A file that shrinks fails the upload, but a file changed
+in place without changing its length is uploaded as found, partly old and partly new.
+
+=== Uploading streams
+
+`putObject` also takes a `ReadStream<Buffer>` of unknown length, such as an HTTP request body:
+
+[source,$lang]
+----
+{@link examples.Examples#putObjectFromRequest}
+----
+
+The stream is read with backpressure, on the context that called `putObject`. A stream that ends
+within 8 MiB is one PutObject; a longer one is a multipart upload of 8 MiB parts, one uploading
+while the next fills. A stream is limited to 10,000 parts (78 GiB); use `putFile` for larger files.
+If the arguments are invalid, the stream isn't read and stays paused, so answer the request in
+`onFailure`.
+
+IMPORTANT: A streamed upload buffers up to two parts, about 16 MiB, while it runs. Size your memory
+for the streamed uploads you run at once: 50 concurrent uploads need about 800 MiB. `putFile`
+needs only a few chunks per upload; prefer it when the data is already in a file.
+
+Both forms send the ETag of the object, or of the multipart upload (`"…-N"`), as the result. If
+anything fails (the stream, the file, a part, the completion) or the client is closed during the
+upload, the multipart upload is aborted, so no parts are left behind, and the future fails with the
+original cause. Over plain HTTP each part is signed with its SHA-256: streamed parts are hashed as
+they arrive, and file parts are read twice, once to hash them. Over HTTPS nothing is hashed
+(`UNSIGNED-PAYLOAD`).
+
 === Downloading small objects
 
 `getObject` buffers the whole object in memory, so it is for *small objects only*. An object larger

@@ -2,11 +2,14 @@ package io.github.emadalblueshi.vertx.s3.impl;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +41,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.file.OpenOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 
@@ -94,7 +98,16 @@ abstract class S3ClientObjectTestBase {
       testContext.completeNow();
       return;
     }
-    resources.cleanUp(client).eventually(client::close).onComplete(testContext.succeedingThenComplete());
+    // A streamed upload a failing test left open would keep its parts (billed on a real account)
+    // and its bucket: abort every open upload first
+    client.listMultipartUploads(bucket, null)
+      .compose(open -> Future.join(open.stream()
+        .map(upload -> client.abortMultipartUpload(bucket, upload.getKey(), upload.getUploadId()))
+        .collect(Collectors.toList())))
+      .otherwiseEmpty()
+      .compose(v -> resources.cleanUp(client))
+      .eventually(client::close)
+      .onComplete(testContext.succeedingThenComplete());
   }
 
   @ParameterizedTest
@@ -430,6 +443,98 @@ abstract class S3ClientObjectTestBase {
       assertEquals("NoSuchBucket", service.getErrorCode());
       testContext.completeNow();
     })));
+  }
+
+  // --- streamed and file uploads (5 MiB parts, S3's minimum, through the impl hooks) -------------
+
+  private static final int MIN_PART = 5 * 1024 * 1024;
+
+  /**
+   * Uploads from a stream of unknown length: empty, 1 byte, exactly one part (a single
+   * PutObject), one part and a byte, and an exact multiple of the part size (three parts, no empty
+   * last part). The source is a real file stream; over plain HTTP each part's SHA-256 is computed
+   * as it streams in, over HTTPS the parts are UNSIGNED-PAYLOAD.
+   */
+  @ParameterizedTest
+  @ValueSource(ints = {0, 1, MIN_PART, MIN_PART + 1, 3 * MIN_PART})
+  void streamedUploadRoundTrip(int size, VertxTestContext testContext) {
+    byte[] data = random(size);
+    String key = resources.key(bucket, "streamed/" + size + ".bin");
+    tempFile(data)
+      .compose(path -> vertx.fileSystem().open(path, new OpenOptions().setRead(true).setWrite(false).setCreate(false)))
+      .compose(file -> ((S3ClientImpl) client).putObject(bucket, key, file,
+          new S3PutObjectOptions().setContentType("application/octet-stream"), MIN_PART, MultipartRequests.MAX_PARTS)
+        .eventually(file::close))
+      .compose(etag -> verifyUpload(key, etag, data, size <= MIN_PART ? 0 : (size + MIN_PART - 1) / MIN_PART))
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  /**
+   * File uploads, each part streamed from its byte range of the file with an exact
+   * Content-Length: empty, 1 byte, exactly one part, one part and a byte, and two parts and a bit.
+   */
+  @ParameterizedTest
+  @ValueSource(ints = {0, 1, MIN_PART, MIN_PART + 1, 2 * MIN_PART + 3})
+  void fileUploadRoundTrip(int size, VertxTestContext testContext) {
+    byte[] data = random(size);
+    String key = resources.key(bucket, "files/" + size + ".bin");
+    tempFile(data)
+      .compose(path -> ((S3ClientImpl) client).putFile(bucket, key, path,
+        new S3PutObjectOptions().setContentType("application/octet-stream"), MIN_PART, MultipartRequests.MAX_PARTS,
+        name -> vertx.fileSystem().open(name, new OpenOptions().setRead(true).setWrite(false).setCreate(false))))
+      .compose(etag -> verifyUpload(key, etag, data, size <= MIN_PART ? 0 : (size + MIN_PART - 1) / MIN_PART))
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  /** A stream that fails after its first part leaves neither an open multipart upload nor an object. */
+  @Test
+  void failedStreamedUploadIsAborted(VertxTestContext testContext) {
+    String key = resources.key(bucket, "streamed/failed.bin");
+    ScriptedReadStream source = new ScriptedReadStream(vertx.getOrCreateContext());
+    source.pause();
+    IOException broken = new IOException("source failed");
+    Future<String> upload = ((S3ClientImpl) client).putObject(bucket, key, source, null, MIN_PART, MultipartRequests.MAX_PARTS);
+    source.whenResumed()
+      .compose(v -> source.emit(Buffer.buffer(random(MIN_PART + 1))))
+      .compose(v -> source.fail(broken));
+    upload
+      .transform(ar -> {
+        assertSame(broken, ar.cause());
+        return client.listMultipartUploads(bucket, null);
+      })
+      .compose(open -> {
+        assertFalse(open.stream().anyMatch(u -> u.getKey().equals(key)), "left open: " + open);
+        return client.headObject(bucket, key).transform(Future::succeededFuture);
+      })
+      .onComplete(testContext.succeeding(head -> testContext.verify(() -> {
+        assertEquals(404, assertInstanceOf(S3ServiceException.class, head.cause()).getStatusCode());
+        testContext.completeNow();
+      })));
+  }
+
+  /** Checks the uploaded object: its bytes, type, and the ETag of a multipart upload of {@code parts} parts. */
+  private Future<Void> verifyUpload(String key, String etag, byte[] data, int parts) {
+    if (parts > 0) {
+      assertTrue(etag.endsWith("-" + parts + "\""), etag);
+    }
+    return client.headObject(bucket, key)
+      .compose(head -> {
+        assertEquals(data.length, head.getContentLength());
+        assertEquals("application/octet-stream", head.getContentType());
+        return client.getObjectStream(bucket, key).compose(stream -> stream.collect(Collectors.toList()));
+      })
+      .map(chunks -> {
+        assertArrayEquals(data, concat(chunks).getBytes());
+        return null;
+      });
+  }
+
+  /** A temporary file with {@code content}, deleted when the JVM exits. */
+  private Future<String> tempFile(byte[] content) {
+    return vertx.fileSystem().createTempFile("vertx-s3-it-", ".bin").compose(path -> {
+      new java.io.File(path).deleteOnExit();
+      return vertx.fileSystem().writeFile(path, Buffer.buffer(content)).map(path);
+    });
   }
 
   private Future<List<S3ListObjectsResult>> listAllPages(S3ListObjectsOptions options, List<S3ListObjectsResult> pages) {

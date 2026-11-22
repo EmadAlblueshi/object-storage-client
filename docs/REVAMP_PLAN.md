@@ -785,7 +785,9 @@ part uploads. Design decisions (owner, 2026-11-22):
   `putObject(ReadStream)`, abort on close, stub, fake-stream and context tests; (4b) `putFile`
   (open first, close always, part size from the file size); (4c) integration in the shared
   suites (every backend) and the docs, including the memory note (about 16 MiB per concurrent
-  `putObject(ReadStream)` upload; `putFile` only a few chunks).
+  `putObject(ReadStream)` upload; `putFile` only a few chunks). All three are done; the
+  integration tests use 5 MiB parts (S3's minimum) through the package-private hooks, so they stay
+  small on a real account (about 50 MiB per run).
 
 ### Unreproduced build failure (2026-11-22, during step 4b)
 One `mvn test` run (an incremental build: a clean main-only compile, then edited test files)
