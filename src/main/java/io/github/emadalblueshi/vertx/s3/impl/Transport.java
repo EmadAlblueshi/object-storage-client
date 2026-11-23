@@ -360,9 +360,15 @@ final class Transport {
    * the request closes the connection if the response is still in flight. If the response has
    * already ended (or the connection is already closed), the cancellation may fail or report
    * nothing to cancel; that outcome is ignored, because it can't change the decided result.
+   * <p>
+   * The cancellation fails the response with a stream reset. That is expected, so the response gets
+   * a handler that ignores it first: Vert.x logs the reset of a response with no handler set as an
+   * error, and here {@link #readBody} may not have attached its handlers yet. (Setting the handler
+   * throws if the response has already ended; then there is nothing to cancel.)
    */
   private static void abandon(HttpClientResponse response) {
     try {
+      response.exceptionHandler(ignored -> { });
       response.request().cancel();
     } catch (RuntimeException ignored) {
       // best-effort, see above

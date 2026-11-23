@@ -113,7 +113,9 @@ class TransportStubTest {
         for (int i = 0; i < out.length(); i += 8192) {
           response.write(out.slice(i, Math.min(out.length(), i + 8192)));
         }
-        if (!stub.withholdEnd) {
+        if (stub.thenClose) {
+          request.connection().close();
+        } else if (!stub.withholdEnd) {
           response.end();
         } // else: the response stays open until the client closes the connection
       } else {
@@ -919,6 +921,110 @@ class TransportStubTest {
     })));
   }
 
+  // --- intentional cancellations log nothing ---------------------------------------------------------
+
+  /**
+   * The control for the tests below: Vert.x logs the reset of a response that has no exception
+   * handler at SEVERE, and the capture sees it. Without it, "nothing logged" could pass with a
+   * capture that sees nothing.
+   */
+  @Test
+  void captureSeesVertxLogTheResetOfAResponseWithoutHandlers(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, "").header("Content-Length", "1000000").headersOnly());
+    VertxLogCapture capture = VertxLogCapture.start();
+    rawExchange((caller, response) -> response.request().cancel().<Void>mapEmpty())
+      .eventually(() -> { capture.close(); return Future.succeededFuture(); })
+      .onComplete(testContext.succeeding(outcome -> testContext.verify(() -> {
+        assertTrue(capture.logged().contains("SEVERE: Stream reset: 8"), capture.logged());
+        testContext.completeNow();
+      })));
+  }
+
+  /** A body announced over the limit is abandoned before any handler is attached: nothing is logged. */
+  @Test
+  void abandoningABodyOnItsAnnouncedLengthLogsNothing(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, "").header("Content-Length", "1000000").headersOnly());
+    expectNothingLogged(testContext, (caller, response) ->
+      Transport.readBody(caller, response, 1024, length -> new S3ClientException("too large: " + length, null)),
+      outcome -> assertEquals("too large: 1000000", outcome.cause().getMessage()));
+  }
+
+  @Test
+  void abandoningABodyAtTheLimitLogsNothing(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    expectNothingLogged(testContext, (caller, response) ->
+      Transport.readBody(caller, response, 10_000, length -> new S3ClientException("too large", null)),
+      outcome -> assertEquals("too large", outcome.cause().getMessage()));
+  }
+
+  @Test
+  void truncatingAnErrorBodyLogsNothing(VertxTestContext testContext) {
+    responder.set(c -> new Stub(500, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    expectNothingLogged(testContext, (caller, response) -> Transport.readBody(caller, response, 10_000, null),
+      outcome -> assertEquals(10_000, outcome.result().length()));
+  }
+
+  @Test
+  void cancellingAnObjectStreamLogsNothing(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    expectNothingLogged(testContext, (caller, response) ->
+      new ObjectStreamImpl(vertx, caller, response, ObjectRequests.metadata(response.headers())).cancel(),
+      outcome -> assertTrue(outcome.succeeded()));
+  }
+
+  /** A real failure, before the outcome is decided, still fails the Future (and the log is left alone). */
+  @Test
+  void aConnectionLostWhileReadingStillFailsTheBody(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[16 * 1024])).chunked().withholdEnd().thenClose());
+    rawExchange((caller, response) -> Transport.readBody(caller, response, 1024 * 1024, null))
+      .onComplete(testContext.succeeding(outcome -> testContext.verify(() -> {
+        assertTrue(outcome.failed(), "the body was read despite the lost connection");
+        assertInstanceOf(io.vertx.core.http.HttpClosedException.class, outcome.cause());
+        testContext.completeNow();
+      })));
+  }
+
+  private <T> void expectNothingLogged(VertxTestContext testContext,
+                                       java.util.function.BiFunction<ContextSupport.Caller, io.vertx.core.http.HttpClientResponse, Future<T>> use,
+                                       java.util.function.Consumer<io.vertx.core.AsyncResult<T>> check) {
+    VertxLogCapture capture = VertxLogCapture.start();
+    rawExchange(use)
+      .eventually(() -> { capture.close(); return Future.succeededFuture(); })
+      .onComplete(testContext.succeeding(outcome -> testContext.verify(() -> {
+        check.accept(outcome);
+        assertEquals("", capture.logged());
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * On one context: sends a GET to the stub with a plain {@code HttpClient}, and hands the response,
+   * unread, to {@code use} in the task that delivers it. Completes with {@code use}'s outcome once
+   * the response has ended or been reset, plus one more task on that context: Vert.x logs an
+   * unhandled reset in the task that fails the response's end, so by then it would have.
+   */
+  private <T> Future<io.vertx.core.AsyncResult<T>> rawExchange(
+      java.util.function.BiFunction<ContextSupport.Caller, io.vertx.core.http.HttpClientResponse, Future<T>> use) {
+    Promise<io.vertx.core.AsyncResult<T>> done = Promise.promise();
+    io.vertx.core.Context context = vertx.getOrCreateContext();
+    context.runOnContext(v -> {
+      ContextSupport.Caller caller = ContextSupport.capture(vertx);
+      io.vertx.core.http.HttpClient client = vertx.createHttpClient();
+      client.request(HttpMethod.GET, http.actualPort(), "localhost", "/bucket/key")
+        .compose(io.vertx.core.http.HttpClientRequest::send)
+        .onComplete(ar -> {
+          if (ar.failed()) {
+            done.fail(ar.cause());
+            return;
+          }
+          io.vertx.core.http.HttpClientResponse response = ar.result();
+          use.apply(caller, response).onComplete(outcome -> response.end().onComplete(end ->
+            context.runOnContext(w -> client.close().onComplete(closed -> done.complete(outcome)))));
+        });
+    });
+    return done.future();
+  }
+
   // --- helpers ---------------------------------------------------------------------------------------
 
   private void expectFailure(VertxTestContext testContext, java.util.function.Consumer<Throwable> check) {
@@ -1004,6 +1110,13 @@ class TransportStubTest {
     }
 
     boolean withholdEnd;
+    boolean thenClose;
+
+    /** Closes the connection after the chunks, without ending the response. */
+    Stub thenClose() {
+      thenClose = true;
+      return this;
+    }
 
     Promise<Void> backedUp;
     AtomicInteger chunksWritten;

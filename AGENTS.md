@@ -280,7 +280,11 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   (limit error or truncated body) is recorded first, later data, end and failure events are
   ignored, and the request is cancelled best-effort, which closes the connection if the response is
   still in flight. A failure of that cancel (e.g. the response already ended) is ignored. The same
-  rule applies to `S3ObjectStream.cancel()`, whose Future never fails.
+  rule applies to `S3ObjectStream.cancel()`, whose Future never fails. An intentional cancel or
+  reset never reaches the log: Vert.x logs the reset of a response (or request) with no handler
+  set as an error, so one is set before cancelling (a no-op exception handler where nothing else
+  is attached yet); real failures still fail the Future. `TransportStubTest` checks it by
+  capturing the Vert.x log (`VertxLogCapture`).
   A HEAD response's `Content-Length` describes the object and never counts as a body.
 - The transport assembles the whole exchange in one task on the caller's context
   (`Caller.onContext`) before the request is sent: signing, sending, and every continuation that
