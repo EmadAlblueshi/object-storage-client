@@ -170,8 +170,11 @@ JsonObject forTheApp = upload.toJson(); // {"url": ..., "method": "PUT", "header
 ----
 
 `S3Presigner.create(options)` presigns without a `Vertx` instance, and `setPublicEndpoint` makes
-URLs point to a public host while the client uses an in-cluster address. URLs are bearer tokens:
-never log them, and verify uploads with `headObject` before trusting them.
+URLs point to a public host while the client uses an in-cluster address. With
+`S3PresignPutOptions`, a URL signs the `Content-Type`, `Content-MD5` and `Content-Length` the
+uploader must send; a signed length pins the exact size the backend approved (send a real
+`Content-Length`, not a chunked body). URLs are bearer tokens: never log them, and verify uploads
+with `headObject` before trusting them.
 
 === Multipart uploads
 

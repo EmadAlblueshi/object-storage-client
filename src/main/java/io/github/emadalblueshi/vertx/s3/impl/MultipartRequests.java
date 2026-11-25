@@ -21,6 +21,9 @@ final class MultipartRequests {
   static final long MIN_PART_SIZE = 5L * 1024 * 1024;
   static final long MAX_PART_SIZE = 5L * 1024 * 1024 * 1024;
 
+  /** S3's largest single {@code PUT}: 5 GiB. */
+  static final long MAX_PUT_SIZE = 5L * 1024 * 1024 * 1024;
+
   /** S3's largest object: 5 TiB. */
   static final long MAX_OBJECT_SIZE = 5L * 1024 * 1024 * 1024 * 1024;
 

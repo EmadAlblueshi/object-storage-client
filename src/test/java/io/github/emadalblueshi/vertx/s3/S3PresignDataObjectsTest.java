@@ -18,13 +18,20 @@ class S3PresignDataObjectsTest {
 
   @Test
   void putOptionsCopyAndJson() {
-    S3PresignPutOptions options = new S3PresignPutOptions().setContentType("image/jpeg").setContentMd5("1B2M2Y8AsgTpgAmY7PhCfg==");
+    S3PresignPutOptions options = new S3PresignPutOptions().setContentType("image/jpeg").setContentMd5("1B2M2Y8AsgTpgAmY7PhCfg==")
+      .setContentLength(5_368_709_120L);
     JsonObject json = options.toJson();
-    assertEquals(new JsonObject().put("contentType", "image/jpeg").put("contentMd5", "1B2M2Y8AsgTpgAmY7PhCfg=="), json);
+    assertEquals(new JsonObject().put("contentType", "image/jpeg").put("contentMd5", "1B2M2Y8AsgTpgAmY7PhCfg==")
+      .put("contentLength", 5_368_709_120L), json);
     assertEquals(json, new S3PresignPutOptions(json).toJson());
     assertEquals(json, new S3PresignPutOptions(options).toJson());
+    assertEquals(5_368_709_120L, new S3PresignPutOptions(json).getContentLength());
     assertNull(new S3PresignPutOptions().getContentType());
     assertNull(new S3PresignPutOptions().getContentMd5());
+    assertNull(new S3PresignPutOptions().getContentLength());
+    assertEquals(new JsonObject(), new S3PresignPutOptions().toJson(), "an unset length isn't written");
+    assertNull(new S3PresignPutOptions(options).setContentLength(null).getContentLength(), "null clears it");
+    assertTrue(options.toString().contains("contentLength=5368709120"), options.toString());
   }
 
   @Test
@@ -41,12 +48,16 @@ class S3PresignDataObjectsTest {
 
   @Test
   void uploadPartOptionsCopyAndJson() {
-    S3PresignUploadPartOptions options = new S3PresignUploadPartOptions().setContentMd5("1B2M2Y8AsgTpgAmY7PhCfg==");
+    S3PresignUploadPartOptions options = new S3PresignUploadPartOptions().setContentMd5("1B2M2Y8AsgTpgAmY7PhCfg==")
+      .setContentLength(8_388_608L);
     JsonObject json = options.toJson();
-    assertEquals(new JsonObject().put("contentMd5", "1B2M2Y8AsgTpgAmY7PhCfg=="), json);
+    assertEquals(new JsonObject().put("contentMd5", "1B2M2Y8AsgTpgAmY7PhCfg==").put("contentLength", 8_388_608L), json);
     assertEquals(json, new S3PresignUploadPartOptions(json).toJson());
     assertEquals(json, new S3PresignUploadPartOptions(options).toJson());
     assertNull(new S3PresignUploadPartOptions().getContentMd5());
+    assertNull(new S3PresignUploadPartOptions().getContentLength());
+    assertEquals(new JsonObject(), new S3PresignUploadPartOptions().toJson());
+    assertTrue(options.toString().contains("contentLength=8388608"), options.toString());
   }
 
   @Test

@@ -223,6 +223,62 @@ class S3PresignerTest {
     assertTrue(request.getUrl().contains("&X-Amz-SignedHeaders=content-type%3Bhost&"), request.getUrl());
   }
 
+  /**
+   * A signed Content-Length joins the other signed headers: all three are signed together, and the
+   * headers to send keep a fixed order whatever order the options were set in.
+   */
+  @Test
+  void contentLengthIsSignedWithTheOtherHeaders() {
+    S3Presigner presigner = presigner(local(), NOW);
+    S3PresignedRequest request = presigner.presignPut("my-bucket", "photos/a.jpg", 600, TimeUnit.SECONDS,
+      new S3PresignPutOptions().setContentLength(1_048_576L).setContentMd5(MD5).setContentType("image/jpeg"));
+
+    assertEquals(List.of(Map.entry("Content-Type", "image/jpeg"), Map.entry("Content-MD5", MD5),
+      Map.entry("Content-Length", "1048576")), List.copyOf(request.getHeaders().entrySet()));
+    S3SignatureV4.Presigned signed = new S3SignatureV4("test-west-1", NOW).presign(
+      new S3SignatureV4.Request("PUT", "localhost:9000", "/my-bucket/photos/a.jpg", List.of(),
+        List.of(Map.entry("Content-Type", "image/jpeg"), Map.entry("Content-MD5", MD5), Map.entry("Content-Length", "1048576")),
+        S3SignatureV4.UNSIGNED_PAYLOAD),
+      600, "AKIDEXAMPLE", "secret", "token");
+    assertEquals("http://localhost:9000/my-bucket/photos/a.jpg?" + signed.query, request.getUrl());
+    assertTrue(request.getUrl().contains("&X-Amz-SignedHeaders=content-length%3Bcontent-md5%3Bcontent-type%3Bhost&"),
+      request.getUrl());
+    assertTrue(signed.canonicalRequest.contains("\ncontent-length:1048576\ncontent-md5:" + MD5 + "\ncontent-type:image/jpeg\n"),
+      signed.canonicalRequest);
+
+    assertEquals(request.toJson(), presigner.presignPut("my-bucket", "photos/a.jpg", 600, TimeUnit.SECONDS,
+      new S3PresignPutOptions().setContentType("image/jpeg").setContentMd5(MD5).setContentLength(1_048_576L)).toJson(),
+      "the setter order doesn't matter");
+  }
+
+  @Test
+  void contentLengthAloneIsSignedAndAnEmptyObjectIsAllowed() {
+    S3Presigner presigner = presigner(local(), NOW);
+    S3PresignedRequest empty = presigner.presignPut("my-bucket", "a.bin", 600, TimeUnit.SECONDS,
+      new S3PresignPutOptions().setContentLength(0L));
+    assertEquals(Map.of("Content-Length", "0"), empty.getHeaders());
+    assertTrue(empty.getUrl().contains("&X-Amz-SignedHeaders=content-length%3Bhost&"), empty.getUrl());
+    assertEquals(Map.of("Content-Length", "5368709120"), presigner.presignPut("my-bucket", "a.bin", 600, TimeUnit.SECONDS,
+      new S3PresignPutOptions().setContentLength(5L * 1024 * 1024 * 1024)).getHeaders(), "5 GiB, S3's single-PUT limit");
+    assertEquals(presigner.presignPut("my-bucket", "a.bin", 600, TimeUnit.SECONDS),
+      presigner.presignPut("my-bucket", "a.bin", 600, TimeUnit.SECONDS, new S3PresignPutOptions().setContentLength(null)).getUrl(),
+      "null means not signed");
+  }
+
+  @Test
+  void invalidContentLengthsAreRejected() {
+    S3Presigner presigner = presigner(local(), NOW);
+    assertRejected(() -> presigner.presignPut("b-1", "k", 60, TimeUnit.SECONDS,
+      new S3PresignPutOptions().setContentLength(-1L)), "The content length must not be negative: -1");
+    assertRejected(() -> presigner.presignPut("b-1", "k", 60, TimeUnit.SECONDS,
+      new S3PresignPutOptions().setContentLength(Long.MIN_VALUE)), "must not be negative");
+    assertRejected(() -> presigner.presignPut("b-1", "k", 60, TimeUnit.SECONDS,
+      new S3PresignPutOptions().setContentLength(5L * 1024 * 1024 * 1024 + 1)),
+      "A single PUT is limited to 5 GiB (5368709120 bytes): 5368709121; use a multipart upload");
+    assertRejected(() -> presigner.presignPut("b-1", "k", Duration.ofMinutes(1),
+      new S3PresignPutOptions().setContentLength(Long.MAX_VALUE)), "A single PUT is limited to 5 GiB");
+  }
+
   /** GET options become signed response-* query parameters, in canonical order, with nothing to send. */
   @Test
   void getOptionsAreSignedResponseOverrides() {
@@ -257,7 +313,7 @@ class S3PresignerTest {
   @Test
   void durationOverloadsWithOptionsMatchTheTimeUnitOnes() {
     S3Presigner presigner = presigner(local(), NOW);
-    S3PresignPutOptions put = new S3PresignPutOptions().setContentType("image/png");
+    S3PresignPutOptions put = new S3PresignPutOptions().setContentType("image/png").setContentLength(1234L);
     S3PresignGetOptions get = new S3PresignGetOptions().setCacheControl("no-store");
     assertEquals(presigner.presignPut("b-1", "k", 2, TimeUnit.MINUTES, put).toJson(),
       presigner.presignPut("b-1", "k", Duration.ofMinutes(2), put).toJson());
@@ -319,6 +375,24 @@ class S3PresignerTest {
     assertTrue(request.getUrl().contains("&X-Amz-SignedHeaders=content-md5%3Bhost&"), request.getUrl());
   }
 
+  /** Each part signs its own exact length; the last part's is the remainder. */
+  @Test
+  void uploadPartOptionsSignTheContentLength() {
+    S3Presigner presigner = presigner(local(), NOW);
+    S3PresignedRequest part = presigner.presignUploadPart("my-bucket", "k", "up-1", 1, 600, TimeUnit.SECONDS,
+      new S3PresignUploadPartOptions().setContentLength(8_388_608L).setContentMd5(MD5));
+    assertEquals(List.of(Map.entry("Content-MD5", MD5), Map.entry("Content-Length", "8388608")),
+      List.copyOf(part.getHeaders().entrySet()), "in a stable order");
+    assertTrue(part.getUrl().contains("&X-Amz-SignedHeaders=content-length%3Bcontent-md5%3Bhost&partNumber=1&uploadId=up-1&"),
+      part.getUrl());
+    S3PresignedRequest last = presigner.presignUploadPart("my-bucket", "k", "up-1", 3, 600, TimeUnit.SECONDS,
+      new S3PresignUploadPartOptions().setContentLength(12_345L));
+    assertEquals(Map.of("Content-Length", "12345"), last.getHeaders(), "a last part may be smaller than 5 MiB");
+    assertEquals(Map.of("Content-Length", "5368709120"), presigner.presignUploadPart("my-bucket", "k", "up-1", 2, 600,
+      TimeUnit.SECONDS, new S3PresignUploadPartOptions().setContentLength(5L * 1024 * 1024 * 1024)).getHeaders(),
+      "5 GiB, S3's part limit");
+  }
+
   @Test
   void uploadPartOverloadsAgree() {
     S3Presigner presigner = presigner(local(), NOW);
@@ -327,7 +401,7 @@ class S3PresignerTest {
     assertEquals(url, presigner.presignUploadPart("b-1", "k", "up-1", 10_000, 15, TimeUnit.MINUTES, null).getUrl());
     assertEquals(url, presigner.presignUploadPart("b-1", "k", "up-1", 10_000, 15, TimeUnit.MINUTES,
       new S3PresignUploadPartOptions()).getUrl());
-    S3PresignUploadPartOptions md5 = new S3PresignUploadPartOptions().setContentMd5(MD5);
+    S3PresignUploadPartOptions md5 = new S3PresignUploadPartOptions().setContentMd5(MD5).setContentLength(5_242_880L);
     assertEquals(presigner.presignUploadPart("b-1", "k", "up-1", 2, 15, TimeUnit.MINUTES, md5).toJson(),
       presigner.presignUploadPart("b-1", "k", "up-1", 2, Duration.ofMinutes(15), md5).toJson());
   }
@@ -344,6 +418,11 @@ class S3PresignerTest {
     assertThrows(NullPointerException.class, () -> presigner.presignUploadPart("b-1", "k", null, 1, 60, TimeUnit.SECONDS));
     assertRejected(() -> presigner.presignUploadPart("b-1", "k", "up-1", 1, 60, TimeUnit.SECONDS,
       new S3PresignUploadPartOptions().setContentMd5("1B2M2Y8AsgTpgAmY7PhCfg")), "Content-MD5");
+    assertRejected(() -> presigner.presignUploadPart("b-1", "k", "up-1", 1, 60, TimeUnit.SECONDS,
+      new S3PresignUploadPartOptions().setContentLength(-1L)), "The content length must not be negative: -1");
+    assertRejected(() -> presigner.presignUploadPart("b-1", "k", "up-1", 1, Duration.ofMinutes(1),
+      new S3PresignUploadPartOptions().setContentLength(5L * 1024 * 1024 * 1024 + 1)),
+      "A part is limited to 5 GiB (5368709120 bytes): 5368709121");
     // the bucket, key and expiry rules still apply
     assertRejected(() -> presigner.presignUploadPart("B", "k", "up-1", 1, 60, TimeUnit.SECONDS), "");
     assertRejected(() -> presigner.presignUploadPart("b-1", "", "up-1", 1, 60, TimeUnit.SECONDS), "key");

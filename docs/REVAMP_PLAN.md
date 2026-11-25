@@ -19,10 +19,12 @@ plus a presigner. **Not** a clone of the AWS SDK.
   without depending on lifecycle-rule support, which varies between S3-compatible servers.
 - ListObjectsV2.
 - `S3Presigner`: GET and PUT. Optional `S3PresignPutOptions` (signed `Content-Type`,
-  `Content-MD5`) and `S3PresignGetOptions` (`Content-Type`, `Content-Disposition`, `Cache-Control`
-  response overrides) (owner decision D5, 2026-11-22). Deferred, non-breaking to add in 1.x:
-  `x-amz-checksum-*`, `If-None-Match`, signed user metadata, `Cache-Control`/`Content-Disposition`
-  on PUT, GET `Content-Encoding`/`Content-Language`/`Expires` overrides, presigned DELETE/HEAD.
+  `Content-MD5`, `Content-Length`) and `S3PresignGetOptions` (`Content-Type`,
+  `Content-Disposition`, `Cache-Control` response overrides) (owner decision D5, 2026-11-22; the
+  signed `Content-Length`, also on parts, owner decision D6, 2026-11-23). Deferred, non-breaking
+  to add in 1.x: `x-amz-checksum-*`, `If-None-Match`, signed user metadata,
+  `Cache-Control`/`Content-Disposition` on PUT, GET `Content-Encoding`/`Content-Language`/`Expires`
+  overrides, presigned DELETE/HEAD.
 - Dropped for 1.0 (owner decision, 2026-11-21): CopyObject, DeleteObjects. Either can be added
   in 1.x without breaking anything, if the owner asks.
 
@@ -467,9 +469,9 @@ D3 is partly reversed: a trimmed set of options with clear value and broad S3-co
 support.
 - **Two data objects**, so invalid combinations don't compile. Setter names are the familiar
   header names, without a `response` prefix:
-  - `S3PresignPutOptions`: `contentType`, `contentMd5`. Signed headers the uploader must send
-    exactly (a wrong or missing value is rejected; S3 also checks the body against
-    `Content-MD5`).
+  - `S3PresignPutOptions`: `contentType`, `contentMd5` (D6 adds `contentLength`, 2026-11-23).
+    Signed headers the uploader must send exactly (a wrong or missing value is rejected; S3 also
+    checks the body against `Content-MD5`).
   - `S3PresignGetOptions`: `contentType`, `contentDisposition`, `cacheControl`. Signed
     `response-*` query parameters that override the download's response headers.
     `contentDisposition` is the raw header value (printable US-ASCII); the static helpers
@@ -501,6 +503,20 @@ support.
      backend-chosen keys instead of overwrite protection; `no-store` and the storage endpoint, not
      a CDN-proxied domain, for private documents; send bytes with the exact `Content-Type`, e.g.
      Dart's `http` adds `; charset=...` to string bodies; CORS must allow the signed headers).
+
+### Presign options — step 4d: signed Content-Length (owner decision D6, 2026-11-23)
+Extends D5 and step 3.6. Details (why, signing order, validation, backend probe): "Presigned
+Content-Length (owner decision, 2026-11-23, step 4d)" below.
+- `S3PresignPutOptions` and `S3PresignUploadPartOptions` get `@Nullable Long getContentLength()` /
+  `setContentLength(@Nullable Long)`; `null` means not signed. The boxed form, because codegen
+  rejects a primitive `long` setter next to a nullable getter.
+- A signed `Content-Length` pins the exact size the backend approved: 0 to 5 GiB for a `PUT` and
+  for a part. The uploader sends a real `Content-Length` header, never a chunked body. The server
+  enforces the 5 MiB minimum of non-last parts on completion (`EntityTooSmall`).
+- It supersedes D5's rule that a presigned `PUT` can't enforce a maximum size; verifying the
+  object with `headObject` after the upload stays.
+- One step (4d), one commit: API, implementation, the presign and multipart suites on every
+  backend, docs.
 
 ### Correction (2026-11-20): build tooling policy
 - **Keep docgen. Do not remove it.** The revamp is about the API. Build tooling changes only where a recorded decision requires it: removing web-client and Jackson, the Testcontainers/JUnit versions, `--release 11`, and the processor wiring for codegen and docgen.
@@ -744,7 +760,8 @@ part uploads. Design decisions (owner, 2026-11-22):
 - Abort passes S3's `404 NoSuchUpload` through; the docs tell cleanup jobs to treat it as done.
 - `S3Presigner.presignUploadPart(bucket, key, uploadId, partNumber, expiry, unit)` plus the
   Java-only `Duration` overload, and overloads with `S3PresignUploadPartOptions`
-  (`contentMd5`) returning `S3PresignedRequest`, as in step 3.5.
+  (`contentMd5`; D6 adds `contentLength`, 2026-11-23) returning `S3PresignedRequest`, as in
+  step 3.5.
 - Phase 4's internal multipart reuses these operations.
 - **Steps** (each diff first, verified, committed by the owner):
   1. (3.6a) This decision in the scope section, `AGENTS.md` and the plan; the five client
@@ -788,6 +805,28 @@ part uploads. Design decisions (owner, 2026-11-22):
   `putObject(ReadStream)` upload; `putFile` only a few chunks). All three are done; the
   integration tests use 5 MiB parts (S3's minimum) through the package-private hooks, so they stay
   small on a real account (about 50 MiB per run).
+
+### Presigned Content-Length (owner decision, 2026-11-23, step 4d)
+- **Why:** without it, a presigned `PUT` accepted any size up to 5 GiB and the backend could only
+  check the size after the upload. Signing `Content-Length` pins the exact size the backend
+  approved, for single uploads and for each part.
+- **API:** `@Nullable Long getContentLength()` / `setContentLength(@Nullable Long)` on
+  `S3PresignPutOptions` and `S3PresignUploadPartOptions`; `null` means not signed. A primitive
+  `long` setter was asked for, but codegen rejects it next to a nullable getter ("getter type
+  java.lang.Long does not match the setter type long"); the boxed form matches
+  `S3ListObjectsOptions.maxKeys`, and its JSON omits the field when unset. Java callers pass a
+  `long` (an `int` literal needs an `L`).
+- **Signing:** a signed `Content-Length` header (decimal), with the other signed headers.
+  `S3PresignedRequest.headers` keeps a fixed order: `Content-Type`, `Content-MD5`,
+  `Content-Length` (parts: `Content-MD5`, `Content-Length`), so earlier results are unchanged.
+- **Validation** (`IllegalArgumentException`, at presign time): not negative; at most 5 GiB for a
+  `PUT` (S3's single-PUT limit) and for a part. The 5 MiB minimum of non-last parts can't be
+  checked by the presigner; the server enforces it on completion (`EntityTooSmall`).
+- **Backends (probe, 2026-11-23):** with `Content-Length: 5` signed, Silo and Ceph RGW (HTTP and
+  HTTPS) accept exactly 5 bytes and answer 403 `SignatureDoesNotMatch` for 4 or 6 bytes, and for a
+  wrong `Content-Type` signed alongside. A chunked body (no `Content-Length`) gets 411
+  `MissingContentLength` from Silo and 403 `SignatureDoesNotMatch` from Ceph: an explicit
+  expectation in the subclasses. The docs tell uploaders to send a real `Content-Length`.
 
 ### Unreproduced build failure (2026-11-22, during step 4b)
 One `mvn test` run (an incremental build: a clean main-only compile, then edited test files)

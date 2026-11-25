@@ -119,6 +119,10 @@ public final class S3PresignerImpl implements S3Presigner {
     if (options != null && options.getContentMd5() != null) {
       headers.add(Map.entry("Content-MD5", contentMd5(options.getContentMd5())));
     }
+    if (options != null && options.getContentLength() != null) {
+      headers.add(Map.entry("Content-Length", contentLength(options.getContentLength(), MultipartRequests.MAX_PART_SIZE,
+        "A part is limited to 5 GiB")));
+    }
     return presign("PUT", bucket, key, expirySeconds,
       List.of(Map.entry("partNumber", Integer.toString(partNumber)), Map.entry("uploadId", uploadId)), headers);
   }
@@ -153,7 +157,11 @@ public final class S3PresignerImpl implements S3Presigner {
       .setHeaders(toSend);
   }
 
-  /** The headers to sign for {@code options} ({@code null} means none); throws {@link IllegalArgumentException}. */
+  /**
+   * The headers to sign for {@code options} ({@code null} means none), always in this order:
+   * {@code Content-Type}, {@code Content-MD5}, {@code Content-Length}. Throws
+   * {@link IllegalArgumentException}.
+   */
   static List<Map.Entry<String, String>> signedHeaders(S3PresignPutOptions options) {
     List<Map.Entry<String, String>> headers = new ArrayList<>();
     if (options == null) {
@@ -164,6 +172,10 @@ public final class S3PresignerImpl implements S3Presigner {
     }
     if (options.getContentMd5() != null) {
       headers.add(Map.entry("Content-MD5", contentMd5(options.getContentMd5())));
+    }
+    if (options.getContentLength() != null) {
+      headers.add(Map.entry("Content-Length", contentLength(options.getContentLength(), MultipartRequests.MAX_PUT_SIZE,
+        "A single PUT is limited to 5 GiB")));
     }
     return headers;
   }
@@ -195,6 +207,18 @@ public final class S3PresignerImpl implements S3Presigner {
       throw new IllegalArgumentException("The " + name + " must be non-empty printable US-ASCII");
     }
     return value;
+  }
+
+  /** A {@code Content-Length} value: 0 to {@code max} bytes, in decimal. */
+  private static String contentLength(long length, long max, String limit) {
+    if (length < 0) {
+      throw new IllegalArgumentException("The content length must not be negative: " + length);
+    }
+    if (length > max) {
+      throw new IllegalArgumentException(limit + " (" + max + " bytes): " + length
+        + (max == MultipartRequests.MAX_PUT_SIZE ? "; use a multipart upload" : ""));
+    }
+    return Long.toString(length);
   }
 
   /** A {@code Content-MD5} value: the canonical, padded base64 of exactly 16 bytes. */

@@ -19,10 +19,12 @@ plus a presigner. **Not** a clone of the AWS SDK.
   without depending on lifecycle-rule support, which varies between S3-compatible servers.
 - ListObjectsV2.
 - `S3Presigner`: GET and PUT. Optional `S3PresignPutOptions` (signed `Content-Type`,
-  `Content-MD5`) and `S3PresignGetOptions` (`Content-Type`, `Content-Disposition`, `Cache-Control`
-  response overrides) (owner decision D5, 2026-11-22). Deferred, non-breaking to add in 1.x:
-  `x-amz-checksum-*`, `If-None-Match`, signed user metadata, `Cache-Control`/`Content-Disposition`
-  on PUT, GET `Content-Encoding`/`Content-Language`/`Expires` overrides, presigned DELETE/HEAD.
+  `Content-MD5`, `Content-Length`) and `S3PresignGetOptions` (`Content-Type`,
+  `Content-Disposition`, `Cache-Control` response overrides) (owner decision D5, 2026-11-22; the
+  signed `Content-Length`, also on parts, owner decision D6, 2026-11-23). Deferred, non-breaking
+  to add in 1.x: `x-amz-checksum-*`, `If-None-Match`, signed user metadata,
+  `Cache-Control`/`Content-Disposition` on PUT, GET `Content-Encoding`/`Content-Language`/`Expires`
+  overrides, presigned DELETE/HEAD.
 - Dropped for 1.0 (owner decision, 2026-11-21): CopyObject, DeleteObjects. Either can be added
   in 1.x without breaking anything, if the owner asks.
 
@@ -339,8 +341,8 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - GET and PUT. Without options only `host` is signed, so the uploader may send any
   `Content-Type`. `X-Amz-Security-Token` support, and RFC 3986 key encoding with `/` preserved.
 - Options (owner decision D5, 2026-11-22, partly reversing D3): two data objects, so a GET option
-  can't be passed to a PUT. `S3PresignPutOptions` (`contentType`, `contentMd5`) become signed
-  headers the uploader must send exactly; `S3PresignGetOptions` (`contentType`,
+  can't be passed to a PUT. `S3PresignPutOptions` (`contentType`, `contentMd5`, `contentLength`)
+  become signed headers the uploader must send exactly; `S3PresignGetOptions` (`contentType`,
   `contentDisposition`, `cacheControl`) become signed `response-*` query parameters that override
   the download's response headers. Setter names have no `response` prefix. The options overloads
   (`TimeUnit` and Java-only `Duration` forms, `@Nullable` options) return an `S3PresignedRequest`
@@ -350,9 +352,17 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   `S3PresignGetOptions.attachment`/`inline` (RFC 6266/8187). Invalid values throw
   `IllegalArgumentException`. Don't add other presign options unless the owner asks (the deferred
   list is in the scope section).
+- Signed `Content-Length` (owner decision D6, 2026-11-23): `@Nullable Long getContentLength()` /
+  `setContentLength(@Nullable Long)` on `S3PresignPutOptions` and `S3PresignUploadPartOptions`,
+  `null` meaning not signed (codegen rejects a primitive `long` setter next to a nullable getter).
+  It pins the exact size: 0 to 5 GiB for a `PUT` (S3's single-PUT limit) and for a part; the
+  5 MiB minimum of non-last parts can't be checked by the presigner (the server answers
+  `EntityTooSmall` on completion). `S3PresignedRequest.headers` keeps a fixed order whatever the
+  setter order: `Content-Type`, `Content-MD5`, `Content-Length` (parts: `Content-MD5`,
+  `Content-Length`). The uploader must send a real `Content-Length`, never a chunked body.
 - Multipart parts (owner decision, 2026-11-22, step 3.6): `presignUploadPart(bucket, key,
   uploadId, partNumber, expiry, unit)` plus the Java-only `Duration` overload, and overloads with
-  `S3PresignUploadPartOptions` (`contentMd5` only: a part has no content type of its own)
+  `S3PresignUploadPartOptions` (`contentMd5`, `contentLength`: a part has no content type of its own)
   returning `S3PresignedRequest`. The part number and upload id are signed query parameters;
   part numbers 1 to 10,000 and a non-empty upload id, else `IllegalArgumentException`.
 - Time comes from the system UTC clock. A `java.time.Clock` is only an impl test hook (a
@@ -446,17 +456,21 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   vectors). S3-specific rules are unit-tested and verified against Silo, which checks signatures
   server-side.
 - Presigning has unit tests against the AWS SigV4 published presign examples, using a fixed
-  `Clock` through the impl test hook. The `S3ClientPresign*` suites (Silo, Silo-TLS, External)
-  download and upload through presigned URLs with a plain Vert.x `HttpClient`, sending each URL
-  exactly as returned (`setAbsoluteURI`), including the presign options: signed headers sent
-  exactly, wrong or missing, a body that doesn't match its `Content-MD5`, and GET response
-  overrides. How a backend reports a missing signed header is an explicit expectation in the
-  subclasses (Silo: 400 `AccessDenied`). Expired URLs are signed in the past through the `Clock`
+  `Clock` through the impl test hook. The `S3ClientPresign*` suites (Silo, Silo-TLS, Ceph,
+  Ceph-TLS, External) download and upload through presigned URLs with a plain Vert.x `HttpClient`,
+  sending each URL exactly as returned (`setAbsoluteURI`), including the presign options: signed
+  headers sent exactly, wrong or missing, a body that doesn't match its `Content-MD5`, a body of
+  another size than its signed `Content-Length` (alone, and with `Content-Type` and `Content-MD5`
+  signed too), a chunked body, and GET response overrides. How a backend reports a missing signed
+  header and a chunked body to a URL signing `Content-Length` are explicit expectations in the
+  subclasses (Silo: 400 `AccessDenied` and 411 `MissingContentLength`; Ceph: 403
+  `SignatureDoesNotMatch` for both). Expired URLs are signed in the past through the `Clock`
   hook; tests never wait for a URL to expire.
-- The `S3ClientMultipart*` suites (Silo, Silo-TLS, External) upload parts through presigned part
-  URLs with a plain `HttpClient`: round trip, parallel parts reported out of order, resume via
-  `listParts`, `listParts` paging, abort, a wrong ETag, part-order rules, `EntityTooSmall`, a
-  per-part `Content-MD5`, and an orphaned upload found by `listMultipartUploads` and aborted. How
+- The `S3ClientMultipart*` suites (Silo, Silo-TLS, Ceph, Ceph-TLS, External) upload parts through
+  presigned part URLs with a plain `HttpClient`: round trip, parallel parts reported out of order,
+  resume via `listParts`, `listParts` paging, abort, a wrong ETag, part-order rules,
+  `EntityTooSmall`, a per-part `Content-MD5`, per-part signed `Content-Length` (a wrong length
+  rejected, the last part the remainder), and an orphaned upload found by `listMultipartUploads` and aborted. How
   a backend matches a ListMultipartUploads prefix and answers a second abort are explicit
   expectations in the subclasses (Silo: whole keys only; `204`), as are the error code of
   ListParts for an aborted upload (Ceph: `NoSuchKey`) and whether the server pages

@@ -21,8 +21,9 @@ import io.vertx.codegen.annotations.VertxGen;
  * set, otherwise to the endpoint, with the options' addressing style. They are signed with the
  * options' credentials (a session token is included) and the system clock. Without options, only
  * the {@code Host} header is signed, so an upload may send any {@code Content-Type}, which S3
- * stores. With {@link S3PresignPutOptions}, the uploader must send the {@code Content-Type} and
- * {@code Content-MD5} they set; with {@link S3PresignGetOptions}, the URL overrides response
+ * stores. With {@link S3PresignPutOptions}, the uploader must send the {@code Content-Type},
+ * {@code Content-MD5} and {@code Content-Length} they set (a signed length pins the exact size, so
+ * the body can't be chunked); with {@link S3PresignGetOptions}, the URL overrides response
  * headers of the download. The methods taking options return an {@link S3PresignedRequest}: the
  * URL, the method and the headers to send. {@link #presignUploadPart} presigns the parts of a
  * multipart upload, for large files uploaded in parallel and resumably.

@@ -1,6 +1,7 @@
 package io.github.emadalblueshi.vertx.s3;
 
 import io.vertx.codegen.annotations.DataObject;
+import io.vertx.codegen.annotations.Nullable;
 import io.vertx.codegen.json.annotations.JsonGen;
 import io.vertx.core.json.JsonObject;
 
@@ -17,12 +18,14 @@ import io.vertx.core.json.JsonObject;
 public class S3PresignUploadPartOptions {
 
   private String contentMd5;
+  private Long contentLength;
 
   public S3PresignUploadPartOptions() {
   }
 
   public S3PresignUploadPartOptions(S3PresignUploadPartOptions other) {
     this.contentMd5 = other.contentMd5;
+    this.contentLength = other.contentLength;
   }
 
   public S3PresignUploadPartOptions(JsonObject json) {
@@ -44,6 +47,26 @@ public class S3PresignUploadPartOptions {
     return this;
   }
 
+  /** The {@code Content-Length} the part upload must send; {@code null} for none. */
+  public @Nullable Long getContentLength() {
+    return contentLength;
+  }
+
+  /**
+   * Sets the {@code Content-Length} the part upload must send, which pins the exact size of the
+   * part: 0 to 5 GiB (S3's limit for a part). Each part signs its own length; the last part's is
+   * the remainder of the file. The 5 MiB minimum for every part but the last can't be checked
+   * here, because the presigner doesn't know which part is last: S3 enforces it when the upload is
+   * completed ({@code EntityTooSmall}). The uploader must send a real {@code Content-Length}
+   * header, not a chunked body.
+   *
+   * @param contentLength the size in bytes, or {@code null} for none
+   */
+  public S3PresignUploadPartOptions setContentLength(@Nullable Long contentLength) {
+    this.contentLength = contentLength;
+    return this;
+  }
+
   public JsonObject toJson() {
     JsonObject json = new JsonObject();
     S3PresignUploadPartOptionsConverter.toJson(this, json);
@@ -52,6 +75,6 @@ public class S3PresignUploadPartOptions {
 
   @Override
   public String toString() {
-    return "S3PresignUploadPartOptions{contentMd5=" + contentMd5 + '}';
+    return "S3PresignUploadPartOptions{contentMd5=" + contentMd5 + ", contentLength=" + contentLength + '}';
   }
 }

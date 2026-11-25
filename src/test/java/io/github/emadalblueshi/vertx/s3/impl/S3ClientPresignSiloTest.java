@@ -23,4 +23,15 @@ class S3ClientPresignSiloTest extends S3ClientPresignTestBase {
   protected String missingSignedHeaderCode() {
     return "AccessDenied";
   }
+
+  /** Silo, like MinIO, refuses a chunked upload to a URL that signs Content-Length: 411 MissingContentLength. */
+  @Override
+  protected int chunkedUploadStatus() {
+    return 411;
+  }
+
+  @Override
+  protected String chunkedUploadCode() {
+    return "MissingContentLength";
+  }
 }

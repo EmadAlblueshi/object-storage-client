@@ -18,6 +18,7 @@ import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.github.emadalblueshi.vertx.s3.S3ObjectStream;
 import io.github.emadalblueshi.vertx.s3.S3PresignGetOptions;
 import io.github.emadalblueshi.vertx.s3.S3PresignPutOptions;
+import io.github.emadalblueshi.vertx.s3.S3PresignUploadPartOptions;
 import io.github.emadalblueshi.vertx.s3.S3PresignedRequest;
 import io.github.emadalblueshi.vertx.s3.S3Presigner;
 import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
@@ -248,13 +249,14 @@ public class Examples {
     String url = client.presigner().presignPut("my-bucket", "avatars/user-42.png", 10, TimeUnit.MINUTES);
   }
 
-  public JsonObject presignUpload(S3Presigner presigner, String userId, String contentType, String contentMd5) {
+  public JsonObject presignUpload(S3Presigner presigner, String userId, String contentType, String contentMd5,
+                                  long size) {
     String key = "uploads/" + userId + "/" + UUID.randomUUID();
-    // contentType and contentMd5 come from the app, after your checks (e.g. an allowed type)
+    // contentType, contentMd5 and size come from the app, after your checks (an allowed type, a size within your limit)
     S3PresignedRequest upload = presigner.presignPut("my-bucket", key, 10, TimeUnit.MINUTES,
-      new S3PresignPutOptions().setContentType(contentType).setContentMd5(contentMd5));
+      new S3PresignPutOptions().setContentType(contentType).setContentMd5(contentMd5).setContentLength(size));
     // Remember the key as this user's pending upload, and return
-    // {"url": ..., "method": "PUT", "headers": {"Content-Type": ..., "Content-MD5": ...}}
+    // {"url": ..., "method": "PUT", "headers": {"Content-Type": ..., "Content-MD5": ..., "Content-Length": ...}}
     return upload.toJson().put("key", key);
   }
 
@@ -296,14 +298,18 @@ public class Examples {
         .put("parts", parts));
   }
 
-  public JsonArray presignParts(S3Presigner presigner, String key, String uploadId, int first, int last) {
-    JsonArray urls = new JsonArray();
+  public JsonArray presignParts(S3Presigner presigner, String key, String uploadId, long size, long partSize,
+                                int first, int last) {
+    JsonArray requests = new JsonArray();
     for (int part = first; part <= last; part++) {
-      urls.add(new JsonObject().put("partNumber", part)
-        .put("url", presigner.presignUploadPart("my-bucket", key, uploadId, part, 15, TimeUnit.MINUTES)));
+      // Each part signs its exact length: the part size, or the remainder for the last part
+      long length = Math.min(partSize, size - (part - 1) * partSize);
+      S3PresignedRequest request = presigner.presignUploadPart("my-bucket", key, uploadId, part, 15, TimeUnit.MINUTES,
+        new S3PresignUploadPartOptions().setContentLength(length));
+      requests.add(request.toJson().put("partNumber", part));
     }
-    // The app PUTs each part to its URL, a few at a time, and keeps the ETag header of each response
-    return urls;
+    // The app PUTs each part to its URL with its headers, a few at a time, and keeps the ETag header of each response
+    return requests;
   }
 
   public Future<Void> completeMultipartUpload(S3Client client, String key, String uploadId, JsonArray reported,

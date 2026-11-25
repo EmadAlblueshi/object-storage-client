@@ -372,6 +372,53 @@ abstract class S3ClientMultipartTestBase {
   }
 
   /**
+   * Each part signs its exact length, the last one the remainder: a part sent with another length
+   * (shorter for the first, longer for the last) is rejected by the signature check, the exact
+   * parts, sent with the returned headers as is, complete the object.
+   */
+  @Test
+  void partContentLengthPinsEachPartsSize(VertxTestContext testContext) {
+    String key = resources.key(bucket, "length/video.mp4");
+    Buffer part1 = random(MIN_PART, 81);
+    Buffer part2 = random(1024, 82);
+    client.createMultipartUpload(bucket, key, null)
+      .compose(uploadId -> {
+        S3PresignedRequest first = presigner.presignUploadPart(bucket, key, uploadId, 1, 10, TimeUnit.MINUTES,
+          new S3PresignUploadPartOptions().setContentLength((long) MIN_PART));
+        S3PresignedRequest last = presigner.presignUploadPart(bucket, key, uploadId, 2, 10, TimeUnit.MINUTES,
+          new S3PresignUploadPartOptions().setContentLength(1024L));
+        assertEquals(Map.of("Content-Length", Integer.toString(MIN_PART)), first.getHeaders());
+        assertEquals(Map.of("Content-Length", "1024"), last.getHeaders());
+        return send(HttpMethod.PUT, first.getUrl(), part1.slice(0, MIN_PART - 1), Map.of())
+          .compose(rejected -> {
+            expectError(rejected, 403, "SignatureDoesNotMatch");
+            return send(HttpMethod.PUT, last.getUrl(), part2.copy().appendByte((byte) 0), Map.of());
+          })
+          .compose(rejected -> {
+            expectError(rejected, 403, "SignatureDoesNotMatch");
+            return send(HttpMethod.PUT, first.getUrl(), part1, first.getHeaders());
+          })
+          .compose(accepted1 -> {
+            assertEquals(200, accepted1.status, accepted1.body.toString());
+            return send(HttpMethod.PUT, last.getUrl(), part2, last.getHeaders()).compose(accepted2 -> {
+              assertEquals(200, accepted2.status, accepted2.body.toString());
+              return client.completeMultipartUpload(bucket, key, uploadId, List.of(
+                new S3CompletedPart(1, accepted1.headers.get("ETag")), new S3CompletedPart(2, accepted2.headers.get("ETag"))));
+            });
+          });
+      })
+      .compose(etag -> client.headObject(bucket, key))
+      .compose(head -> {
+        assertEquals(MIN_PART + 1024, head.getContentLength());
+        return digestOf(key);
+      })
+      .onComplete(testContext.succeeding(digest -> testContext.verify(() -> {
+        assertArrayEquals(md5(part1, part2), digest);
+        testContext.completeNow();
+      })));
+  }
+
+  /**
    * A cleanup job finds an upload that was created but never recorded, and aborts it. Listing the
    * whole bucket and listing by the full key find it everywhere; a shorter prefix finds it where
    * prefixes match the start of keys.

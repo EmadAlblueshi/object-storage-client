@@ -13,6 +13,7 @@ import java.time.ZoneOffset;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
@@ -91,6 +92,20 @@ abstract class S3ClientPresignTestBase {
 
   /** The S3 error code that goes with {@link #missingSignedHeaderStatus()}. */
   protected String missingSignedHeaderCode() {
+    return "SignatureDoesNotMatch";
+  }
+
+  /**
+   * The HTTP status for a chunked upload (no {@code Content-Length} header) to a URL that signs
+   * {@code Content-Length}: the signed header is missing, so the signature doesn't match (Ceph RGW:
+   * 403 {@code SignatureDoesNotMatch}).
+   */
+  protected int chunkedUploadStatus() {
+    return 403;
+  }
+
+  /** The S3 error code that goes with {@link #chunkedUploadStatus()}. */
+  protected String chunkedUploadCode() {
     return "SignatureDoesNotMatch";
   }
 
@@ -405,6 +420,102 @@ abstract class S3ClientPresignTestBase {
   }
 
   /**
+   * A signed {@code Content-Length} pins the exact size: the returned headers sent as is (the
+   * length included) store the object; a body one byte longer or shorter, sent with its own true
+   * length, is rejected by the signature check, as is a chunked body of the right size, which has
+   * no {@code Content-Length} header (the backend's {@link #chunkedUploadStatus()}). Only the exact
+   * upload is stored.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"exact", "longer", "shorter", "chunked"})
+  void signedContentLengthPinsTheSize(String sent, VertxTestContext testContext) {
+    String key = resources.key(bucket, "signed-length/" + sent + ".bin");
+    S3PresignedRequest upload = presigner().presignPut(bucket, key, 10, TimeUnit.MINUTES,
+      new S3PresignPutOptions().setContentLength(1024L));
+    assertEquals(Map.of("Content-Length", "1024"), upload.getHeaders());
+    Future<Response> attempt;
+    switch (sent) {
+      case "exact":
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), Buffer.buffer(random(1024)), upload.getHeaders());
+        break;
+      case "longer":
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), Buffer.buffer(random(1025)), Map.of());
+        break;
+      case "shorter":
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), Buffer.buffer(random(1023)), Map.of());
+        break;
+      default:
+        attempt = sendChunked(upload.getUrl(), Buffer.buffer(random(1024)));
+    }
+    attempt
+      .compose(response -> {
+        switch (sent) {
+          case "exact":
+            expectStatus(response, 200);
+            return client.headObject(bucket, key).map(head -> {
+              assertEquals(1024, head.getContentLength());
+              return true;
+            });
+          case "chunked":
+            expectError(response, chunkedUploadStatus(), chunkedUploadCode());
+            return exists(key);
+          default:
+            expectError(response, 403, "SignatureDoesNotMatch");
+            return exists(key);
+        }
+      })
+      .onComplete(testContext.succeeding(stored -> testContext.verify(() -> {
+        assertEquals("exact".equals(sent), stored);
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * Content-Type, Content-MD5 and Content-Length signed together: the returned headers sent as is
+   * store the object with its type; a wrong type with the right length, or the right type with a
+   * longer body, is rejected, and nothing is stored.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"exact", "wrong-type", "wrong-length"})
+  void typeDigestAndLengthAreSignedTogether(String sent, VertxTestContext testContext) {
+    String key = resources.key(bucket, "signed-all/" + sent + ".png");
+    Buffer body = Buffer.buffer(random(2048));
+    S3PresignedRequest upload = presigner().presignPut(bucket, key, 10, TimeUnit.MINUTES,
+      new S3PresignPutOptions().setContentType("image/png").setContentMd5(md5(body)).setContentLength(2048L));
+    assertEquals(List.of("Content-Type", "Content-MD5", "Content-Length"), List.copyOf(upload.getHeaders().keySet()));
+    Map<String, String> withoutLength = Map.of("Content-Type", "image/png", "Content-MD5", md5(body));
+    Future<Response> attempt;
+    switch (sent) {
+      case "exact":
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), body, upload.getHeaders());
+        break;
+      case "wrong-type":
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), body,
+          Map.of("Content-Type", "image/jpeg", "Content-MD5", md5(body), "Content-Length", "2048"));
+        break;
+      default:
+        attempt = sendWithHeaders(HttpMethod.PUT, upload.getUrl(), body.copy().appendByte((byte) 0), withoutLength);
+    }
+    attempt
+      .compose(response -> {
+        if (!"exact".equals(sent)) {
+          expectError(response, 403, "SignatureDoesNotMatch");
+          return exists(key);
+        }
+        expectStatus(response, 200);
+        return client.headObject(bucket, key).map(head -> {
+          assertEquals("image/png", head.getContentType());
+          assertEquals(2048, head.getContentLength());
+          return true;
+        });
+      })
+      .onComplete(testContext.succeeding(stored -> testContext.verify(() -> {
+        assertEquals("exact".equals(sent), stored);
+        testContext.completeNow();
+      })));
+  }
+
+  /**
    * GET overrides replace the download's response headers, including a Content-Disposition for a
    * non-ASCII file name; the stored object is unchanged, so a URL without overrides still gets the
    * stored headers.
@@ -500,6 +611,22 @@ abstract class S3ClientPresignTestBase {
     Promise<Response> promise = Promise.promise();
     context.runOnContext(v -> http.request(options)
       .compose(request -> body == null ? request.send() : request.send(body))
+      .compose(response -> response.body()
+        .map(content -> new Response(response.statusCode(), response.headers(), content)))
+      .onComplete(promise));
+    return promise.future();
+  }
+
+  /** Sends {@code body} to {@code url} with chunked transfer encoding: no {@code Content-Length} header. */
+  private Future<Response> sendChunked(String url, Buffer body) {
+    RequestOptions options = new RequestOptions().setMethod(HttpMethod.PUT).setAbsoluteURI(url);
+    Promise<Response> promise = Promise.promise();
+    context.runOnContext(v -> http.request(options)
+      .compose(request -> {
+        request.setChunked(true);
+        request.write(body);
+        return request.end().compose(ended -> request.response());
+      })
       .compose(response -> response.body()
         .map(content -> new Response(response.statusCode(), response.headers(), content)))
       .onComplete(promise));
