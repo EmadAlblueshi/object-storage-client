@@ -74,6 +74,9 @@ class PackagePolicyTest {
   /** Main sources of the API and impl packages, relative to the Maven base directory. */
   private static final Path MAIN_SOURCES = Path.of("src", "main", "java", "io", "github", "emadalblueshi", "vertx", "s3");
 
+  /** Test sources, relative to the Maven base directory. */
+  private static final Path TEST_SOURCES = Path.of("src", "test", "java");
+
   /** The one impl class allowed to use {@code io.vertx.core.internal} (Vert.x rule 3 and the internal API policy). */
   private static final String CONTEXT_HELPER = "impl/ContextSupport.java";
 
@@ -253,6 +256,29 @@ class PackagePolicyTest {
       }
     }
     assertTrue(violations.isEmpty(), () -> "Rule-3 guard violations:\n" + String.join("\n", violations));
+  }
+
+  /**
+   * Release gate 4: every test class that runs Vert.x ({@code VertxExtension}, or a {@code Vertx} it
+   * creates) registers {@code NettyLeakCheck}, before {@code VertxExtension}, so its check runs once
+   * the class's Vert.x instances are closed. Comments and string literals are ignored.
+   */
+  @Test
+  void testClassesThatRunVertxAreLeakChecked() throws IOException {
+    assertTrue(Files.isDirectory(TEST_SOURCES), "run from the Maven base directory; missing " + TEST_SOURCES);
+    List<String> violations = new ArrayList<>();
+    try (Stream<Path> files = Files.walk(TEST_SOURCES)) {
+      for (Path file : files.filter(f -> f.toString().endsWith(".java")).collect(Collectors.toList())) {
+        String code = stripCommentsAndLiterals(Files.readString(file));
+        int vertxExtension = code.indexOf("@ExtendWith(VertxExtension.class)");
+        int leakCheck = code.indexOf("@ExtendWith(NettyLeakCheck.class)");
+        boolean runsVertx = vertxExtension >= 0 || code.contains("Vertx.vertx(");
+        if (runsVertx && (leakCheck < 0 || vertxExtension >= 0 && leakCheck > vertxExtension)) {
+          violations.add(TEST_SOURCES.relativize(file) + ": register @ExtendWith(NettyLeakCheck.class) before VertxExtension");
+        }
+      }
+    }
+    assertTrue(violations.isEmpty(), () -> String.join("\n", violations));
   }
 
   /** Removes char/string literals, block comments and line comments (in that order), keeping line structure loosely. */

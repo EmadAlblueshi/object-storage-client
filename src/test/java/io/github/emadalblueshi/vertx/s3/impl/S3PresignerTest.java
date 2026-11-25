@@ -20,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
@@ -38,6 +39,7 @@ import io.vertx.junit5.VertxTestContext;
  * {@link S3SignatureV4PresignTest}; URLs are checked against real servers by the integration
  * suite. Time comes from a fixed {@link Clock} through the impl test hook.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 class S3PresignerTest {
 

@@ -26,6 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
@@ -49,6 +50,7 @@ import io.vertx.junit5.VertxTestContext;
  * logged" check), and that no exception carries a secret, whatever the server sends back. The
  * {@code S3ClientLogRedaction*} suites cover the main operations against real servers.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class LogRedactionStubTest {

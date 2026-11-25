@@ -15,6 +15,7 @@ import java.util.function.LongFunction;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ObjectMetadata;
 import io.vertx.core.Future;
@@ -33,6 +34,7 @@ import io.vertx.junit5.VertxTestContext;
  * response. Everything runs synchronously in one task on one context, so the order of events is
  * exactly the order written in the test, on any machine.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 class ResponseOrderingTest {
 

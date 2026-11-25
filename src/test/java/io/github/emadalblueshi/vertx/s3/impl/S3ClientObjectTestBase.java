@@ -26,6 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
@@ -54,6 +55,7 @@ import io.vertx.junit5.VertxTestContext;
  * suite; every key is registered before it is written, and cleanup deletes the objects and the
  * bucket even when tests fail.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class S3ClientObjectTestBase {

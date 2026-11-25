@@ -31,6 +31,7 @@ import io.vertx.junit5.VertxTestContext;
  * failures must complete on the caller's context, for each {@link CallerKind} (one subclass
  * each; the virtual-thread one is tagged {@code virtual-threads}).
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class S3ClientContextTestBase {

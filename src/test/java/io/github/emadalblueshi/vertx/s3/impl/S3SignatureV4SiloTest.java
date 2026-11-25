@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.github.emadalblueshi.vertx.s3.backend.S3TestBackend;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -33,6 +34,7 @@ import io.vertx.junit5.VertxTestContext;
  * Requests go through a plain Vert.x {@code HttpClient}. The wire path and query are built with
  * the same helpers the signer uses, so what is sent is exactly what is signed.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 class S3SignatureV4SiloTest {
 

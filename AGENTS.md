@@ -507,6 +507,16 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   while the client runs the main operations and presigning and meets S3 failures; `Leaks` checks
   that neither the log nor any exception contains a secret, a 16-character fragment of one or a
   presigned URL's signature. Failure messages mask what they found.
+- **Netty leak detection** (release gate 4, 2026-11-25): every test run tracks every buffer
+  (surefire sets `io.netty.leakDetection.level=paranoid`). Every test class that runs Vert.x
+  registers `@ExtendWith(NettyLeakCheck.class)` before `VertxExtension` (`PackagePolicyTest`
+  checks it). After the class, once its Vert.x instances are closed, and at the end of the run,
+  `NettyLeaks.collect()` forces two garbage collections (each confirmed by a sentinel reference)
+  and makes Netty drain its queue; any leak report fails the class or the run, with Netty's access
+  records. `NettyLeakCheckTest` is the control: a buffer leaked on purpose is reported. Netty's
+  leak reports are captured, not printed. A stub server that stops reading is a paused TCP server:
+  Vert.x's HTTP server drops a paused request's pooled body buffers unreleased when the connection
+  closes.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
   shared static client state across test classes).

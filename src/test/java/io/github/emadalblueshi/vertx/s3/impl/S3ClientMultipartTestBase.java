@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3CompletedPart;
@@ -63,6 +64,7 @@ import io.vertx.junit5.VertxTestContext;
  * is written, and at the end every upload still open in the bucket is aborted (with
  * {@link S3Client#listMultipartUploads}) before the objects and the bucket are deleted.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class S3ClientMultipartTestBase {

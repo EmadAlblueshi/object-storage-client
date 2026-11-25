@@ -15,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClientAgent;
 import io.vertx.core.http.HttpClientOptions;
@@ -28,6 +29,7 @@ import io.vertx.junit5.VertxTestContext;
  * TLS mode, and it is reachable with the options it provides. For TLS, an untrusted client is
  * rejected, which proves the self-signed certificate is really in use.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 class S3TestBackendTest {
 

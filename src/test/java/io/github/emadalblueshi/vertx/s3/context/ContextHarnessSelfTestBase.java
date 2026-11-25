@@ -22,6 +22,7 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.opentest4j.AssertionFailedError;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -37,6 +38,7 @@ import io.vertx.junit5.VertxTestContext;
  * uses {@link #caller} plus one tiny subclass per caller kind (the virtual-thread one tagged
  * {@code virtual-threads}).
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class ContextHarnessSelfTestBase {

@@ -12,7 +12,9 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
 import io.vertx.core.Future;
@@ -26,6 +28,7 @@ import io.vertx.core.http.HttpMethod;
  * thread, held busy by the test, so a hash that is offloaded via {@code executeBlocking} cannot
  * complete until the test releases it, while an inline hash is complete on return.
  */
+@ExtendWith(NettyLeakCheck.class)
 class PayloadHashTest {
 
   private Vertx vertx;

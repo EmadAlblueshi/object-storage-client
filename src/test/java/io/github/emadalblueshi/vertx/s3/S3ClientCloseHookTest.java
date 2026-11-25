@@ -21,6 +21,7 @@ import io.vertx.junit5.VertxTestContext;
  * is undeployed, like a Vert.x HttpClient; explicit close removes the hook. No server is
  * needed: a closed client fails before any I/O, and an open one fails to connect to port 1.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 class S3ClientCloseHookTest {
 

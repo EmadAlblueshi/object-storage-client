@@ -86,8 +86,9 @@ published before these gates pass, and the next published version is `1.0.0-RC1`
 **Order of the remaining work for `1.0.0-RC1`** (owner decision, 2026-11-25). One step each: diff
 first, verified with `mvn verify`, committed by the owner, decisions recorded here.
 1. Step 4d, the signed `Content-Length` (D6): done.
-2. The Phase 5 log-redaction audit (see "Phase 5 — log-redaction audit").
-3. Gate 4: Netty leak detection at `paranoid` in every test run, zero leak reports.
+2. The Phase 5 log-redaction audit (see "Phase 5 — log-redaction audit"): done.
+3. Gate 4: Netty leak detection at `paranoid` in every test run, zero leak reports (see "Gate 4 —
+   Netty leak detection"): done.
 4. Gate 3, docs: the "Running in Kubernetes" README section (memory limits and why large objects
    must be streamed, about 16 MiB per concurrent `putObject(ReadStream)` and only a few chunks for
    `putFile`, pool sizing, closing the client on graceful shutdown, the presigner's public vs
@@ -880,6 +881,23 @@ part uploads. Design decisions (owner, 2026-11-22):
   `S3ClientLogRedaction*` suites (Silo, Silo-TLS, Ceph, Ceph-TLS, External) capture everything
   logged at every level over the main operations, presigning and S3 failures. The External run
   checks a real account's error documents.
+
+### Gate 4 — Netty leak detection (2026-11-25)
+- Every test run tracks every buffer: surefire sets `io.netty.leakDetection.level=paranoid`
+  (`NettyLeaks.install()` sets it too, for runs outside Maven).
+- `NettyLeakCheck` is registered before `VertxExtension` on every test class that runs Vert.x
+  (`PackagePolicyTest` checks it). It checks after each class, once its Vert.x instances are
+  closed (an `ExtensionContext` store closes its values in reverse insertion order), and at the end
+  of the run (the root store). Each check forces two garbage collections, each confirmed by a
+  sentinel reference reaching its queue, then an allocation that makes Netty drain its queue; a
+  leak report fails the class or the run, with Netty's access records. A leak is reported when its
+  buffer is collected, so it may surface in a later class's check.
+- The control, `NettyLeakCheckTest`: a buffer leaked on purpose, with a hint, is reported once.
+- **Finding:** the only leak reports came from a test stub, not from the client. Vert.x 5.2.3's
+  HTTP server keeps a paused request's body in pooled buffers and drops them unreleased when the
+  connection closes: `StreamingUploadStubTest`'s stalled server paused every request. It is now a
+  TCP server that pauses every connection, with the same backpressure. The full suite, on every
+  container backend, has no leak reports.
 
 ### Unreproduced build failure (2026-11-22, during step 4b)
 One `mvn test` run (an incremental build: a clean main-only compile, then edited test files)

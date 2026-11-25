@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
 import io.github.emadalblueshi.vertx.s3.S3Credentials;
@@ -17,6 +18,7 @@ import io.vertx.junit5.VertxTestContext;
  * Closing the client's {@code Vertx} runs the close hook. Observed through {@link S3ClientImpl#isClosed()},
  * because a closed Vert.x instance can no longer deliver Future callbacks.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 class S3ClientImplLifecycleTest {
 

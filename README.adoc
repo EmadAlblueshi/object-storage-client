@@ -223,6 +223,8 @@ mvn verify
 ----
 
 The integration tests run against a MinIO-compatible server in a container, so they need Docker.
+Every test run tracks Netty's buffers at the paranoid leak-detection level and fails on any leak
+report.
 
 == License
 

@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
 import io.github.emadalblueshi.vertx.s3.S3Client;
 import io.github.emadalblueshi.vertx.s3.S3ClientException;
 import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
@@ -42,6 +43,7 @@ import io.vertx.core.file.OpenOptions;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.net.NetSocket;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 
@@ -52,6 +54,7 @@ import io.vertx.junit5.VertxTestContext;
  * controlled explicitly: the stub can withhold a reply until the test releases it, and the test
  * waits for the source to be paused or resumed.
  */
+@ExtendWith(NettyLeakCheck.class)
 @ExtendWith(VertxExtension.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class StreamingUploadStubTest {
@@ -502,13 +505,16 @@ class StreamingUploadStubTest {
 
   /**
    * Memory stays at a few chunks: against a server that stops reading, the 64 MiB range is paused
-   * long before it has been read, because nothing but the socket and the write queue hold it.
+   * long before it has been read, because nothing but the socket and the write queue hold it. The
+   * server is a TCP server that pauses every connection: an HTTP server holding a paused request's
+   * body in pooled buffers drops them without releasing them when the connection closes, which
+   * Netty's leak detection reports (Vert.x 5.2.3).
    */
   @Test
   void aStalledServerPausesTheFileInsteadOfBuffering(VertxTestContext testContext) {
     int size = 64 * 1024 * 1024;
     RecordingOpener opener = new RecordingOpener();
-    vertx.createHttpServer().requestHandler(HttpServerRequest::pause).listen(0, "localhost")
+    vertx.createNetServer().connectHandler(NetSocket::pause).listen(0, "localhost")
       .compose(server -> tempFile(new byte[size]).compose(path -> {
         S3ClientImpl client = (S3ClientImpl) S3Client.create(vertx, new S3ClientOptions()
           .setEndpoint("http://localhost:" + server.actualPort()).setRegion("test-west-1")
