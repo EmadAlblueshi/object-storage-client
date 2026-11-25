@@ -180,6 +180,10 @@ public class S3ClientOptions {
    * Transport settings for the underlying HTTP client (TLS trust, timeouts, keep-alive, ...).
    * Default host, default port and {@code ssl} must be left at their defaults: they are
    * derived from the endpoint.
+   * <p>
+   * Never enable {@code logActivity} in production: Netty then logs every byte the client sends
+   * and receives, credentials included ({@code Authorization}, {@code X-Amz-Security-Token}), and
+   * nothing can redact it. A client created with it on logs a warning.
    */
   public HttpClientOptions getHttpClientOptions() {
     return httpClientOptions;

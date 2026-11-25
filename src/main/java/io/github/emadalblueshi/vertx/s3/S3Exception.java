@@ -12,6 +12,10 @@ import io.vertx.core.VertxException;
  *   unreadable response, an invalid argument, or a closed client.</li>
  * </ul>
  * It is a {@link VertxException}, like the exceptions of Vert.x's own clients.
+ * <p>
+ * The library never puts the client's secret key or session token, a request's
+ * {@code Authorization} value or a presigned query string in an exception's message or fields, so
+ * they are safe to log (see {@link S3ServiceException}).
  */
 public abstract class S3Exception extends VertxException {
 

@@ -6,6 +6,8 @@
  */
 module io.github.emadalblueshi.vertx.s3 {
   requires transitive io.vertx.core;
+  // Vert.x's logger (vertx-core's own logging module), for the one warning the client logs (impl only)
+  requires io.vertx.core.logging;
   requires java.xml; // JDK StAX for S3 XML (impl only)
 
   // Annotations only (provided scope): codegen data objects / JSON converters and docgen.

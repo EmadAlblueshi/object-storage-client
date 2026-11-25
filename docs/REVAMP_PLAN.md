@@ -83,6 +83,24 @@ published before these gates pass, and the next published version is `1.0.0-RC1`
    deployment on Kubernetes, including presigned browser and mobile uploads. Any API change
    means a new RC and restarts the clock.
 
+**Order of the remaining work for `1.0.0-RC1`** (owner decision, 2026-11-25). One step each: diff
+first, verified with `mvn verify`, committed by the owner, decisions recorded here.
+1. Step 4d, the signed `Content-Length` (D6): done.
+2. The Phase 5 log-redaction audit (see "Phase 5 — log-redaction audit").
+3. Gate 4: Netty leak detection at `paranoid` in every test run, zero leak reports.
+4. Gate 3, docs: the "Running in Kubernetes" README section (memory limits and why large objects
+   must be streamed, about 16 MiB per concurrent `putObject(ReadStream)` and only a few chunks for
+   `putFile`, pool sizing, closing the client on graceful shutdown, the presigner's public vs
+   internal endpoint, the origin endpoint rather than a CDN for uploads), the migration note from
+   `object-storage-client` 0.4.x, and removing the "under development" warnings.
+5. Gate 6: the Ceph RGW suites green.
+6. Gate 5, last: the 8-hour soak against Silo, on demand only, never in regular CI (buffered and
+   streamed uploads and downloads, cancels, listings, errors and presigned URLs, including ones
+   that sign `Content-Length`; flat memory, no leaked connections). If any code changes after the
+   soak, it runs again.
+
+`1.0.0` then waits for gates 7 and 8.
+
 **After 1.0.0:** an API compatibility check (japicmp or revapi) in CI.
 
 **Not needed for 1.0:** a Spaces CI job, more backends, retries, extra options.
@@ -827,6 +845,41 @@ part uploads. Design decisions (owner, 2026-11-22):
   wrong `Content-Type` signed alongside. A chunked body (no `Content-Length`) gets 411
   `MissingContentLength` from Silo and 403 `SignatureDoesNotMatch` from Ceph: an explicit
   expectation in the subclasses. The docs tell uploaders to send a real `Content-Length`.
+
+### Phase 5 — log-redaction audit (owner decisions, 2026-11-25)
+- **Finding:** the library itself logs nothing (no logger in `src/main`). What can expose secrets is
+  what others log: exceptions (Vert.x logs unhandled failures, applications log exceptions) and
+  Netty's wire log (`HttpClientOptions.logActivity`), below the library.
+- **Exceptions** never contain the secret key, the session token, a request's `Authorization` value
+  or signature, or a presigned query string:
+  - `ErrorMapper` leaves the fields AWS adds to signature errors out of the details
+    (`AWSAccessKeyId`, `StringToSign`, `StringToSignBytes`, `SignatureProvided`,
+    `CanonicalRequest`, `CanonicalRequestBytes`, any case): `CanonicalRequest` lists every signed
+    header value, the session token included.
+  - `impl.Redaction` replaces the secret key, the session token, the request's `Authorization`
+    value and its signature with `[REDACTED]` wherever an error response echoes them, whatever the
+    field: the message (a non-XML excerpt is redacted before it is cut), code, resource, request ids
+    and details. Names alone can't cover every server: AWS also echoes the session token as
+    `Token-0` with `ExpiredToken` (seen in real responses, not documented), and a proxy's page may
+    quote the request's headers.
+  - Option validation no longer quotes an endpoint with user info, a query or a fragment (a
+    presigned URL pasted as the endpoint, `https://key:secret@host`), and doesn't attach the
+    `URISyntaxException`, whose message quotes the value.
+  - Not covered: Vert.x, Netty and JDK exceptions attached as causes stay as they are; they describe
+    connection, TLS and protocol failures, not the request's headers.
+- **`logActivity`** can't be redacted. The manual, the README and the `S3ClientOptions` javadoc say
+  never to enable it in production, and a client created with it on logs a warning, once, through
+  Vert.x's logger (owner decision: `io.vertx.core.internal.logging.LoggerFactory`, approved as a new
+  internal API, used only in `impl.ContextSupport`; the rule-3 guard now lists every internal type
+  `ContextSupport` uses and fails on any other). The module reads `io.vertx.core.logging`, vertx-core's
+  own logging module, already a dependency of vertx-core.
+- **Tests:** `LogRedactionStubTest` holds the control (with `logActivity` on, the capture sees
+  Netty's hex dump with the `Authorization` value and the token) and checks the warning, AWS's real
+  `SignatureDoesNotMatch` and `ExpiredToken` documents, echoes in every field, a proxy page cut
+  mid-header, HEAD, the CompleteMultipartUpload 200 error and transport failures. The
+  `S3ClientLogRedaction*` suites (Silo, Silo-TLS, Ceph, Ceph-TLS, External) capture everything
+  logged at every level over the main operations, presigning and S3 failures. The External run
+  checks a real account's error documents.
 
 ### Unreproduced build failure (2026-11-22, during step 4b)
 One `mvn test` run (an incremental build: a clean main-only compile, then edited test files)

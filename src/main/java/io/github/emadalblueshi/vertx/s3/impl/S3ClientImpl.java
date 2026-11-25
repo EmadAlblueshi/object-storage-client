@@ -49,6 +49,10 @@ public final class S3ClientImpl implements S3Client {
   private static final String US_EAST_1 = "us-east-1";
   /** The part size of streamed uploads, whose length isn't known: 10,000 parts make 78 GiB. */
   static final int STREAM_PART_SIZE = 8 * 1024 * 1024;
+  /** Logged once, when a client is created with {@code HttpClientOptions.logActivity} on. */
+  static final String WIRE_LOG_WARNING = "HttpClientOptions.logActivity is enabled: Netty logs every byte this S3 "
+    + "client sends and receives, below the library, where nothing can be redacted. That includes credentials "
+    + "(the Authorization and X-Amz-Security-Token headers) and object data. Never enable it in production.";
 
   private final Vertx vertx;
   private final ClientConfig config;
@@ -74,6 +78,9 @@ public final class S3ClientImpl implements S3Client {
       throw e;
     }
     this.registration = registered;
+    if (config.httpClientOptions.getLogActivity()) {
+      ContextSupport.warn(S3Client.class, WIRE_LOG_WARNING);
+    }
   }
 
   @Override

@@ -78,6 +78,9 @@ TLS trust, timeouts and connection pool sizes are configured on the composed Ver
 {@link examples.Examples#transportOptions}
 ----
 
+Never enable `logActivity` in production: it logs the raw traffic, credentials included (see
+"Logging").
+
 === Credentials
 
 Credentials are static: an access key and a secret key, plus a session token for temporary
@@ -560,6 +563,29 @@ an unreadable response, an invalid argument, a closed client) is an `S3ClientExc
 A server that is overloaded, or that limits a client's request rate, answers `503 SlowDown`
 (DigitalOcean Spaces documents such limits). The library doesn't retry: retry these failures in the
 application, with exponential backoff and jitter, and only for requests that are safe to repeat.
+
+Exceptions are safe to log: they never contain the client's secrets (see "Logging").
+
+== Logging
+
+The client logs nothing itself, with one exception: creating a client whose `HttpClientOptions`
+have `logActivity` on logs a warning. It goes through Vert.x's logger (named
+`io.github.emadalblueshi.vertx.s3.S3Client`), so it appears wherever Vert.x's own warnings do.
+
+*Never enable `logActivity` in production.* It makes Netty log every byte the client sends and
+receives, below the library, where nothing can be redacted: the `Authorization` header (the access
+key and the request's signature), the `X-Amz-Security-Token` header, object keys and object data.
+Use it only against a local test server, with throwaway credentials.
+
+Exceptions are safe to log. The library never puts the client's secret key, its session token, a
+request's `Authorization` value or a presigned query string in an exception's message, error code,
+request ids or details: where a server echoes one of them in an error response, it is replaced with
+`[REDACTED]`. The fields AWS adds to signature errors to help debug a signer (`AWSAccessKeyId`,
+`StringToSign`, `StringToSignBytes`, `SignatureProvided`, `CanonicalRequest`,
+`CanonicalRequestBytes`) are left out of `getDetails()`. Exceptions from Vert.x, Netty or the JDK
+attached as causes are kept as they are: they describe connection, TLS and protocol failures.
+
+Presigned URLs are bearer tokens: never log them (see "Rules for presigned URLs").
 
 == Closing
 

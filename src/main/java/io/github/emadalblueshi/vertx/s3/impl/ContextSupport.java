@@ -12,11 +12,12 @@ import io.vertx.core.internal.CloseableResource;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.internal.PromiseInternal;
 import io.vertx.core.internal.VertxInternal;
+import io.vertx.core.internal.logging.LoggerFactory;
 
 /**
  * The single place that uses Vert.x internal APIs ({@code io.vertx.core.internal}), as
- * allowed by AGENTS.md and enforced by {@code PackagePolicyTest}. Re-verify on every Vert.x
- * upgrade.
+ * allowed by AGENTS.md and enforced by {@code PackagePolicyTest}, which lists every internal type
+ * used here. Re-verify on every Vert.x upgrade.
  * <ul>
  *   <li>{@link Caller}: the caller's context, captured at call time. Every Future the public API
  *   returns is created from it (Vert.x rule 3), so listeners always run on that context,
@@ -25,6 +26,8 @@ import io.vertx.core.internal.VertxInternal;
  *   (e.g. verticle undeploy), registered exactly like Vert.x's own {@code HttpClient}
  *   ({@code VertxInternal.registerResource}, which replaces the deprecated
  *   {@code ContextInternal.addCloseHook}).</li>
+ *   <li>{@link #warn}: Vert.x's logger ({@code io.vertx.core.internal.logging}), for the one
+ *   warning the library logs (owner decision, 2026-11-25).</li>
  * </ul>
  */
 final class ContextSupport {
@@ -58,6 +61,16 @@ final class ContextSupport {
       throw new IllegalStateException("The Vert.x instance or the creating context is already closed");
     }
     return new Registration(hook);
+  }
+
+  /**
+   * Logs {@code message} as a warning through Vert.x's logger named after {@code category}, so it
+   * goes wherever Vert.x's own warnings go ({@code java.util.logging} by default, or SLF4J or
+   * Log4j 2 when the application uses them). Only for the warning at client creation: the library
+   * logs nothing else.
+   */
+  static void warn(Class<?> category, String message) {
+    LoggerFactory.getLogger(category).warn(message);
   }
 
   /** A resource registered with its owner's close future. */

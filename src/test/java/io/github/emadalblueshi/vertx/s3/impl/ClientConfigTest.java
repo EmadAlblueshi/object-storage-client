@@ -3,9 +3,11 @@ package io.github.emadalblueshi.vertx.s3.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
@@ -172,6 +174,39 @@ class ClientConfigTest {
     IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
       () -> ClientConfig.from(new S3ClientOptions(valid()).setPublicEndpoint(publicEndpoint)));
     assertTrue(e.getMessage().startsWith("publicEndpoint"), e.getMessage());
+  }
+
+  /**
+   * A presigned URL pasted as an endpoint, or credentials in the user info: the message never
+   * quotes the user info, the query or the fragment, and there is no cause quoting the value.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {
+    "https://b.s3.amazonaws.com/k.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20261125"
+      + "%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Signature=5d5d5d5d5d5d5d5d",
+    "https://AKIDEXAMPLE:wJalrXUtnFEMIK7MDENG@files.example.com",
+    "ftp://AKIDEXAMPLE:wJalrXUtnFEMIK7MDENG@files.example.com",
+    "https://AKIDEXAMPLE:wJalrXUtnFEMI K7MDENG@files.example.com",
+    "https://files.example.com#X-Amz-Signature=5d5d5d5d5d5d5d5d"})
+  void endpointMessagesNeverQuoteUserInfoOrQuery(String endpoint) {
+    for (Consumer<S3ClientOptions> change : List.<Consumer<S3ClientOptions>>of(o -> o.setEndpoint(endpoint),
+      o -> o.setPublicEndpoint(endpoint))) {
+      S3ClientOptions options = valid();
+      change.accept(options);
+      IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> ClientConfig.from(options));
+      assertNull(e.getCause(), e::toString);
+      for (String secret : List.of("AKIDEXAMPLE", "wJalrXUtnFEMI", "X-Amz-", "5d5d5d5d")) {
+        assertFalse(e.getMessage().contains(secret), e.getMessage());
+      }
+    }
+  }
+
+  @Test
+  void anEndpointWithAPathShowsThePathButNotTheQuery() {
+    IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+      () -> ClientConfig.from(valid().setEndpoint("https://nyc3.digitaloceanspaces.com/my-bucket?X-Amz-Signature=5d")));
+    assertEquals("endpoint must not contain a path, query or fragment: https://nyc3.digitaloceanspaces.com/my-bucket "
+      + "(query and fragment not shown)", e.getMessage());
   }
 
   @Test

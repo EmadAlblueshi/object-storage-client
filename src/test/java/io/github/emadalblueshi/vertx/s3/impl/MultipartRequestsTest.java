@@ -185,6 +185,6 @@ class MultipartRequestsTest {
   }
 
   private static S3Response response(int status, String body) {
-    return new S3Response(status, "OK", MultiMap.caseInsensitiveMultiMap(), Buffer.buffer(body));
+    return new S3Response(status, "OK", MultiMap.caseInsensitiveMultiMap(), Buffer.buffer(body), Redaction.NONE);
   }
 }

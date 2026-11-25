@@ -43,8 +43,9 @@ import io.vertx.core.streams.ReadStream;
  *   recorded first, later body events are ignored, and the request is cancelled on a best-effort
  *   basis. That closes the connection if the response is still in flight; if it has already
  *   ended, the cancellation's own outcome is ignored.</li>
- *   <li>Non-2xx responses fail with {@code S3ServiceException} ({@link ErrorMapper}); everything
- *   else fails with {@link S3ClientException}.</li>
+ *   <li>Non-2xx responses fail with {@code S3ServiceException} ({@link ErrorMapper}), which never
+ *   contains the client's secrets or the request's {@code Authorization} value
+ *   ({@link Redaction}); everything else fails with {@link S3ClientException}.</li>
  * </ul>
  * The returned Futures are created through the {@link ContextSupport.Caller}; the client binds
  * the final result to the caller's context.
@@ -87,7 +88,8 @@ final class Transport {
         return failWithError(caller, response);
       }
       return readBody(caller, response, limit, tooLarge)
-        .map(body -> new S3Response(response.statusCode(), response.statusMessage(), response.headers(), body));
+        .map(body -> new S3Response(response.statusCode(), response.statusMessage(), response.headers(), body,
+          redaction(response)));
     })));
   }
 
@@ -139,7 +141,7 @@ final class Transport {
           return readBody(caller, response, MAX_BUFFERED_RESPONSE_SIZE, size -> new S3ClientException(
               "The response body exceeds the limit of " + MAX_BUFFERED_RESPONSE_SIZE + " bytes", null))
             .map(responseBody -> new S3Response(response.statusCode(), response.statusMessage(), response.headers(),
-              responseBody));
+              responseBody, redaction(response)));
         })))
       // A failure caused by a reset of our own surfaces with our cause, not as a stream reset
       .recover(error -> caller.failed(exchange.cause() != null ? exchange.cause() : error));
@@ -295,7 +297,15 @@ final class Transport {
   private <T> Future<T> failWithError(ContextSupport.Caller caller, HttpClientResponse response) {
     return readBody(caller, response, MAX_BUFFERED_RESPONSE_SIZE, null)
       .compose(body -> caller.failed(ErrorMapper.toException(
-        new S3Response(response.statusCode(), response.statusMessage(), response.headers(), body))));
+        new S3Response(response.statusCode(), response.statusMessage(), response.headers(), body, redaction(response)))));
+  }
+
+  /**
+   * What an exception built from {@code response} must not contain: the client's secret key and
+   * session token, and the {@code Authorization} value its request was sent with.
+   */
+  private Redaction redaction(HttpClientResponse response) {
+    return Redaction.of(config.credentials, response.request().headers().get(HttpHeaders.AUTHORIZATION));
   }
 
   /**

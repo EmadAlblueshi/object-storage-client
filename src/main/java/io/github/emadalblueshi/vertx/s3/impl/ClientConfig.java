@@ -107,6 +107,9 @@ final class ClientConfig {
   }
 
   /**
+   * The messages never quote the whole value, which may carry user info or a query (credentials, or
+   * a presigned URL pasted by mistake): at most its scheme, authority and path.
+   *
    * @param name the option's name, for messages ({@code endpoint} or {@code publicEndpoint})
    */
   private static URI parseEndpoint(String endpoint, String name) {
@@ -117,21 +120,26 @@ final class ClientConfig {
     try {
       uri = new URI(endpoint.trim());
     } catch (URISyntaxException e) {
-      throw new IllegalArgumentException(name + " is not a valid URI: " + endpoint, e);
+      // Not attached as the cause: its message quotes the value
+      throw new IllegalArgumentException(name + " is not a valid URI (" + e.getReason()
+        + (e.getIndex() >= 0 ? " at index " + e.getIndex() : "") + ")");
     }
     String scheme = uri.getScheme() == null ? null : uri.getScheme().toLowerCase(Locale.ROOT);
     if (!"http".equals(scheme) && !"https".equals(scheme)) {
-      throw new IllegalArgumentException(name + " must use http or https: " + endpoint);
+      throw new IllegalArgumentException(name + " must use http or https (e.g. https://nyc3.digitaloceanspaces.com)");
     }
     if (uri.getHost() == null || uri.getHost().isEmpty()) {
-      throw new IllegalArgumentException(name + " has no valid host: " + endpoint);
+      throw new IllegalArgumentException(name + " has no valid host (e.g. https://nyc3.digitaloceanspaces.com)");
     }
     if (uri.getRawUserInfo() != null) {
-      throw new IllegalArgumentException(name + " must not contain user info: " + endpoint);
+      throw new IllegalArgumentException(name + " must not contain user info: credentials go in setCredentials");
     }
     String path = uri.getRawPath();
-    if ((path != null && !path.isEmpty() && !"/".equals(path)) || uri.getRawQuery() != null || uri.getRawFragment() != null) {
-      throw new IllegalArgumentException(name + " must not contain a path, query or fragment: " + endpoint);
+    boolean hasPath = path != null && !path.isEmpty() && !"/".equals(path);
+    boolean hasQueryOrFragment = uri.getRawQuery() != null || uri.getRawFragment() != null;
+    if (hasPath || hasQueryOrFragment) {
+      throw new IllegalArgumentException(name + " must not contain a path, query or fragment: " + scheme + "://"
+        + uri.getRawAuthority() + (hasPath ? path : "") + (hasQueryOrFragment ? " (query and fragment not shown)" : ""));
     }
     return uri;
   }

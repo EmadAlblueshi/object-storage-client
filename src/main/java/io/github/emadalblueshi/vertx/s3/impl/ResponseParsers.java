@@ -113,7 +113,8 @@ final class ResponseParsers {
     Buffer body = withoutLeadingWhitespace(response.body);
     XmlElement root = S3Xml.parse(body);
     if ("Error".equals(root.name())) {
-      throw ErrorMapper.toException(new S3Response(response.statusCode, response.statusMessage, response.headers, body));
+      throw ErrorMapper.toException(new S3Response(response.statusCode, response.statusMessage, response.headers, body,
+        response.redaction));
     }
     expectRoot(root, "CompleteMultipartUploadResult");
     String etag = emptyToNull(root.childText("ETag"));

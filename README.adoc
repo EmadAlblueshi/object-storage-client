@@ -195,12 +195,20 @@ client.createMultipartUpload("my-bucket", "videos/big.mp4", new S3PutObjectOptio
 `listParts` resumes an upload whose `ETag`s were lost, `abortMultipartUpload` gives one up, and
 `listMultipartUploads` lets a cleanup job find uploads that were never finished.
 
+=== Logging and secrets
+
+The client logs nothing itself except one warning, at creation, when
+`HttpClientOptions.setLogActivity(true)` is on. Never enable that in production: Netty then logs the
+raw traffic below the library, credentials included. The client's exceptions never contain the
+secret key, a session token, an `Authorization` value or a presigned query string, so they are
+safe to log.
+
 == Documentation
 
 The link:src/main/asciidoc/index.adoc[manual] covers everything else: contexts and threading,
 addressing styles, transport options and credentials, file and stream uploads, ranges and
 cancellation, listing pages, the presigned upload flow, multipart uploads (part sizes, resuming,
-cleanup), and errors. Its code snippets are in
+cleanup), errors and logging. Its code snippets are in
 link:src/main/java/examples/Examples.java[`Examples.java`]. To build it as HTML
 (`target/docs/vertx-s3-client/java/index.html`), with the javadoc (`target/docs/apidocs`):
 

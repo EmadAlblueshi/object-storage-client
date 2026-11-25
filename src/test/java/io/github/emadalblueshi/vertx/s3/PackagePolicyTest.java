@@ -77,6 +77,24 @@ class PackagePolicyTest {
   /** The one impl class allowed to use {@code io.vertx.core.internal} (Vert.x rule 3 and the internal API policy). */
   private static final String CONTEXT_HELPER = "impl/ContextSupport.java";
 
+  /**
+   * Every Vert.x internal type {@link #CONTEXT_HELPER} uses, as the internal API policy in AGENTS.md
+   * allows them. Another internal type needs the owner's approval first; a listed type that is no
+   * longer used is removed from the list.
+   */
+  private static final Set<String> ALLOWED_INTERNAL_TYPES = Set.of(
+    "io.vertx.core.internal.Closeable",
+    "io.vertx.core.internal.CloseableResource",
+    "io.vertx.core.internal.ContextInternal",
+    "io.vertx.core.internal.PromiseInternal",
+    "io.vertx.core.internal.VertxInternal",
+    // Vert.x's logger, for the warning at client creation (owner decision, 2026-11-25)
+    "io.vertx.core.internal.logging.LoggerFactory");
+
+  /** A reference to a type in {@code io.vertx.core.internal} or a subpackage, or a wildcard import of one. */
+  private static final Pattern INTERNAL_TYPE = Pattern.compile(
+    "\\bio\\.vertx\\.core\\.internal(?:\\.[a-z][a-z0-9_]*)*\\.(?:[A-Z][A-Za-z0-9_]*|\\*)");
+
   /** Context-less Future factories that must never build a Future the public API returns (rule 3). */
   private static final Pattern CONTEXT_LESS_FUTURES = Pattern.compile(
     "\\bPromise\\s*\\.\\s*promise\\s*\\(|\\bFuture\\s*\\.\\s*(succeededFuture|failedFuture|all|any|join)\\s*\\("
@@ -193,14 +211,16 @@ class PackagePolicyTest {
   /**
    * Rule-3 guard. No main source in the API or impl packages builds a Future from a context-less
    * factory ({@code Promise.promise()}, {@code Future.succeededFuture/failedFuture},
-   * {@code Future.all/any/join}). Only {@code ContextSupport} uses Vert.x internal APIs. Comments
-   * and string/char literals are ignored. Review covers what a source scan can't.
+   * {@code Future.all/any/join}). Only {@code ContextSupport} uses Vert.x internal APIs, and only
+   * the types in {@link #ALLOWED_INTERNAL_TYPES}, each of which it uses. Comments and string/char
+   * literals are ignored. Review covers what a source scan can't.
    */
   @Test
   void rule3GuardContextBoundFuturesAndInternalApiConfinement() throws IOException {
     assertTrue(Files.isDirectory(MAIN_SOURCES), "run from the Maven base directory; missing " + MAIN_SOURCES);
     List<String> violations = new ArrayList<>();
     boolean helperSeen = false;
+    Set<String> internalTypesUsed = new TreeSet<>();
     try (Stream<Path> files = Files.walk(MAIN_SOURCES)) {
       for (Path file : files.filter(f -> f.toString().endsWith(".java")).collect(Collectors.toList())) {
         String relative = MAIN_SOURCES.relativize(file).toString().replace(file.getFileSystem().getSeparator(), "/");
@@ -212,12 +232,26 @@ class PackagePolicyTest {
         boolean usesInternal = INTERNAL_API.matcher(code).find();
         if (relative.equals(CONTEXT_HELPER)) {
           helperSeen = usesInternal;
+          Matcher internalType = INTERNAL_TYPE.matcher(code);
+          while (internalType.find()) {
+            internalTypesUsed.add(internalType.group());
+          }
         } else if (usesInternal) {
           violations.add(relative + ": uses Vert.x internal API (only " + CONTEXT_HELPER + " may)");
         }
       }
     }
     assertTrue(helperSeen, CONTEXT_HELPER + " is expected to exist and hold the internal API usage");
+    for (String type : internalTypesUsed) {
+      if (!ALLOWED_INTERNAL_TYPES.contains(type)) {
+        violations.add(CONTEXT_HELPER + ": uses " + type + ", which isn't an allowed internal type (ask the owner first)");
+      }
+    }
+    for (String type : ALLOWED_INTERNAL_TYPES) {
+      if (!internalTypesUsed.contains(type)) {
+        violations.add(CONTEXT_HELPER + ": no longer uses " + type + "; remove it from ALLOWED_INTERNAL_TYPES");
+      }
+    }
     assertTrue(violations.isEmpty(), () -> "Rule-3 guard violations:\n" + String.join("\n", violations));
   }
 

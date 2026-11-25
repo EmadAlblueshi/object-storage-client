@@ -14,6 +14,10 @@ import java.util.Map;
  * <p>
  * It carries no stack trace, like Vert.x's own server-reported errors: it describes the server's
  * answer, not a place in your code. {@link #getRequestId()} identifies the request.
+ * <p>
+ * When the client creates it, its message and fields never contain the client's secret key or
+ * session token, or the request's {@code Authorization} value or signature: wherever the server
+ * echoes one, it is replaced with {@code [REDACTED]}.
  */
 public class S3ServiceException extends S3Exception {
 
@@ -85,7 +89,10 @@ public class S3ServiceException extends S3Exception {
   /**
    * Further fields of the error document, e.g. {@code Region}, {@code BucketName},
    * {@code Endpoint}, plus {@code BucketRegion} from the {@code x-amz-bucket-region} header. Never
-   * {@code null}.
+   * {@code null}. The fields AWS adds to signature errors to help debug a signer
+   * ({@code AWSAccessKeyId}, {@code StringToSign}, {@code StringToSignBytes},
+   * {@code SignatureProvided}, {@code CanonicalRequest}, {@code CanonicalRequestBytes}) are left
+   * out: they echo the request's credentials.
    */
   public Map<String, String> getDetails() {
     return details;

@@ -60,7 +60,8 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 - **Vert.x 5.2.x, pinned to an exact version** in the pom (currently 5.2.3). Transport is
   `io.vertx.core.http.HttpClient`. No WebClient.
 - **`vertx-core` is the only runtime dependency.** XML uses JDK StAX (`java.xml`); no Jackson
-  XML, no other libraries.
+  XML, no other libraries. Its own logging module, `vertx-core-logging`, comes with it: the module
+  reads `io.vertx.core.logging` for the one warning the client logs (see "Security").
 - `vertx-codegen` (provided scope): `@DataObject` + generated JSON converters for options classes,
   and `@VertxGen` on every API interface, so the processor rejects codegen-illegal signatures at
   compile time (no `Instant`, `Duration`, `URI`, `Clock` or own functional interfaces in method
@@ -188,16 +189,19 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 
 ## Vert.x internal API policy
 - `io.vertx.core.internal` (`ContextInternal`, `PromiseInternal`, `VertxInternal`,
-  `CloseableResource`) is allowed **only inside `impl` packages**, never in the public API's
-  signatures.
-- Use it for context-bound promises (`ContextInternal.promise()`) and resource registration
-  (`VertxInternal.registerResource`, exactly as Vert.x's own `HttpClient` registers itself),
-  **only inside `impl.ContextSupport`**, the single class that may import `io.vertx.core.internal`
-  (enforced by the rule-3 guard). Everything else goes through `ContextSupport.Caller` (`bind`,
-  `succeeded`, `failed`, `executeBlocking`, `promise`, `onContext`, `runOnContext`) and
-  `ContextSupport.Registration`. An explicit `close()` goes through the registration, which
-  unregisters, so a closed client isn't referenced by its context until undeploy. Any other
-  internal API needs explicit approval.
+  `CloseableResource`, `Closeable`, and `logging.LoggerFactory`) is allowed **only inside `impl`
+  packages**, never in the public API's signatures.
+- Use it for context-bound promises (`ContextInternal.promise()`), resource registration
+  (`VertxInternal.registerResource`, exactly as Vert.x's own `HttpClient` registers itself) and the
+  one warning the library logs (`LoggerFactory`, owner decision 2026-11-25; see "Security"),
+  **only inside `impl.ContextSupport`**, the single class that may import `io.vertx.core.internal`.
+  The rule-3 guard lists every internal type it uses (`PackagePolicyTest.ALLOWED_INTERNAL_TYPES`):
+  another one fails the guard, and a listed type that is no longer used must be removed.
+  Everything else goes through `ContextSupport.Caller` (`bind`, `succeeded`, `failed`,
+  `executeBlocking`, `promise`, `onContext`, `runOnContext`), `ContextSupport.Registration` and
+  `ContextSupport.warn`. An explicit `close()` goes through the registration, which unregisters,
+  so a closed client isn't referenced by its context until undeploy. Any other internal API needs
+  explicit approval.
 - **On every Vert.x version bump, re-verify every internal API usage** (compile, plus the
   context test suite on all three threading models) before merging.
 
@@ -383,6 +387,22 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
 
 ## Security
 - Never log credentials, `Authorization`, `x-amz-security-token`, or presigned URLs.
+- **Logging** (owner decisions, 2026-11-25, log-redaction audit): the library logs nothing except
+  one warning when a client is created with `HttpClientOptions.logActivity` on
+  (`S3ClientImpl.WIRE_LOG_WARNING`, logger `io.github.emadalblueshi.vertx.s3.S3Client`, through
+  `ContextSupport.warn`). `logActivity` makes Netty log the raw traffic, credentials included,
+  below the library, where nothing can be redacted: the docs say never to enable it in production.
+  Don't add other logging without the owner's approval.
+- **Exceptions are safe to log:** none contains the secret key, the session token, a request's
+  `Authorization` value or signature, or a presigned query string. `ErrorMapper` leaves AWS's
+  signature-debugging fields (`AWSAccessKeyId`, `StringToSign`, `StringToSignBytes`,
+  `SignatureProvided`, `CanonicalRequest`, `CanonicalRequestBytes`, any case) out of the details,
+  and `impl.Redaction` replaces those values with `[REDACTED]` wherever an error response echoes
+  them: the message (a non-XML excerpt is redacted before it is cut), code, resource, request ids
+  and details (a detail named after a secret is dropped). The transport builds the redaction per
+  response, from the credentials and the request's `Authorization` header. Option validation never
+  quotes an endpoint's user info, query or fragment. Vert.x, Netty and JDK exceptions attached as
+  causes are kept as they are: they describe transport failures.
 - Options `toJson()`/`toString()` never expose secrets: the secret key and session token are
   omitted or masked. `S3ClientOptions.toJson()` also strips the `password`/`aliasPassword`
   entries that Vert.x writes in clear inside the nested `HttpClientOptions` JSON (key and trust
@@ -477,6 +497,16 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   ListMultipartUploads (Ceph does, so the paging test runs against a real server there; Silo
   returns everything in one page). The suite aborts every upload left open in its bucket before
   cleanup.
+- Log redaction (owner decision, 2026-11-25): `LogRedactionStubTest` (no Docker) holds the
+  control: with `logActivity` on, the capture of everything logged at every level
+  (`VertxLogCapture.everything()`) sees Netty's hex dump with the `Authorization` value and the
+  token, so "nothing logged" can't pass vacuously. It also covers the warning, AWS's real
+  `SignatureDoesNotMatch` (built from the actual request) and `ExpiredToken` documents, echoes in
+  every field, a proxy page cut mid-header, HEAD, the CompleteMultipartUpload 200 error and
+  transport failures. The `S3ClientLogRedaction*` suites (every backend) capture everything logged
+  while the client runs the main operations and presigning and meets S3 failures; `Leaks` checks
+  that neither the log nor any exception contains a secret, a 16-character fragment of one or a
+  presigned URL's signature. Failure messages mask what they found.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
   shared static client state across test classes).
