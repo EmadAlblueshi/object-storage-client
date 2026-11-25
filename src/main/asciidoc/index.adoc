@@ -3,8 +3,6 @@
 An asynchronous client for Amazon S3 and S3-compatible storage (DigitalOcean Spaces,
 MinIO-compatible servers), based on Vert.x.
 
-WARNING: The module is being rewritten. The API is incomplete and will change between versions.
-
 NOTE: `S3Client`, `S3Presigner` and `S3Exception` have the same simple names as AWS SDK v2 types.
 In a file that uses both libraries, refer to one of them by its fully qualified name.
 

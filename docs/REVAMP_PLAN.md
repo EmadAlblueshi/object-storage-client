@@ -93,7 +93,8 @@ first, verified with `mvn verify`, committed by the owner, decisions recorded he
    must be streamed, about 16 MiB per concurrent `putObject(ReadStream)` and only a few chunks for
    `putFile`, pool sizing, closing the client on graceful shutdown, the presigner's public vs
    internal endpoint, the origin endpoint rather than a CDN for uploads), the migration note from
-   `object-storage-client` 0.4.x, and removing the "under development" warnings.
+   `object-storage-client` 0.4.x, and removing the "under development" warnings (see "Gate 3 —
+   docs"): done.
 5. Gate 6: the Ceph RGW suites green.
 6. Gate 5, last: the 8-hour soak against Silo, on demand only, never in regular CI (buffered and
    streamed uploads and downloads, cancels, listings, errors and presigned URLs, including ones
@@ -899,6 +900,19 @@ part uploads. Design decisions (owner, 2026-11-22):
   TCP server that pauses every connection, with the same backpressure. The full suite, on every
   container backend, has no leak reports.
 
+### Gate 3 — docs (2026-11-26)
+- The README gains "Running in Kubernetes": memory (why large objects are streamed; about 16 MiB per
+  concurrent streamed upload, a few chunks for `putFile`; room for Netty's direct buffers), the
+  connection pool (5 per host by default, an unbounded wait queue, a connection held by each object
+  stream), graceful shutdown (closing aborts the uploads still running), and the public endpoint vs
+  the in-cluster one, with uploads going to the origin, not a CDN.
+- The migration note is a README section, "Migrating from object-storage-client 0.4.x": 0.4.x was
+  never released to Maven Central (the only artifact there under the group is
+  `vertx-web-object-storage-client:0.0.1-DEV`, from 2024), so there is no relocation. It lists the
+  new coordinates and package, the configuration and API changes, and the renamed and dropped
+  operations.
+- The "under development" warnings are gone from the README and the manual.
+
 ### Unreproduced build failure (2026-11-22, during step 4b)
 One `mvn test` run (an incremental build: a clean main-only compile, then edited test files)
 reported BUILD FAILURE without running any test, most likely in compilation; its output was lost
@@ -987,14 +1001,14 @@ Library-relevant points; to be confirmed at gate 7 where testable.
 ### Phase 6 — release checklist
 The release gates are in "1.0.0 release gates" at the top of this file. This checklist holds
 the concrete steps.
-- [ ] For `1.0.0-RC1`: remove the "being rewritten" WARNING banner from the manual
+- [x] For `1.0.0-RC1`: remove the "being rewritten" WARNING banner from the manual
   (`src/main/asciidoc/index.adoc`) and the "under active development" WARNING from `README.adoc`.
-- [ ] Gate 3: a "Running in Kubernetes" section in `README.adoc`: memory limits and why large
+- [x] Gate 3: a "Running in Kubernetes" section in `README.adoc`: memory limits and why large
   objects must be streamed, pool sizing, closing the client on graceful shutdown, and the
   presigner's public vs internal endpoint. Buffer memory is up to about 16 MiB per concurrent
   `putObject(ReadStream)` upload (two 8 MiB parts): size pod memory for the expected concurrency.
   `putFile` streams file ranges and needs only a few chunks per upload.
-- [ ] Gate 3: a migration note from `object-storage-client` 0.4.x: new coordinates and package;
+- [x] Gate 3: a migration note from `object-storage-client` 0.4.x: new coordinates and package;
   the old API is replaced, not migrated.
 - [ ] After the GitHub rename to `vertx-s3-client`: point the README's CI badge and links at the
   new repository.

@@ -10,7 +10,7 @@ It is not a clone of the AWS SDK. It covers the basic operations with a `Future`
 results complete on the caller's Vert.x context, streams large objects with backpressure, and
 depends only on `vertx-core`.
 
-WARNING: Under active development: the API may change until `1.0.0-RC1`.
+Formerly `object-storage-client`: see "Migrating from object-storage-client 0.4.x" below.
 
 == Requirements
 
@@ -202,6 +202,76 @@ The client logs nothing itself except one warning, at creation, when
 raw traffic below the library, credentials included. The client's exceptions never contain the
 secret key, a session token, an `Authorization` value or a presigned query string, so they are
 safe to log.
+
+== Running in Kubernetes
+
+*Memory.* A pod has a hard memory limit, so large objects must be streamed, never held in memory:
+
+* `getObject` holds the whole object and refuses one larger than `maxBufferedObjectSize` (4 MiB by
+default): download anything larger with `getObjectStream`, which reads with backpressure.
+* `putObject` with a `Buffer` holds the whole body: upload large data with `putFile` or
+`putObject` with a `ReadStream`.
+* A streamed upload (`putObject` with a `ReadStream`) buffers up to two 8 MiB parts, about 16 MiB,
+while it runs: 50 at once need about 800 MiB. `putFile` streams each part from its file range and
+needs only a few chunks, whatever the file's size.
+* Netty reads and writes through pooled direct buffers, outside the heap. Leave room for them
+between the heap's maximum and the container's limit, e.g. with a `-XX:MaxRAMPercentage` well below
+100 or an explicit `-XX:MaxDirectMemorySize`.
+
+*Connection pool.* A request holds a pooled connection while it runs, an object stream until it is
+read to the end or cancelled, and `putFile` two at a time. Vert.x pools 5 connections per host by
+default and queues the requests beyond them without limit. Size `getPoolOptions().setHttp1MaxSize`
+for the transfers you run at once, and set `setMaxWaitQueueSize` to fail fast instead of queueing
+without bound. With virtual-hosted-style addressing each bucket is a separate host, with its own
+pool.
+
+*Graceful shutdown.* A client created in a verticle is closed when the verticle is undeployed, and
+any other client when its `Vertx` instance is closed, so closing Vert.x on `SIGTERM` closes the
+client. Closing aborts the streamed and file uploads still running: they leave no parts behind, but
+they fail. Stop taking new work first (fail the readiness probe, stop the HTTP server), let the
+transfers in flight finish within `terminationGracePeriodSeconds`, then close. A cleanup job using
+`listMultipartUploads` finds the presigned multipart uploads whose completion was interrupted.
+
+*Endpoints.* The client can reach the storage at an in-cluster address while presigned URLs point
+to the public one: set `setPublicEndpoint`. The URL's host is signed, so an ingress or proxy in
+front of the storage must pass the `Host` header through unchanged. Point presigned uploads at the
+storage's origin endpoint, not a CDN: the DigitalOcean Spaces CDN endpoint, for example, accepts
+request bodies of at most 8100 KiB.
+
+== Migrating from object-storage-client 0.4.x
+
+`vertx-s3-client` replaces `object-storage-client`, whose 0.4.x versions were never released to
+Maven Central. The API was rewritten, not migrated: replace the dependency and update the code.
+
+* *Coordinates and package:* `io.github.emadalblueshi:object-storage-client` becomes
+`io.github.emadalblueshi:vertx-s3-client`, and the package
+`io.github.emadalblueshi.objectstorage.client.s3` becomes `io.github.emadalblueshi.vertx.s3`. It
+needs Java 11 and Vert.x 5.2, and depends only on `vertx-core` (no Vert.x Web Client, no Jackson).
+* *Configuration:* instead of `S3AuthOptions` and the `WebClientOptions` host, port and SSL, set the
+endpoint URI, the region and `S3Credentials`. None of them has a default. Transport settings move
+to `getHttpClientOptions()` and `getPoolOptions()`.
+* *Buckets and keys* are separate arguments, encoded by the client, instead of a `/bucket/key`
+path. The request option bags (`S3ObjectOptions`, `S3BucketOptions`) are replaced by a few typed
+options, such as `S3PutObjectOptions` and `S3ListObjectsOptions`.
+* *Results* are plain values (an ETag, a `Buffer`, `S3ObjectMetadata`, …) instead of an
+`S3Response` wrapping the HTTP response, and they complete on the caller's Vert.x context.
+Failures are `S3ServiceException` (HTTP status, S3 error code, request id) or `S3ClientException`
+instead of `S3ResponseException`. `close()` returns a `Future`.
+
+[cols="1,1"]
+|===
+|0.4.x |vertx-s3-client
+
+|`putBucket` |`createBucket`
+|`ObjectInfo` |`headObject`
+|`getObject` (the whole object in memory) |`getObject` for small objects, `getObjectStream` for any size
+|`putObjectAsStream` |`putObject` with a `ReadStream`
+|`putObjectFileAsStream` |`putFile`
+|`copyObject`, `ObjectAcl`, bucket policies |not in 1.0
+|===
+
+New: `listBuckets`, `headBucket`, `listObjects`, streamed downloads with backpressure, presigned
+URLs and the multipart upload API.
 
 == Documentation
 
