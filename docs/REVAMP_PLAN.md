@@ -95,7 +95,8 @@ first, verified with `mvn verify`, committed by the owner, decisions recorded he
    internal endpoint, the origin endpoint rather than a CDN for uploads), the migration note from
    `object-storage-client` 0.4.x, and removing the "under development" warnings (see "Gate 3 —
    docs"): done.
-5. Gate 6: the Ceph RGW suites green.
+5. Gate 6: the Ceph RGW suites green: green locally (see "Gate 6 — Ceph RGW suites"); the
+   workflow runs once `revamping` is merged.
 6. Gate 5, last: the 8-hour soak against Silo, on demand only, never in regular CI (buffered and
    streamed uploads and downloads, cancels, listings, errors and presigned URLs, including ones
    that sign `Content-Length`; flat memory, no leaked connections). If any code changes after the
@@ -913,6 +914,18 @@ part uploads. Design decisions (owner, 2026-11-22):
   operations.
 - The "under development" warnings are gone from the README and the manual.
 
+### Gate 6 — Ceph RGW suites (2026-11-26)
+- Green locally, with Netty leak detection at paranoid (gate 4): the workflow's command
+  (`S3_TEST_CEPH=true mvn test -Dtest='S3Client*CephTest,S3Client*CephTlsTest'`) passed three runs
+  out of three on JDK 21, 220 tests each (bucket 5, object 52, presign 39, multipart 12, log
+  redaction 2, over HTTP and HTTPS), and once on JDK 11. A full `mvn clean verify` with
+  `S3_TEST_CEPH=true` passed 1,134 tests; the 57 skipped are the external suites (no credentials)
+  and two harness checks that don't apply to non-Vert.x callers. No leak reports.
+- Environment: `quay.io/ceph/ceph:v20.2.5`, Docker 29.10.0, Temurin 21.0.9 and 11.0.33.
+- The `Ceph RGW` workflow runs from the default branch only, so it can't run before `revamping` is
+  merged. Dispatch it after the merge, before tagging `1.0.0-RC1`; the gate's checklist item stays
+  open until then.
+
 ### Unreproduced build failure (2026-11-22, during step 4b)
 One `mvn test` run (an incremental build: a clean main-only compile, then edited test files)
 reported BUILD FAILURE without running any test, most likely in compilation; its output was lost
@@ -1015,7 +1028,8 @@ the concrete steps.
 - [ ] Publish the generated manual (e.g. GitHub Pages, from `mvn -DskipTests package site`) and
   link it from the README's "Documentation" section instead of the manual's source.
 - [ ] Gate 6 (required for `1.0.0-RC1`): the `Ceph RGW` workflow is green (it runs from the default
-  branch, so after `revamping` is merged; until then, run the Ceph suites locally).
+  branch, so after `revamping` is merged; until then, run the Ceph suites locally). Local runs are
+  green (2026-11-26): dispatch the workflow after the merge, before tagging `1.0.0-RC1`.
 - [ ] Gate 7 (required for `1.0.0`, not for `1.0.0-RC1`): run the external profile against real
   Spaces, in both addressing styles:
   ```
