@@ -260,8 +260,8 @@ class PackagePolicyTest {
 
   /**
    * Release gate 4: every test class that runs Vert.x ({@code VertxExtension}, or a {@code Vertx} it
-   * creates) registers {@code NettyLeakCheck}, before {@code VertxExtension}, so its check runs once
-   * the class's Vert.x instances are closed. Comments and string literals are ignored.
+   * creates or builds) registers {@code NettyLeakCheck}, before {@code VertxExtension}, so its check
+   * runs once the class's Vert.x instances are closed. Comments and string literals are ignored.
    */
   @Test
   void testClassesThatRunVertxAreLeakChecked() throws IOException {
@@ -272,7 +272,7 @@ class PackagePolicyTest {
         String code = stripCommentsAndLiterals(Files.readString(file));
         int vertxExtension = code.indexOf("@ExtendWith(VertxExtension.class)");
         int leakCheck = code.indexOf("@ExtendWith(NettyLeakCheck.class)");
-        boolean runsVertx = vertxExtension >= 0 || code.contains("Vertx.vertx(");
+        boolean runsVertx = vertxExtension >= 0 || code.contains("Vertx.vertx(") || code.contains("Vertx.builder(");
         if (runsVertx && (leakCheck < 0 || vertxExtension >= 0 && leakCheck > vertxExtension)) {
           violations.add(TEST_SOURCES.relativize(file) + ": register @ExtendWith(NettyLeakCheck.class) before VertxExtension");
         }

@@ -22,6 +22,7 @@ public class SiloContainer extends GenericContainer<SiloContainer> {
     DockerImageName.parse("docker.io/pgsty/silo").withTag("RELEASE.2026-11-12T00-00-00Z");
 
   static final int S3_PORT = 9000;
+  static final String DATA_DIR = "/data";
 
   // Test-only credentials for a throwaway container.
   static final String ACCESS_KEY = "minioadmin";
@@ -53,10 +54,10 @@ public class SiloContainer extends GenericContainer<SiloContainer> {
     if (tls) {
       withCopyFileToContainer(MountableFile.forClasspathResource(TLS_CERT_RESOURCE), CERTS_DIR + "/public.crt");
       withCopyFileToContainer(MountableFile.forClasspathResource(TLS_KEY_RESOURCE), CERTS_DIR + "/private.key");
-      withCommand("server", "/data", "--certs-dir", CERTS_DIR);
+      withCommand("server", DATA_DIR, "--certs-dir", CERTS_DIR);
       ready = ready.usingTls().allowInsecure();
     } else {
-      withCommand("server", "/data");
+      withCommand("server", DATA_DIR);
     }
     waitingFor(ready.withStartupTimeout(Duration.ofMinutes(2)));
   }

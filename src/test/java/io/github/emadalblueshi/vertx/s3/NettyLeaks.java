@@ -15,8 +15,9 @@ import java.nio.charset.StandardCharsets;
  * <p>
  * Reflection is used because the tests run inside the library's module, which reads neither
  * Netty's modules nor {@code java.logging}; their packages are exported, so reflection may use them.
+ * Public for the soak, whose checkpoints use the same check.
  */
-final class NettyLeaks {
+public final class NettyLeaks {
 
   /** A safety net: a requested garbage collection completes in far less. */
   private static final long GC_TIMEOUT_MILLIS = 30_000;
@@ -31,7 +32,7 @@ final class NettyLeaks {
   }
 
   /** Sets Netty's leak detection to paranoid and starts capturing its leak reports; once. */
-  static synchronized void install() {
+  public static synchronized void install() {
     if (reports != null) {
       return;
     }
@@ -71,7 +72,7 @@ final class NettyLeaks {
    * buffer collected by the first is in Netty's queue. Then an allocation, which makes Netty drain
    * its queue and log the leaks before it returns.
    */
-  static synchronized String collect() {
+  public static synchronized String collect() {
     install();
     try {
       for (int collection = 0; collection < 2; collection++) {

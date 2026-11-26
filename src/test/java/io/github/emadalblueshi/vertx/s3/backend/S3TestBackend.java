@@ -32,6 +32,15 @@ public interface S3TestBackend {
   }
 
   /**
+   * Like {@link #siloTls()}, with the server's data in memory (a tmpfs of {@code dataMiB}), so a
+   * long run doesn't write to disk, and the data of deleted objects purged every 5 s: for the soak.
+   * Starting it takes about 5 min (see {@code SiloBackend}). The caller starts and stops it.
+   */
+  static S3TestBackend siloTlsInMemory(int dataMiB) {
+    return new SiloBackend(true, dataMiB);
+  }
+
+  /**
    * A Silo backend over plain HTTP, shared by all test classes in the JVM: started on first use
    * and never stopped by tests (Testcontainers' Ryuk removes it when the JVM exits). Tests must
    * use unique bucket names. Never call {@link #stop()} on it.

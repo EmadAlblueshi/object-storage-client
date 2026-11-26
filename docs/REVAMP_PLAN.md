@@ -100,7 +100,8 @@ first, verified with `mvn verify`, committed by the owner, decisions recorded he
 6. Gate 5, last: the 8-hour soak against Silo, on demand only, never in regular CI (buffered and
    streamed uploads and downloads, cancels, listings, errors and presigned URLs, including ones
    that sign `Content-Length`; flat memory, no leaked connections). If any code changes after the
-   soak, it runs again.
+   soak, it runs again. The soak, its 15-minute validation and three fault-injection runs are done
+   (see "Gate 5 — soak"); the owner's 8-hour run is pending.
 
 `1.0.0` then waits for gates 7 and 8.
 
@@ -925,6 +926,163 @@ part uploads. Design decisions (owner, 2026-11-22):
 - The `Ceph RGW` workflow runs from the default branch only, so it can't run before `revamping` is
   merged. Dispatch it after the merge, before tagging `1.0.0-RC1`; the gate's checklist item stays
   open until then.
+
+### Gate 5 — soak (owner decisions, 2026-11-26)
+- **Design**, approved as is:
+  - HTTPS only, with Netty leak detection at `paranoid`.
+  - 8 workers, each pausing 0–20 ms between operations.
+  - Fail-fast on hard violations.
+  - On demand only: it needs `S3_SOAK_DURATION` (e.g. `8h`, `15m`), and it is skipped without it
+    and on CI (`CI=true`). No workflow runs it, and GitHub-hosted jobs stop at 6 h anyway.
+  - Linux only (`/proc`).
+  - The test JVM must clear soft references at every GC (`-XX:SoftRefLRUPolicyMSPerMB=0`, through
+    `-DargLine`), checked at start (see the first finding).
+  - The documented command also caps the heap at 512 MiB (`-Xmx512m`), which by default caps
+    direct memory too, so the soak runs under realistic memory pressure (owner decision,
+    2026-11-26). 512 MiB rather than 1 GiB: see the validation.
+- **Setup:**
+  - A dedicated Silo container (the pinned image) over HTTPS, with its data on a 4 GiB tmpfs.
+  - One `Vertx`, built with a counting metrics SPI (`SoakMetrics`). It holds:
+    - the client under test, pool 16;
+    - a plain `HttpClient` for the presigned URLs, pool 8;
+    - two clients for expected errors (a wrong secret; `maxBufferedObjectSize` 512), pool 2 each.
+
+    That's 28 connections at most.
+  - Fixtures of 1 KiB, 4 MiB and 24 MiB, and 50 keys to list. Uploads read files of exact sizes
+    from a temporary directory.
+  - A worker deletes every object it creates, and completes or aborts every multipart upload it
+    starts, in the same operation.
+- **Workload** (weights out of 100). Every outcome is verified (digests, sizes, statuses, error
+  types), and an expected error counts as a success:
+  - buffered round trip, 20: put, get, head, delete; 0 B to 1 MiB.
+  - streamed download, 12: a fixture, digest-checked; one in four reads with a slow consumer.
+  - ranged download, 6.
+  - streamed upload, 8: `putObject(ReadStream)`, 0 B to 24 MiB, single PUT and multipart.
+  - file upload, 4: `putFile`, 1 KiB to 17 MiB.
+  - presigned, 14:
+    - a PUT signing `Content-Type`, `Content-MD5` and `Content-Length`, then a GET;
+    - a two-part upload through presigned part URLs signing `Content-Length`;
+    - a body longer than its signed length, refused (403) and not stored.
+  - cancels, 8:
+    - a 24 MiB object stream cancelled after its first chunk;
+    - a streamed upload whose source fails after 9 MiB, which must be aborted.
+  - listings, 8: ListObjectsV2 paging, ListBuckets, ListMultipartUploads.
+  - expected errors, 10: 404 on get and head, 403 with a wrong secret, the size cap, an invalid
+    key, a completion with a wrong ETag.
+  - multipart lifecycle, 4: create, list parts, abort.
+- **Silo's trash:**
+  - Silo moves deleted objects' data to `.minio.sys/tmp/.trash` and purges it every 5 min by
+    default. At the soak's rate (about 150 MiB/s) that's tens of GiB, and the first validation runs
+    filled the tmpfs within 15 s (`507 XMinioStorageFull`).
+  - `MINIO_API_DELETE_CLEANUP_INTERVAL=5s` purges every 5 s. But Silo arms its first purge before
+    it reads that setting, so the first purge comes 5 min after start-up.
+  - The in-memory backend's `start()` therefore puts a directory into the trash and waits for it
+    to be purged twice: once in the 5-minute cycle, and once more within 30 s, which proves the
+    5 s interval. The soak makes no Docker calls after that.
+- **Measurements:**
+  - A sample every 30 s under load.
+  - A checkpoint every duration/48 (1–10 min); checkpoints count once warm-up, duration/16
+    (2–30 min), is over:
+    - 8 h: a checkpoint every 10 min, 30 min of warm-up, 46 checkpoints judged;
+    - 15 min: every minute, 2 min of warm-up, 14 judged.
+  - At a checkpoint:
+    1. The workers finish their operations (safety net: 2 min).
+    2. Netty's leak check runs (two confirmed GCs).
+    3. The pools get up to 5 s to see the last requests end.
+    4. Everything is measured, then the workers resume.
+- **Checks** (`SoakLimits`). Hard checks stop the run at once; trends are judged at the end,
+  against the baseline (the median of the first three checkpoints after warm-up):
+
+  | Check | Limit | When |
+  |---|---|---|
+  | Netty leak reports; unexpected outcomes | 0 | every checkpoint; every operation |
+  | requests waiting for a connection; requests in flight | 0 when idle | every checkpoint |
+  | `CLOSE_WAIT` sockets | 0 when idle; no socket or connection left after closing | every checkpoint; the end |
+  | sockets to the server; connections | at most 28, the pools' sizes | every sample (sockets); every checkpoint (both) |
+  | open multipart uploads; leftover objects | 0 when idle | every checkpoint |
+  | live heap | at most 64 MiB above the baseline | every checkpoint |
+  | live heap, Netty direct memory, JVM direct buffers | growth at most 32 MiB; slope at most 4 MiB/h, judged over at least 1 h | the end |
+  | threads; open files besides the sockets to the server | at most 2 and 8 above the baseline | the end |
+
+  Vert.x 5.2's HTTP client reports only the wait for a connection through pool metrics, never
+  how long a connection is held. A request in flight holds its connection, so "in flight when
+  idle" catches a connection that is never released (fault 2 below). Open files are counted
+  without the sockets to the server, because the number of pooled keep-alive connections at an
+  idle checkpoint varies legitimately (11 to 15 in the validation).
+- **Report:** `target/soak/report.md`, with:
+  - the setup;
+  - per operation: the count, unexpected outcomes, p50, p99 and max latency, and MiB moved;
+  - the checks, the violations, and every checkpoint.
+
+  Next to it, `checkpoints.csv` and `samples.csv`.
+- **Java Flight Recording:** the command is in AGENTS.md, "Commands". It goes through `argLine` (no
+  pom change), because `MAVEN_OPTS` doesn't reach the forked test JVM. It uses `settings=default`
+  plus `memory-leaks=gc-roots`, which gives the sampled objects still alive at exit their stack
+  traces and paths to GC roots. It turns off `jdk.GCPhaseParallel`, which made up 60 of the 90 MB
+  recorded in 20 minutes. With the 512 MiB heap, GC events still add up to about 5 MB per minute
+  of load, so `maxsize=2g` keeps roughly the last 6 hours: a run that fails stops at its first
+  violation, so its recording reaches back that far from the failure. A heap dump is written on
+  `OutOfMemoryError`. The old-object samples didn't catch the slow growth in the first finding
+  (small objects among some 400 MB/s of allocation are rarely sampled): two
+  `jcmd <pid> GC.class_histogram` snapshots a few minutes apart did.
+- **Findings:**
+  1. **The JDK's TLS 1.3 client retains resumed sessions softly.** The first 15-minute validation
+     passed, but the live heap rose at every checkpoint, about 0.2 MiB a minute, which would fail
+     an 8-hour run. Two class histograms 8 minutes apart showed 3,872 more `SSLSessionImpl` (5,699
+     in all, against 785 soft cache entries), and nothing else growing; connections, SSL engines
+     and channels stayed at 11 to 14. In Temurin 21.0.9:
+     - the client caches the session of every full handshake (`Finished.java:966`), and nothing
+       removes it;
+     - each ticket the server sends becomes a child of the connection's session, in an add-only
+       `childSessions` queue, and is cached for the next connection (`NewSessionTicket.java:618`);
+     - a resumed connection's session is that ticket session (`ServerHello.java:1264`), so it in
+       turn holds the next ticket.
+
+     Each cached full-handshake session therefore keeps its whole line of resumed sessions
+     reachable, through a soft reference. With the soak JVM's default heap (about 31 GiB on a
+     125 GiB machine), soft references that aren't used survive for hours. A connection
+     `maxLifetime` of 60 s or 300 s changed nothing, because the root is the cache, not a
+     connection. With `-XX:SoftRefLRUPolicyMSPerMB=0`, the live heap stayed at 73.1 MiB at every
+     checkpoint from minute 4 to minute 12, with 37 to 39 sessions. This isn't a leak in the
+     library, and it isn't an out-of-memory risk: soft references are cleared before an
+     `OutOfMemoryError`, and with a container-sized heap within minutes. The soak requires the
+     flag, so that it measures what stays strongly reachable whatever the machine's memory.
+  2. **Vert.x doesn't release a paused connection's pending messages when the connection closes**
+     (`VertxConnection.pending`; `handleClosed()` drops them). Fault 2 below surfaced it on the
+     client: after Vert.x closed, the class-level leak check (gate 4) reported the paused object
+     streams' raw HTTP chunks (`DefaultHttpContent`). It's the client side of the server-side
+     issue drafted for upstream during gate 4. An object stream reaches it only when it stays
+     paused while its connection closes: neither consumed nor cancelled (which the docs forbid), or
+     held paused past the server's timeout.
+  3. **Vert.x 5.2's HTTP client reports only the wait for a connection through pool metrics**
+     (`enqueue`/`dequeue`, never `begin`/`end`), so the planned "leased connections" count was
+     always 0; it was dropped. Requests in flight cover it: each holds its connection.
+- **Validation** (15 minutes each, JDK 21, the documented command with the recording; Silo ready
+  after 5 minutes): passed, with `-Xmx512m` and with `-Xmx1g`, run side by side.
+  - With `-Xmx512m`: 93,330 operations, none with an unexpected outcome; p99 latency 28 to 262 ms,
+    except for the slow-consumer downloads (4.2 s). Live heap 51.1 to 51.2 MiB over 13 judged
+    checkpoints; Netty direct memory 27.1 MiB and JVM direct buffers 28.5 MiB, flat; threads 66
+    throughout; 163 other open files. At most 15 sockets and 14 connections (the pools hold 28);
+    nothing waiting or in flight at any checkpoint; no `CLOSE_WAIT`, open upload or leftover
+    object; nothing left after closing; no leak report.
+  - GC with `-Xmx512m`: no full collection besides the checkpoints' own, longest pause 19 ms. The
+    heap reached at most 326 MiB before a collection and 224 MiB after one: 2.3 times headroom.
+    With `-Xmx1g` (also passed, live heap 78.5 to 79.3 MiB, Netty direct memory 117.3 MiB, flat),
+    the heap never passed 482 MiB before a collection, so there was little pressure. Netty sizes
+    its pools from the direct-memory cap, which `-Xmx` sets: with 512 MiB it used 27 MiB.
+  - Without a cap and without clearing soft references (the first runs), the results were the
+    same apart from the heap trend in the first finding: 97,774 operations, all hard checks met.
+  - The thresholds stay as designed. Against the baseline, the heap grew 0.1 MiB and direct memory
+    under 0.1 MiB (limits 32 MiB), threads +0 (limit +2), other open files +0 (limit +8).
+- **Fault injection** (throwaway copies, never committed; each run stopped at its first
+  violation):
+
+  | Fault | Injected | Caught |
+  |---|---|---|
+  | heap leak | 16 KiB kept per `deleteObject` call (in `impl`) | at minute 5: the live heap grew 97.1 MiB from its baseline (120 → 312 MiB in 4 minutes) |
+  | connection never released | every 1,000th operation opens an object stream and drops it | at the first checkpoint: idle, yet 6 requests in flight; then the class-level leak check (finding 2) |
+  | Netty buffer leak | a pooled 1 KiB buffer never released, every 100th request (in `impl`) | at the first checkpoint: Netty's leak report, its access record pointing at the injected line |
+- **The 8-hour run:** pending (the owner).
 
 ### Unreproduced build failure (2026-11-22, during step 4b)
 One `mvn test` run (an incremental build: a clean main-only compile, then edited test files)

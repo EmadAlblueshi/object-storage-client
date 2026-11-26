@@ -145,6 +145,31 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   -Dsurefire.failIfNoSpecifiedTests=false`. Without the variable, the Ceph tests are reported as
   skipped. One container (about 150 MiB, ready in about 15 s once the image is present) serves
   both the HTTP and the HTTPS suites.
+- Soak (release gate 5; on demand only, never in CI): `S3_SOAK_DURATION=8h mvn test
+  -Dtest=S3ClientSoakTest -Dsurefire.failIfNoSpecifiedTests=false
+  -DargLine="-Xmx512m -XX:SoftRefLRUPolicyMSPerMB=0"`, with any duration such as `8h`, `15m` (the
+  short validation run) or `1h30m`. `-XX:SoftRefLRUPolicyMSPerMB=0` is required (the soak fails at
+  once without it): the test JVM must clear soft references at every GC, or the JDK's softly
+  referenced TLS session cache counts as live heap (see "Testing rules"). `-Xmx512m` caps the heap,
+  and by default direct memory, as a container would, so the soak also runs under realistic memory
+  pressure (owner decision, 2026-11-26). Without `S3_SOAK_DURATION`, or with `CI=true`, the soak is
+  reported as skipped. Linux only (it reads `/proc`). Its own Silo container takes about 5 minutes
+  to start. The report goes to `target/soak` (`report.md`, `checkpoints.csv`, `samples.csv`): copy
+  it before `mvn clean`.
+- Soak with a Java Flight Recording, so a failed run can be diagnosed without running it again
+  blind: use `-DargLine="-Xmx512m -XX:SoftRefLRUPolicyMSPerMB=0 -XX:StartFlightRecording=filename=target/soak.jfr,settings=default,memory-leaks=gc-roots,jdk.GCPhaseParallel#enabled=false,maxage=10h,maxsize=2g,dumponexit=true -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=target"`
+  (JDK 17+). `argLine` reaches the forked test JVM, and the pom sets none, so nothing is
+  overridden; `MAVEN_OPTS` only reaches Maven's own JVM, not the tests. `memory-leaks=gc-roots`
+  records stack traces and paths to GC roots for sampled objects still alive at exit;
+  `jdk.GCPhaseParallel` is off because it alone would fill most of the recording. With the 512 MiB
+  heap the recording still grows about 5 MB per minute of load (mostly GC events), so `maxsize=2g`
+  keeps roughly the last 6 hours; a run that fails stops at its first violation, so its recording
+  reaches back that far from the failure. The recording is written when the test JVM exits;
+  `jcmd <pid> JFR.dump name=1 filename=target/soak-now.jfr` copies it while the soak runs. Read it
+  with JDK Mission Control, or `jfr summary target/soak.jfr` and
+  `jfr print --events jdk.OldObjectSample target/soak.jfr`. A slow leak of small objects under this
+  much allocation is rarely sampled: compare two `jcmd <pid> GC.class_histogram` snapshots taken
+  some minutes apart instead (the test JVM is the `java @…/surefireargs…` process).
 - Site/docs: `mvn -DskipTests package site` (docgen output: `target/asciidoc/java`)
 
 ## Java 11 rules (`src/main` and `src/test`)
@@ -517,6 +542,25 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   leak reports are captured, not printed. A stub server that stops reading is a paused TCP server:
   Vert.x's HTTP server drops a paused request's pooled body buffers unreleased when the connection
   closes.
+- **Soak** (release gate 5, `soak.S3ClientSoakTest`; owner decisions, 2026-11-26): on demand only,
+  never in CI. Eight workers, one verticle each, share one client against a dedicated Silo over
+  HTTPS, with paranoid leak detection. Silo's data is on a tmpfs, and deleted objects' data is
+  purged every 5 s (`S3TestBackend.siloTlsInMemory`; Silo arms its first purge before it reads that
+  setting, so `start()` waits about 5 minutes for it). The `Vertx` is built with a counting metrics
+  SPI (`SoakMetrics`), so connections, requests waiting for one and requests in flight are exact
+  (Vert.x 5.2 reports no lease durations through the SPI; a request in flight holds its connection).
+  A sample is taken under load every 30 s. At each checkpoint the workers finish their operations,
+  then `NettyLeaks.collect()` runs (two confirmed GCs) and everything is measured idle. Hard
+  violations stop the run at once: a leak report, an unexpected outcome, a request waiting for a
+  connection or in flight when idle, a `CLOSE_WAIT` socket, more sockets than the pools hold, an
+  open multipart upload or leftover object, the heap past twice its growth limit. The trends
+  (`SoakLimits`) are judged at the end against the median of the first three checkpoints after
+  warm-up. The documented command caps the heap at 512 MiB. The test JVM clears soft references at
+  every GC (`-XX:SoftRefLRUPolicyMSPerMB=0`, checked at start): the JDK's TLS 1.3 client caches each
+  full-handshake session softly, and that session keeps every session later resumed from it
+  reachable (`SSLSessionImpl.childSessions`), so with a large heap the live heap grows with every
+  new connection for hours, although the GC would reclaim it all under pressure. Thresholds change
+  only with the owner's approval. If main code changes after the owner's 8-hour run, it runs again.
 - XML tests cover escaping and rejection of DTD/external-entity payloads.
 - No `*Blocking` calls on event-loop threads in tests. Tests are independent (no ordering, no
   shared static client state across test classes).
@@ -564,4 +608,9 @@ Only the owner relaxes or drops a gate. After `1.0.0-RC1`, any public API change
   publishing) unless a recorded decision requires it or you are explicitly asked.
 - Don't commit, push, tag, or release unless explicitly asked.
 - Don't commit secrets, real endpoints, or large binary fixtures. Generate test data at runtime.
+- Don't put anything in the repository working tree but the approved diff (owner decision,
+  2026-11-26). Scratch files, downloaded or fetched sources, logs, reports and experiment copies
+  stay in a scratch directory outside the repository; check `git status` before reporting a step.
+  Never copy third-party source into the repository, especially copyleft code (e.g. the AGPL
+  sources of a test backend read while investigating it).
 - Don't edit generated sources (`*Converter.java`).
