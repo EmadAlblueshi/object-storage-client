@@ -1,0 +1,26 @@
+name: Ceph RGW
+# The shared suites against the opt-in Ceph RGW backend (quay.io/ceph/ceph, single-node RADOS),
+# the S3 gateway DigitalOcean Spaces is built on. Not on every push: on demand and weekly.
+# GitHub runs scheduled and manually dispatched workflows from the default branch.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  Ceph:
+    name: Run the suites against Ceph RGW (JDK 21)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - name: Run the Ceph suites
+        run: mvn -B test -Dtest='S3Client*CephTest,S3Client*CephTlsTest' -Dsurefire.failIfNoSpecifiedTests=false
+        env:
+          S3_TEST_CEPH: 'true'

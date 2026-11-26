@@ -1,0 +1,230 @@
+package io.github.emadalblueshi.vertx.s3.impl;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.List;
+import java.util.function.Consumer;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
+import io.github.emadalblueshi.vertx.s3.S3Credentials;
+import io.vertx.core.json.JsonObject;
+
+/** Validation in {@code S3Client.create}: every invalid option fails fast with IllegalArgumentException. */
+class ClientConfigTest {
+
+  @Test
+  void validHttpsEndpointWithDefaultPort() {
+    ClientConfig config = ClientConfig.from(valid().setEndpoint("https://nyc3.digitaloceanspaces.com"));
+    assertTrue(config.tls);
+    assertEquals("nyc3.digitaloceanspaces.com", config.host);
+    assertEquals(443, config.port);
+    assertTrue(config.defaultPort);
+    assertEquals("nyc3", config.region);
+  }
+
+  @Test
+  void validHttpEndpointWithExplicitPort() {
+    ClientConfig config = ClientConfig.from(valid().setEndpoint("http://localhost:9000/"));
+    assertFalse(config.tls);
+    assertEquals(9000, config.port);
+    assertFalse(config.defaultPort);
+    assertEquals("localhost", config.httpClientOptions.getDefaultHost());
+    assertEquals(9000, config.httpClientOptions.getDefaultPort());
+    assertFalse(config.httpClientOptions.isSsl());
+  }
+
+  @Test
+  void explicitDefaultPortIsTreatedAsDefault() {
+    assertTrue(ClientConfig.from(valid().setEndpoint("https://s3.example.com:443")).defaultPort);
+    assertTrue(ClientConfig.from(valid().setEndpoint("HTTP://s3.example.com:80")).defaultPort);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+    "", "  ", "s3.example.com", "ftp://s3.example.com", "https://", "https://user:pw@s3.example.com",
+    "https://s3.example.com/prefix", "https://s3.example.com?x=1", "https://s3.example.com#f", "https://bad host",
+    "https://under_score:9000"
+  })
+  void invalidEndpointsAreRejected(String endpoint) {
+    assertInvalid(o -> o.setEndpoint(endpoint));
+  }
+
+  @Test
+  void missingEndpointIsRejected() {
+    assertInvalid(o -> o.setEndpoint(null));
+  }
+
+  @Test
+  void regionIsRequired() {
+    assertInvalid(o -> o.setRegion(null));
+    assertInvalid(o -> o.setRegion(" "));
+  }
+
+  @Test
+  void optionsFromJsonAloneAreValid() {
+    ClientConfig config = ClientConfig.from(new S3ClientOptions(new JsonObject()
+      .put("endpoint", "https://nyc3.digitaloceanspaces.com")
+      .put("region", "nyc3")
+      .put("credentials", new JsonObject().put("accessKey", "AK").put("secretKey", "SK").put("sessionToken", "ST"))));
+    assertEquals("AK", config.credentials.getAccessKey());
+    assertEquals("SK", config.credentials.getSecretKey());
+    assertEquals("ST", config.credentials.getSessionToken());
+  }
+
+  @Test
+  void credentialsAreRequired() {
+    assertInvalid(o -> o.setCredentials(null));
+  }
+
+  @Test
+  void staticCredentialsNeedBothKeys() {
+    assertInvalid(o -> o.setCredentials(new S3Credentials(null, "secret")));
+    assertInvalid(o -> o.setCredentials(new S3Credentials("access", " ")));
+  }
+
+  @Test
+  void staticCredentialsAreSnapshotted() {
+    S3Credentials credentials = new S3Credentials("access", "secret");
+    ClientConfig config = ClientConfig.from(valid().setCredentials(credentials));
+    credentials.setSecretKey("changed");
+    assertEquals("secret", config.credentials.getSecretKey());
+    assertNotSame(credentials, config.credentials);
+  }
+
+  @Test
+  void transportOptionsMustNotSetHostPortOrSsl() {
+    assertInvalid(o -> o.getHttpClientOptions().setDefaultHost("other"));
+    assertInvalid(o -> o.getHttpClientOptions().setDefaultPort(9000));
+    assertInvalid(o -> o.getHttpClientOptions().setSsl(true));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = { "http://localhost:9000", "http://127.0.0.1:9000", "http://[::1]:9000" })
+  void virtualHostedStyleNeedsADnsName(String endpoint) {
+    assertInvalid(o -> o.setEndpoint(endpoint).setPathStyleAccess(false));
+  }
+
+  @Test
+  void addressing() {
+    ClientConfig pathStyle = ClientConfig.from(valid());
+    assertEquals("nyc3.digitaloceanspaces.com", pathStyle.hostFor("bucket"));
+    assertEquals("/bucket/dir/key.txt", pathStyle.pathFor("bucket", "dir/key.txt"));
+    assertEquals("/bucket", pathStyle.pathFor("bucket", null));
+    assertEquals("/", pathStyle.pathFor(null, null));
+
+    ClientConfig virtual = ClientConfig.from(valid().setPathStyleAccess(false));
+    assertEquals("bucket.nyc3.digitaloceanspaces.com", virtual.hostFor("bucket"));
+    assertEquals("nyc3.digitaloceanspaces.com", virtual.hostFor(null));
+    assertEquals("/dir/key.txt", virtual.pathFor("bucket", "dir/key.txt"));
+    assertEquals("/", virtual.pathFor("bucket", null));
+  }
+
+  @Test
+  void optionsAreCopied() {
+    S3ClientOptions options = valid();
+    ClientConfig config = ClientConfig.from(options);
+    assertNotSame(options.getHttpClientOptions(), config.httpClientOptions);
+    assertNotSame(options.getPoolOptions(), config.poolOptions);
+    options.getHttpClientOptions().setConnectTimeout(1);
+    assertEquals(new io.vertx.core.http.HttpClientOptions().getConnectTimeout(), config.httpClientOptions.getConnectTimeout());
+  }
+
+  @Test
+  void nullOptionsAreRejected() {
+    assertThrows(NullPointerException.class, () -> ClientConfig.from(null));
+  }
+
+  @Test
+  void publicEndpointDefaultsToTheEndpoint() {
+    ClientConfig config = ClientConfig.from(new S3ClientOptions(valid()).setEndpoint("http://localhost:9000")
+      .setPathStyleAccess(true));
+    assertFalse(config.publicTls);
+    assertEquals("localhost", config.publicHost);
+    assertEquals(9000, config.publicPort);
+    assertFalse(config.publicDefaultPort);
+  }
+
+  @Test
+  void publicEndpointIsParsedSeparately() {
+    ClientConfig config = ClientConfig.from(new S3ClientOptions(valid()).setEndpoint("http://minio.storage.svc:9000")
+      .setPublicEndpoint("https://files.example.com").setPathStyleAccess(false));
+    assertFalse(config.tls);
+    assertEquals("minio.storage.svc", config.host);
+    assertTrue(config.publicTls);
+    assertEquals("files.example.com", config.publicHost);
+    assertEquals(443, config.publicPort);
+    assertTrue(config.publicDefaultPort);
+    assertEquals("bucket.files.example.com", config.publicHostFor("bucket"));
+    assertEquals("bucket.minio.storage.svc", config.hostFor("bucket"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {" ", "ftp://files.example.com", "https://files.example.com/path", "https://user@files.example.com",
+    "https://files.example.com?x=1", "not a uri"})
+  void invalidPublicEndpointIsRejected(String publicEndpoint) {
+    IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+      () -> ClientConfig.from(new S3ClientOptions(valid()).setPublicEndpoint(publicEndpoint)));
+    assertTrue(e.getMessage().startsWith("publicEndpoint"), e.getMessage());
+  }
+
+  /**
+   * A presigned URL pasted as an endpoint, or credentials in the user info: the message never
+   * quotes the user info, the query or the fragment, and there is no cause quoting the value.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {
+    "https://b.s3.amazonaws.com/k.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20261125"
+      + "%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Signature=5d5d5d5d5d5d5d5d",
+    "https://AKIDEXAMPLE:wJalrXUtnFEMIK7MDENG@files.example.com",
+    "ftp://AKIDEXAMPLE:wJalrXUtnFEMIK7MDENG@files.example.com",
+    "https://AKIDEXAMPLE:wJalrXUtnFEMI K7MDENG@files.example.com",
+    "https://files.example.com#X-Amz-Signature=5d5d5d5d5d5d5d5d"})
+  void endpointMessagesNeverQuoteUserInfoOrQuery(String endpoint) {
+    for (Consumer<S3ClientOptions> change : List.<Consumer<S3ClientOptions>>of(o -> o.setEndpoint(endpoint),
+      o -> o.setPublicEndpoint(endpoint))) {
+      S3ClientOptions options = valid();
+      change.accept(options);
+      IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> ClientConfig.from(options));
+      assertNull(e.getCause(), e::toString);
+      for (String secret : List.of("AKIDEXAMPLE", "wJalrXUtnFEMI", "X-Amz-", "5d5d5d5d")) {
+        assertFalse(e.getMessage().contains(secret), e.getMessage());
+      }
+    }
+  }
+
+  @Test
+  void anEndpointWithAPathShowsThePathButNotTheQuery() {
+    IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+      () -> ClientConfig.from(valid().setEndpoint("https://nyc3.digitaloceanspaces.com/my-bucket?X-Amz-Signature=5d")));
+    assertEquals("endpoint must not contain a path, query or fragment: https://nyc3.digitaloceanspaces.com/my-bucket "
+      + "(query and fragment not shown)", e.getMessage());
+  }
+
+  @Test
+  void virtualHostedStyleNeedsADnsPublicEndpoint() {
+    assertInvalid(o -> o.setPathStyleAccess(false).setPublicEndpoint("http://127.0.0.1:9000"));
+    ClientConfig.from(valid().setPathStyleAccess(true).setPublicEndpoint("http://127.0.0.1:9000"));
+  }
+
+  private static S3ClientOptions valid() {
+    return new S3ClientOptions()
+      .setEndpoint("https://nyc3.digitaloceanspaces.com")
+      .setRegion("nyc3")
+      .setCredentials(new S3Credentials("access", "secret"));
+  }
+
+  private static void assertInvalid(Consumer<S3ClientOptions> change) {
+    S3ClientOptions options = valid();
+    change.accept(options);
+    assertThrows(IllegalArgumentException.class, () -> ClientConfig.from(options), options::toString);
+  }
+}

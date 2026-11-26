@@ -1,0 +1,100 @@
+package io.github.emadalblueshi.vertx.s3;
+
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * The server answered with an error response (HTTP status 3xx, 4xx or 5xx).
+ * <p>
+ * {@link #getErrorCode()} is the S3 error code from the response's {@code <Error>} document,
+ * e.g. {@code NoSuchBucket}, {@code AccessDenied}, {@code SignatureDoesNotMatch}. It is
+ * {@code null} when the response has no error document, as for HEAD requests, {@code 304}, or a
+ * proxy's HTML error page; use {@link #getStatusCode()} then.
+ * <p>
+ * It carries no stack trace, like Vert.x's own server-reported errors: it describes the server's
+ * answer, not a place in your code. {@link #getRequestId()} identifies the request.
+ * <p>
+ * When the client creates it, its message and fields never contain the client's secret key or
+ * session token, or the request's {@code Authorization} value or signature: wherever the server
+ * echoes one, it is replaced with {@code [REDACTED]}.
+ */
+public class S3ServiceException extends S3Exception {
+
+  private static final long serialVersionUID = 1L;
+
+  private final int statusCode;
+  private final String errorCode;
+  private final String requestId;
+  private final String hostId;
+  private final String resource;
+  private final Map<String, String> details;
+
+  /**
+   * @param message human-readable message
+   * @param statusCode HTTP status code
+   * @param errorCode S3 error code, or {@code null}
+   * @param requestId request id ({@code x-amz-request-id}), or {@code null}
+   * @param hostId extended request id ({@code x-amz-id-2}), or {@code null}
+   * @param resource the resource the error refers to, or {@code null}
+   * @param details further fields of the error document, e.g. {@code Region}, {@code BucketName},
+   *     {@code Endpoint} (copied; may be empty)
+   */
+  public S3ServiceException(String message, int statusCode, String errorCode, String requestId, String hostId,
+                            String resource, Map<String, String> details) {
+    super(message, null);
+    this.statusCode = statusCode;
+    this.errorCode = errorCode;
+    this.requestId = requestId;
+    this.hostId = hostId;
+    this.resource = resource;
+    this.details = details == null ? Collections.emptyMap() : Collections.unmodifiableMap(new LinkedHashMap<>(details));
+  }
+
+  /**
+   * Captures no stack trace: the error was reported by the server, as with Vert.x's own
+   * server-reported errors. Unlike Vert.x's {@code noStackTrace} flag, this keeps suppressed
+   * exceptions, e.g. a failed abort after a failed streamed upload.
+   */
+  @Override
+  public synchronized Throwable fillInStackTrace() {
+    return this;
+  }
+
+  /** The HTTP status code. */
+  public int getStatusCode() {
+    return statusCode;
+  }
+
+  /** The S3 error code, or {@code null} if the response had no error document. */
+  public String getErrorCode() {
+    return errorCode;
+  }
+
+  /** The request id ({@code x-amz-request-id}), or {@code null}. Quote it in support requests. */
+  public String getRequestId() {
+    return requestId;
+  }
+
+  /** The extended request id ({@code HostId} / {@code x-amz-id-2}), or {@code null}. */
+  public String getHostId() {
+    return hostId;
+  }
+
+  /** The resource the error refers to, or {@code null}. */
+  public String getResource() {
+    return resource;
+  }
+
+  /**
+   * Further fields of the error document, e.g. {@code Region}, {@code BucketName},
+   * {@code Endpoint}, plus {@code BucketRegion} from the {@code x-amz-bucket-region} header. Never
+   * {@code null}. The fields AWS adds to signature errors to help debug a signer
+   * ({@code AWSAccessKeyId}, {@code StringToSign}, {@code StringToSignBytes},
+   * {@code SignatureProvided}, {@code CanonicalRequest}, {@code CanonicalRequestBytes}) are left
+   * out: they echo the request's credentials.
+   */
+  public Map<String, String> getDetails() {
+    return details;
+  }
+}

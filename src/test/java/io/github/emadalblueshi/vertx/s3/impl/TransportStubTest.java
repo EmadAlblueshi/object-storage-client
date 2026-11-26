@@ -1,0 +1,1144 @@
+package io.github.emadalblueshi.vertx.s3.impl;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import io.github.emadalblueshi.vertx.s3.NettyLeakCheck;
+import io.github.emadalblueshi.vertx.s3.S3Client;
+import io.github.emadalblueshi.vertx.s3.S3ClientException;
+import io.github.emadalblueshi.vertx.s3.S3ClientOptions;
+import io.github.emadalblueshi.vertx.s3.S3Credentials;
+import io.github.emadalblueshi.vertx.s3.S3ListObjectsOptions;
+import io.github.emadalblueshi.vertx.s3.S3PutObjectOptions;
+import io.github.emadalblueshi.vertx.s3.S3ServiceException;
+import io.vertx.core.Future;
+import io.vertx.core.MultiMap;
+import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpMethod;
+import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.net.HostAndPort;
+import io.vertx.core.net.PemKeyCertOptions;
+import io.vertx.core.net.PemTrustOptions;
+import io.vertx.junit5.VertxExtension;
+import io.vertx.junit5.VertxTestContext;
+
+/**
+ * The transport against a local Vert.x HTTP(S) stub: what is sent on the wire (path, query,
+ * Host, signing headers, Content-Length, payload hash) and how responses and failures are mapped.
+ * Signature validity itself is verified against Silo.
+ */
+@ExtendWith(NettyLeakCheck.class)
+@ExtendWith(VertxExtension.class)
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class TransportStubTest {
+
+  private static final String LIST_BUCKETS = "<ListAllMyBucketsResult><Owner><ID>owner-id</ID></Owner><Buckets>"
+    + "<Bucket><Name>b1</Name><CreationDate>2026-11-20T10:15:30.000Z</CreationDate></Bucket></Buckets>"
+    + "</ListAllMyBucketsResult>";
+
+  private Vertx vertx;
+  private HttpServer http;
+  private HttpServer https;
+  private final AtomicReference<Function<Captured, Stub>> responder = new AtomicReference<>();
+  private final AtomicReference<Captured> last = new AtomicReference<>();
+  private final AtomicInteger requests = new AtomicInteger();
+  /** Completed when the stub sees a connection close; replaced before each test. */
+  private final AtomicReference<Promise<Void>> connectionClosed = new AtomicReference<>(Promise.promise());
+
+  @BeforeAll
+  void startStubs(Vertx vertx, VertxTestContext testContext) {
+    this.vertx = vertx;
+    HttpServerOptions tls = new HttpServerOptions().setSsl(true).setKeyCertOptions(new PemKeyCertOptions()
+      .setCertPath("tls/test-only-silo-selfsigned.crt").setKeyPath("tls/test-only-silo-selfsigned.key"));
+    Future.all(
+        vertx.createHttpServer().requestHandler(this::handle).listen(0, "localhost").onSuccess(s -> http = s),
+        vertx.createHttpServer(tls).requestHandler(this::handle).listen(0, "localhost").onSuccess(s -> https = s))
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  @AfterAll
+  void stopStubs(VertxTestContext testContext) {
+    Future.all(http.close(), https.close()).onComplete(testContext.succeedingThenComplete());
+  }
+
+  @BeforeEach
+  void reset() {
+    responder.set(c -> new Stub(200, LIST_BUCKETS));
+    last.set(null);
+    requests.set(0);
+    connectionClosed.set(Promise.promise());
+  }
+
+  private void handle(io.vertx.core.http.HttpServerRequest request) {
+    Promise<Void> closed = connectionClosed.get();
+    request.connection().closeHandler(v -> closed.tryComplete());
+    request.body().onSuccess(body -> {
+      Captured captured = new Captured(request.method(), request.uri(),
+        MultiMap.caseInsensitiveMultiMap().addAll(request.headers()), body);
+      last.set(captured);
+      requests.incrementAndGet();
+      Stub stub = responder.get().apply(captured);
+      io.vertx.core.http.HttpServerResponse response = request.response().setStatusCode(stub.status);
+      stub.headers.forEach(response::putHeader);
+      Buffer out = stub.raw != null ? stub.raw : Buffer.buffer(stub.body);
+      if (stub.headersOnly) {
+        response.writeHead(); // the announced body never comes
+      } else if (stub.backedUp != null) {
+        fillUntilBackpressure(response, stub);
+      } else if (stub.chunked) {
+        response.setChunked(true);
+        for (int i = 0; i < out.length(); i += 8192) {
+          response.write(out.slice(i, Math.min(out.length(), i + 8192)));
+        }
+        if (stub.thenClose) {
+          request.connection().close();
+        } else if (!stub.withholdEnd) {
+          response.end();
+        } // else: the response stays open until the client closes the connection
+      } else {
+        response.end(out);
+      }
+    });
+  }
+
+  /**
+   * Writes chunks (from {@link #BACKPRESSURE_SEED}) until the write queue is full, i.e. the client
+   * has stopped reading with data pending; then completes {@code stub.backedUp}, and once the
+   * client reads again, writes {@link #CHUNKS_AFTER_DRAIN} more chunks and ends. The number of
+   * chunks written is published in {@code stub.chunksWritten} before the end. A client that never
+   * stops reading (a stream that isn't paused) fails {@code stub.backedUp} after
+   * {@link #MAX_CHUNKS_BEFORE_BACKPRESSURE} chunks instead of looping forever.
+   */
+  private static void fillUntilBackpressure(io.vertx.core.http.HttpServerResponse response, Stub stub) {
+    response.setChunked(true);
+    Random random = new Random(BACKPRESSURE_SEED);
+    int written = 0;
+    while (!response.writeQueueFull()) {
+      if (written == MAX_CHUNKS_BEFORE_BACKPRESSURE) {
+        stub.backedUp.fail("the client never stopped reading");
+        response.reset();
+        return;
+      }
+      response.write(backpressureChunk(random));
+      written++;
+    }
+    int beforeDrain = written;
+    stub.backedUp.complete();
+    response.drainHandler(v -> {
+      response.drainHandler(null);
+      for (int i = 0; i < CHUNKS_AFTER_DRAIN; i++) {
+        response.write(backpressureChunk(random));
+      }
+      stub.chunksWritten.set(beforeDrain + CHUNKS_AFTER_DRAIN);
+      response.end();
+    });
+  }
+
+  private static final long BACKPRESSURE_SEED = 3;
+  private static final int CHUNKS_AFTER_DRAIN = 4;
+  /** 256 MiB: far more than any socket buffers, so only a client that keeps reading gets there. */
+  private static final int MAX_CHUNKS_BEFORE_BACKPRESSURE = 4096;
+
+  private static Buffer backpressureChunk(Random random) {
+    byte[] chunk = new byte[64 * 1024];
+    random.nextBytes(chunk);
+    return Buffer.buffer(chunk);
+  }
+
+  // --- what goes on the wire -----------------------------------------------------------------------
+
+  @Test
+  void listBucketsSendsASignedGetAndParsesTheResult(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.listBuckets().eventually(client::close).onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+      assertEquals("b1", result.getBuckets().get(0).getName());
+      assertEquals("owner-id", result.getOwner().getId());
+      Captured c = last.get();
+      assertEquals(HttpMethod.GET, c.method);
+      assertEquals("/", c.uri);
+      assertEquals("localhost:" + http.actualPort(), c.headers.get("Host"));
+      assertTrue(c.headers.get("Authorization").startsWith(
+        "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"), c.headers.get("Authorization"));
+      assertTrue(c.headers.get("Authorization").contains("/test-west-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, "));
+      assertEquals(S3SignatureV4.EMPTY_PAYLOAD_SHA256, c.headers.get("x-amz-content-sha256"));
+      assertNotNull(c.headers.get("x-amz-date"));
+      assertNull(c.headers.get("Content-Length"), "no Content-Length for a bodiless GET");
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void smallBodyIsSignedInlineWithEncodedPathAndQuery(VertxTestContext testContext) {
+    Transport transport = transport(options(http.actualPort(), false));
+    S3Request request = new S3Request(HttpMethod.PUT, "bucket", "dir/a b+c.txt",
+      List.of(Map.entry("tagging", ""), Map.entry("versionId", "v/1")), List.of(Map.entry("Content-Type", "text/plain")),
+      Buffer.buffer("hello"));
+    responder.set(c -> new Stub(200, ""));
+    transport.execute(ContextSupport.capture(vertx), request).eventually(transport::close)
+      .onComplete(testContext.succeeding(response -> testContext.verify(() -> {
+        Captured c = last.get();
+        assertEquals("/bucket/dir/a%20b%2Bc.txt?tagging=&versionId=v%2F1", c.uri);
+        assertEquals("5", c.headers.get("Content-Length"));
+        assertEquals("hello", c.body.toString());
+        assertEquals(HashUtil.sha256Hex("hello"), c.headers.get("x-amz-content-sha256"));
+        assertEquals("text/plain", c.headers.get("Content-Type"));
+        assertTrue(c.headers.get("Authorization").contains("SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,"));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void largeBodyOverHttpIsHashedOffTheCallerThreadAndStillCorrect(VertxTestContext testContext) {
+    byte[] data = new byte[PayloadMode.MAX_INLINE_HASH_SIZE + 1];
+    new Random(42).nextBytes(data);
+    Transport transport = transport(options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, ""));
+    transport.execute(ContextSupport.capture(vertx), new S3Request(HttpMethod.PUT, "bucket", "big.bin", List.of(), List.of(),
+        Buffer.buffer(data))).eventually(transport::close)
+      .onComplete(testContext.succeeding(response -> testContext.verify(() -> {
+        assertEquals(HashUtil.sha256Hex(data), last.get().headers.get("x-amz-content-sha256"));
+        assertEquals(Integer.toString(data.length), last.get().headers.get("Content-Length"));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void putWithoutBodySendsContentLengthZero(VertxTestContext testContext) {
+    Transport transport = transport(options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, ""));
+    transport.execute(ContextSupport.capture(vertx), new S3Request(HttpMethod.PUT, "bucket", null, List.of(), List.of(), null))
+      .eventually(transport::close)
+      .onComplete(testContext.succeeding(response -> testContext.verify(() -> {
+        assertEquals("/bucket", last.get().uri);
+        assertEquals("0", last.get().headers.get("Content-Length"));
+        assertEquals(S3SignatureV4.EMPTY_PAYLOAD_SHA256, last.get().headers.get("x-amz-content-sha256"));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void bodiesAreUnsignedOverTls(VertxTestContext testContext) {
+    Transport transport = transport(options(https.actualPort(), true));
+    responder.set(c -> new Stub(200, ""));
+    transport.execute(ContextSupport.capture(vertx), new S3Request(HttpMethod.PUT, "bucket", "k", List.of(), List.of(),
+        Buffer.buffer("data"))).eventually(transport::close)
+      .onComplete(testContext.succeeding(response -> testContext.verify(() -> {
+        assertEquals(S3SignatureV4.UNSIGNED_PAYLOAD, last.get().headers.get("x-amz-content-sha256"));
+        assertEquals("localhost:" + https.actualPort(), last.get().headers.get("Host"));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void bodilessRequestsAreUnsignedOverTls(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(https.actualPort(), true));
+    client.listBuckets().eventually(client::close).onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+      assertEquals(S3SignatureV4.UNSIGNED_PAYLOAD, last.get().headers.get("x-amz-content-sha256"));
+      assertTrue(last.get().headers.get("Authorization").contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date,"));
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void sessionTokenIsSentAndSigned(VertxTestContext testContext) {
+    S3ClientOptions options = options(http.actualPort(), false)
+      .setCredentials(new S3Credentials("AKIDEXAMPLE", "secret").setSessionToken("token-123"));
+    S3Client client = S3Client.create(vertx, options);
+    client.listBuckets().eventually(client::close).onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+      assertEquals("token-123", last.get().headers.get("x-amz-security-token"));
+      assertTrue(last.get().headers.get("Authorization").contains(";x-amz-security-token,"));
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void defaultPortIsOmittedFromTheAuthority() {
+    // Pins the Vert.x behaviour the transport relies on for default ports (the signer omits them too).
+    assertEquals("s3.example.com", HostAndPort.authority("s3.example.com", -1).toString());
+    assertEquals(S3SignatureV4.hostHeader("s3.example.com", -1, true), HostAndPort.authority("s3.example.com", -1).toString());
+  }
+
+  @Test
+  void userAgentIsSentButNotSigned(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.listBuckets().eventually(client::close).onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+      Captured c = last.get();
+      assertEquals(UserAgent.VALUE, c.headers.get("User-Agent"));
+      assertTrue(c.headers.get("User-Agent").matches("vertx-s3-client/\\d+\\.\\d+\\.\\d+.*"), c.headers.get("User-Agent"));
+      assertFalse(c.headers.get("Authorization").contains("user-agent"), c.headers.get("Authorization"));
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void createBucketSendsTheLocationConstraint(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, ""));
+    client.createBucket("my-bucket").eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      Captured c = last.get();
+      assertEquals(HttpMethod.PUT, c.method);
+      assertEquals("/my-bucket", c.uri);
+      String body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CreateBucketConfiguration "
+        + "xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LocationConstraint>test-west-1</LocationConstraint>"
+        + "</CreateBucketConfiguration>";
+      assertEquals(body, c.body.toString());
+      assertEquals(Integer.toString(body.length()), c.headers.get("Content-Length"));
+      assertEquals(HashUtil.sha256Hex(body), c.headers.get("x-amz-content-sha256"));
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void createBucketInUsEast1SendsNoBody(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false).setRegion("us-east-1"));
+    responder.set(c -> new Stub(200, ""));
+    client.createBucket("my-bucket").eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      Captured c = last.get();
+      assertEquals(0, c.body.length());
+      assertEquals("0", c.headers.get("Content-Length"));
+      assertEquals(S3SignatureV4.EMPTY_PAYLOAD_SHA256, c.headers.get("x-amz-content-sha256"));
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void headAndDeleteBucketUseTheirMethods(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(c.method == HttpMethod.HEAD ? 200 : 204, ""));
+    client.headBucket("my-bucket")
+      .compose(v -> {
+        testContext.verify(() -> {
+          assertEquals(HttpMethod.HEAD, last.get().method);
+          assertEquals("/my-bucket", last.get().uri);
+        });
+        return client.deleteBucket("my-bucket");
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+        assertEquals(HttpMethod.DELETE, last.get().method);
+        assertEquals("/my-bucket", last.get().uri);
+        assertEquals(2, requests.get());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void invalidBucketNameFailsWithoutAnyRequest(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.createBucket("Invalid_Name").eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertTrue(e.getMessage().startsWith("Invalid bucket name \"Invalid_Name\""), e.getMessage());
+      assertEquals(0, requests.get());
+      testContext.completeNow();
+    })));
+  }
+
+  // --- responses and failures -------------------------------------------------------------------------
+
+  @Test
+  void headBucket404HasStatusButNoErrorCode(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(404, "").header("x-amz-request-id", "req-404"));
+    client.headBucket("missing").eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      S3ServiceException service = assertInstanceOf(S3ServiceException.class, e);
+      assertEquals(404, service.getStatusCode());
+      assertNull(service.getErrorCode());
+      assertEquals("req-404", service.getRequestId());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void errorDocumentBecomesServiceException(VertxTestContext testContext) {
+    responder.set(c -> new Stub(403, "<Error><Code>SignatureDoesNotMatch</Code><Message>Bad signature</Message>"
+      + "<RequestId>REQ</RequestId></Error>"));
+    expectFailure(testContext, e -> {
+      S3ServiceException service = assertInstanceOf(S3ServiceException.class, e);
+      assertEquals(403, service.getStatusCode());
+      assertEquals("SignatureDoesNotMatch", service.getErrorCode());
+      assertEquals("REQ", service.getRequestId());
+    });
+  }
+
+  @Test
+  void proxyHtmlPageBecomesServiceExceptionWithStatus(VertxTestContext testContext) {
+    responder.set(c -> new Stub(502, "<html><body>Bad Gateway</body></html>"));
+    expectFailure(testContext, e -> {
+      S3ServiceException service = assertInstanceOf(S3ServiceException.class, e);
+      assertEquals(502, service.getStatusCode());
+      assertNull(service.getErrorCode());
+      assertTrue(service.getMessage().contains("Bad Gateway"), service.getMessage());
+    });
+  }
+
+  @Test
+  void redirectsAreNotFollowed(VertxTestContext testContext) {
+    responder.set(c -> new Stub(307, "<Error><Code>TemporaryRedirect</Code></Error>")
+      .header("Location", "http://localhost:" + http.actualPort() + "/elsewhere"));
+    expectFailure(testContext, e -> {
+      assertEquals(307, assertInstanceOf(S3ServiceException.class, e).getStatusCode());
+      assertEquals(1, requests.get(), "the redirect must not be followed");
+    });
+  }
+
+  @Test
+  void malformedSuccessBodyBecomesClientException(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, "<ListAllMyBucketsResult><Buckets>"));
+    expectFailure(testContext, e -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertInstanceOf(XmlParseException.class, e.getCause());
+    });
+  }
+
+  @Test
+  void connectionRefusedBecomesClientException(VertxTestContext testContext) throws IOException {
+    int closedPort;
+    try (ServerSocket socket = new ServerSocket(0)) {
+      closedPort = socket.getLocalPort();
+    }
+    S3Client client = S3Client.create(vertx, options(closedPort, false));
+    client.listBuckets().eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertNotNull(e.getCause());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void closedClientFailsAndCloseIsIdempotent(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.close()
+      .compose(v -> client.close())
+      .compose(v -> client.listBuckets())
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        assertTrue(e.getMessage().contains("closed"), e.getMessage());
+        assertFalse(requests.get() > 0);
+        testContext.completeNow();
+      })));
+  }
+
+  // --- streamed bodies (file ranges): the transport's own pipe -------------------------------------
+
+  @Test
+  void streamedBodyIsSentWithItsExactContentLength(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, ""));
+    ScriptedReadStream body = pausedSource();
+    Transport.StreamedExchange exchange = streamed(body, 5);
+    body.whenResumed().compose(v -> body.emit("hel")).compose(v -> body.emit("lo")).compose(v -> body.end());
+    exchange.response.onComplete(testContext.succeeding(response -> testContext.verify(() -> {
+      assertEquals("hello", last.get().body.toString());
+      assertEquals("5", last.get().headers.get("Content-Length"));
+      assertEquals(S3SignatureV4.UNSIGNED_PAYLOAD, last.get().headers.get("x-amz-content-sha256"));
+      testContext.completeNow();
+    })));
+  }
+
+  /** A body that ends short of its Content-Length (a file that shrank) resets the request instead of ending it. */
+  @Test
+  void streamedBodyEndingShortResetsTheRequest(VertxTestContext testContext) {
+    ScriptedReadStream body = pausedSource();
+    Transport.StreamedExchange exchange = streamed(body, 5);
+    body.whenResumed().compose(v -> body.emit("abc")).compose(v -> body.end());
+    exchange.response.onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertEquals("The file changed during the upload: 5 bytes expected, 3 read", e.getMessage());
+      connectionClosed.get().future().onComplete(testContext.succeedingThenComplete());
+    })));
+  }
+
+  /** A body that fails resets the request (Vert.x's own pipe would end it, leaving the server waiting). */
+  @Test
+  void streamedBodyFailureResetsTheRequest(VertxTestContext testContext) {
+    ScriptedReadStream body = pausedSource();
+    Transport.StreamedExchange exchange = streamed(body, 5);
+    IOException disk = new IOException("disk failed");
+    body.whenResumed().compose(v -> body.emit("ab")).compose(v -> body.fail(disk));
+    exchange.response.onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertSame(disk, e);
+      connectionClosed.get().future().onComplete(testContext.succeedingThenComplete());
+    })));
+  }
+
+  @Test
+  void streamedRequestCanBeResetBeforeItIsOpen(VertxTestContext testContext) {
+    ScriptedReadStream body = pausedSource();
+    Transport.StreamedExchange exchange = streamed(body, 5);
+    S3ClientException closing = new S3ClientException("closing", null);
+    exchange.reset(closing);
+    exchange.response.onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertSame(closing, e);
+      assertEquals(0, requests.get(), "no request completed");
+      testContext.completeNow();
+    })));
+  }
+
+  private ScriptedReadStream pausedSource() {
+    ScriptedReadStream body = new ScriptedReadStream(vertx.getOrCreateContext());
+    body.pause();
+    return body;
+  }
+
+  private Transport.StreamedExchange streamed(ScriptedReadStream body, long length) {
+    Transport transport = new Transport(vertx, ClientConfig.from(options(http.actualPort(), false)));
+    return transport.executeStreamed(ContextSupport.capture(vertx),
+      S3Request.object(HttpMethod.PUT, "bucket", "k", java.util.List.of(), null).withPayloadHash(S3SignatureV4.UNSIGNED_PAYLOAD),
+      body, length);
+  }
+
+  // --- objects: wire format, size limits, streams ---------------------------------------------------
+
+  @Test
+  void listObjectsSendsASortedEncodedQueryAndDecodesTheResult(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "<ListBucketResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated>"
+      + "<Contents><Key>a+b/%D9%85%D9%84%D9%81.txt</Key><Size>5</Size></Contents>"
+      + "<CommonPrefixes><Prefix>a+b/sub%2B/</Prefix></CommonPrefixes>"
+      + "<NextContinuationToken>next+/=</NextContinuationToken></ListBucketResult>"));
+    S3ListObjectsOptions list = new S3ListObjectsOptions().setPrefix("a b/").setDelimiter("/").setMaxKeys(3)
+      .setContinuationToken("t+/=").setStartAfter("a b/0");
+    client.listObjects("bucket", list).eventually(client::close).onComplete(testContext.succeeding(result -> testContext.verify(() -> {
+      Captured c = last.get();
+      assertEquals(HttpMethod.GET, c.method);
+      assertEquals("/bucket?continuation-token=t%2B%2F%3D&delimiter=%2F&encoding-type=url&list-type=2&max-keys=3"
+        + "&prefix=a%20b%2F&start-after=a%20b%2F0", c.uri);
+      assertEquals("a b/\u0645\u0644\u0641.txt", result.getObjects().get(0).getKey());
+      assertEquals(List.of("a b/sub+/"), result.getCommonPrefixes());
+      assertTrue(result.isTruncated());
+      assertEquals("next+/=", result.getNextContinuationToken());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void truncatedListWithoutContinuationTokenFails(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "<ListBucketResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated>"
+      + "<Contents><Key>k</Key><Size>1</Size></Contents></ListBucketResult>"));
+    client.listObjects("bucket", null).eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertEquals("ListObjectsV2 response is truncated but has no continuation token", e.getMessage());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void invalidListResponseIsAClientError(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "<ListBucketResult><EncodingType>url</EncodingType><Contents><Key>%zz</Key>"
+      + "</Contents></ListBucketResult>"));
+    client.listObjects("bucket", null).eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertTrue(e.getMessage().startsWith("Invalid ListObjectsV2 response"), e.getMessage());
+      assertEquals("/bucket?encoding-type=url&list-type=2", last.get().uri);
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void putObjectSendsContentTypeAndMetadataAndReturnsTheEtag(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "").header("ETag", "\"abc123\""));
+    S3PutObjectOptions put = new S3PutObjectOptions().setContentType("text/plain; charset=utf-8")
+      .setUserMetadata(Map.of("Owner-Id", "42"));
+    client.putObject("bucket", "dir/a b.txt", Buffer.buffer("hello"), put).eventually(client::close)
+      .onComplete(testContext.succeeding(etag -> testContext.verify(() -> {
+        assertEquals("\"abc123\"", etag);
+        Captured c = last.get();
+        assertEquals(HttpMethod.PUT, c.method);
+        assertEquals("/bucket/dir/a%20b.txt", c.uri);
+        assertEquals("hello", c.body.toString());
+        assertEquals("5", c.headers.get("Content-Length"));
+        assertEquals("text/plain; charset=utf-8", c.headers.get("Content-Type"));
+        assertEquals("42", c.headers.get("x-amz-meta-owner-id"));
+        assertTrue(c.headers.get("Authorization").contains(
+          "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-meta-owner-id,"), c.headers.get("Authorization"));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void invalidMetadataFailsWithoutAnyRequest(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    S3PutObjectOptions put = new S3PutObjectOptions().setUserMetadata(Map.of("name", "caf\u00e9"));
+    client.putObject("bucket", "key", Buffer.buffer("x"), put).eventually(client::close)
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        assertTrue(e.getMessage().startsWith("Invalid value for metadata \"name\""), e.getMessage());
+        assertEquals(0, requests.get());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void getObjectOverTheLimitWithContentLengthFailsBeforeReadingTheBody(VertxTestContext testContext) {
+    S3ClientOptions options = options(http.actualPort(), false).setMaxBufferedObjectSize(1024);
+    S3Client client = S3Client.create(vertx, options);
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[2048])));
+    client.getObject("bucket", "big").eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertEquals("The object is larger than the getObject limit of 1024 bytes (2048 bytes): use getObjectStream, "
+        + "or raise S3ClientOptions.maxBufferedObjectSize", e.getMessage());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void getObjectFailsOnTheAnnouncedLengthWithoutWaitingForTheBody(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false).setMaxBufferedObjectSize(1024));
+    responder.set(c -> new Stub(200, "").header("Content-Length", "1000000").headersOnly());
+    client.getObject("bucket", "big").eventually(client::close).onComplete(testContext.failing(e -> testContext.verify(() -> {
+      assertTrue(e.getMessage().startsWith("The object is larger than the getObject limit of 1024 bytes (1000000 bytes)"),
+        e.getMessage());
+      testContext.completeNow();
+    })));
+  }
+
+  /**
+   * The consumer attaches only once the stub can't write any more: the paused stream has made the
+   * client stop reading with data already received and pending. Nothing may be lost.
+   */
+  @Test
+  void streamIsHandedOutPausedSoALateConsumerLosesNothing(VertxTestContext testContext) {
+    Promise<Void> backedUp = Promise.promise();
+    AtomicInteger chunksWritten = new AtomicInteger();
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "").fillUntilBackpressure(backedUp, chunksWritten));
+    client.getObjectStream("bucket", "late").compose(stream -> {
+      io.vertx.core.Context streamContext = vertx.getOrCreateContext();
+      Promise<java.util.List<Buffer>> collected = Promise.promise();
+      backedUp.future().onComplete(ar -> streamContext.runOnContext(x -> {
+        if (ar.failed()) {
+          collected.fail(ar.cause());
+        } else {
+          stream.collect(java.util.stream.Collectors.toList()).onComplete(collected);
+        }
+      }));
+      return collected.future();
+    }).eventually(client::close).onComplete(testContext.succeeding(chunks -> testContext.verify(() -> {
+      Buffer all = Buffer.buffer();
+      chunks.forEach(all::appendBuffer);
+      Random random = new Random(BACKPRESSURE_SEED);
+      Buffer expected = Buffer.buffer();
+      for (int i = 0; i < chunksWritten.get(); i++) {
+        expected.appendBuffer(backpressureChunk(random));
+      }
+      assertTrue(chunksWritten.get() > CHUNKS_AFTER_DRAIN, "the stub must have backed up first");
+      assertEquals(expected.length(), all.length());
+      assertEquals(expected, all);
+      testContext.completeNow();
+    })));
+  }
+
+  /**
+   * The stub sends the whole response at once, so the end may reach the client before or after it
+   * abandons the download. Either way the limit error wins and the client keeps working. (Whether
+   * the connection is closed depends on that order, so it is checked by the next test, where the
+   * order is fixed.)
+   */
+  @Test
+  void getObjectOverTheLimitWithoutContentLengthIsAbandonedAtTheLimit(VertxTestContext testContext) {
+    S3ClientOptions options = options(http.actualPort(), false).setMaxBufferedObjectSize(10_000);
+    S3Client client = S3Client.create(vertx, options);
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked());
+    client.getObject("bucket", "big")
+      .transform(ar -> {
+        testContext.verify(() -> {
+          assertTrue(ar.failed());
+          assertEquals("The object is larger than the getObject limit of 10000 bytes: use getObjectStream, "
+            + "or raise S3ClientOptions.maxBufferedObjectSize", ar.cause().getMessage());
+        });
+        responder.set(c -> new Stub(200, "small"));
+        return client.getObject("bucket", "small");
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeeding(body -> testContext.verify(() -> {
+        assertEquals("small", body.toString());
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * The stub sends more than the limit and withholds the end until the client closes the
+   * connection, so the client always abandons the download while it is in flight.
+   */
+  @Test
+  void getObjectOverTheLimitWithTheEndWithheldClosesTheConnection(VertxTestContext testContext) {
+    S3ClientOptions options = options(http.actualPort(), false).setMaxBufferedObjectSize(10_000);
+    S3Client client = S3Client.create(vertx, options);
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    client.getObject("bucket", "big")
+      .transform(ar -> {
+        testContext.verify(() -> {
+          assertTrue(ar.failed());
+          assertEquals("The object is larger than the getObject limit of 10000 bytes: use getObjectStream, "
+            + "or raise S3ClientOptions.maxBufferedObjectSize", ar.cause().getMessage());
+        });
+        responder.set(c -> new Stub(200, "small"));
+        // the abandoned download's connection is closed (the end never comes otherwise), and the
+        // client still works
+        return connectionClosed().compose(v -> client.getObject("bucket", "small"));
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeeding(body -> testContext.verify(() -> {
+        assertEquals("small", body.toString());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void getObjectAtTheLimitSucceeds(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false).setMaxBufferedObjectSize(1024));
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[1024])).chunked());
+    client.getObject("bucket", "exact").eventually(client::close).onComplete(testContext.succeeding(body -> testContext.verify(() -> {
+      assertEquals(1024, body.length());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void xmlResultsOverTheInternalLimitFail(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[Transport.MAX_BUFFERED_RESPONSE_SIZE + 1])));
+    expectFailure(testContext, e -> {
+      assertInstanceOf(S3ClientException.class, e);
+      assertEquals("The response body exceeds the limit of 4194304 bytes (Content-Length 4194305)", e.getMessage());
+    });
+  }
+
+  @Test
+  void errorBodiesOverTheInternalLimitAreTruncated(VertxTestContext testContext) {
+    byte[] huge = new byte[Transport.MAX_BUFFERED_RESPONSE_SIZE + 100_000];
+    java.util.Arrays.fill(huge, (byte) 'x');
+    // the end is withheld, so the only way the exchange finishes is the client closing the connection
+    responder.set(c -> new Stub(500, Buffer.buffer(huge)).chunked().withholdEnd());
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.listBuckets()
+      .transform(ar -> {
+        testContext.verify(() -> {
+          S3ServiceException service = assertInstanceOf(S3ServiceException.class, ar.cause());
+          assertEquals(500, service.getStatusCode());
+          assertNull(service.getErrorCode());
+          assertTrue(service.getMessage().length() < 1000, "only an excerpt is kept: " + service.getMessage().length());
+        });
+        return connectionClosed(); // the rest of the body is not read: the connection is closed
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  @Test
+  void headObjectReadsMetadataAndIgnoresTheContentLengthOfHeadResponses(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "")
+      .header("Content-Length", "10737418240") // 10 GiB object: far over every buffering limit
+      .header("Content-Type", "video/mp4")
+      .header("ETag", "\"e\"")
+      .header("Last-Modified", "Fri, 20 Nov 2026 10:15:30 GMT")
+      .header("X-Amz-Meta-Camera", "front"));
+    client.headObject("bucket", "movie.mp4").eventually(client::close).onComplete(testContext.succeeding(m -> testContext.verify(() -> {
+      assertEquals(HttpMethod.HEAD, last.get().method);
+      assertEquals(10737418240L, m.getContentLength());
+      assertEquals("video/mp4", m.getContentType());
+      assertEquals("\"e\"", m.getEtag());
+      assertEquals(java.time.Instant.parse("2026-11-20T10:15:30Z"), m.getLastModified());
+      assertEquals(Map.of("camera", "front"), m.getUserMetadata());
+      testContext.completeNow();
+    })));
+  }
+
+  @Test
+  void getObjectStreamErrorFailsBeforeAnyBody(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(404, "<Error><Code>NoSuchKey</Code><Message>gone</Message></Error>"));
+    client.getObjectStream("bucket", "missing").eventually(client::close)
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertEquals("NoSuchKey", assertInstanceOf(S3ServiceException.class, e).getErrorCode());
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void getObjectStreamSendsTheRangeAndReportsItsLength(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(206, "234").header("Content-Range", "bytes 2-4/10"));
+    client.getObjectStream("bucket", "digits", "bytes=2-4")
+      .compose(stream -> {
+        testContext.verify(() -> assertEquals(3, stream.metadata().getContentLength()));
+        return stream.collect(java.util.stream.Collectors.toList());
+      })
+      .eventually(client::close)
+      .onComplete(testContext.succeeding(chunks -> testContext.verify(() -> {
+        assertEquals("bytes=2-4", last.get().headers.get("Range"));
+        assertTrue(last.get().headers.get("Authorization").contains(";range;"), last.get().headers.get("Authorization"));
+        assertEquals("234", chunks.stream().map(Buffer::toString).collect(java.util.stream.Collectors.joining()));
+        testContext.completeNow();
+      })));
+  }
+
+  @Test
+  void malformedRangeFailsWithoutAnyRequest(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.getObjectStream("bucket", "key", "0-99").eventually(client::close)
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        assertInstanceOf(S3ClientException.class, e);
+        assertTrue(e.getMessage().startsWith("Invalid range \"0-99\""), e.getMessage());
+        assertEquals(0, requests.get());
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * One pooled connection and room for one waiter. While the stream holds the connection, of two
+   * more requests one has to wait and the other is rejected at once: that rejection proves the
+   * connection is held, and only then is the stream cancelled. The waiting request must then get
+   * the released connection; the stub records that it arrived after the cancel. A request that
+   * succeeds before the cancel fails the test at once. The final check runs after every task
+   * already queued on the stream's context, including the cancellation failure.
+   */
+  @Test
+  void cancelReleasesThePooledConnection(VertxTestContext testContext) {
+    S3ClientOptions options = options(http.actualPort(), false);
+    options.getPoolOptions().setHttp1MaxSize(1).setMaxWaitQueueSize(1);
+    S3Client client = S3Client.create(vertx, options);
+    java.util.concurrent.atomic.AtomicBoolean cancelIssued = new java.util.concurrent.atomic.AtomicBoolean();
+    AtomicReference<Boolean> waiterAfterCancel = new AtomicReference<>();
+    responder.set(c -> {
+      if (c.uri.endsWith("/big")) {
+        return new Stub(200, Buffer.buffer(new byte[8 * 1024 * 1024]));
+      }
+      waiterAfterCancel.set(cancelIssued.get());
+      return new Stub(200, LIST_BUCKETS);
+    });
+    List<Throwable> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
+    AtomicInteger ends = new AtomicInteger();
+    List<Throwable> rejections = new java.util.concurrent.CopyOnWriteArrayList<>();
+    client.getObjectStream("bucket", "big").compose(stream -> {
+      stream.exceptionHandler(errors::add).endHandler(v -> ends.incrementAndGet());
+      Promise<Void> oneRejected = Promise.promise();
+      Promise<Void> waiterServed = Promise.promise();
+      for (int i = 0; i < 2; i++) {
+        client.listBuckets().onComplete(ar -> {
+          if (ar.failed()) {
+            rejections.add(ar.cause());
+            oneRejected.tryComplete();
+          } else if (!cancelIssued.get()) {
+            testContext.failNow(new AssertionError("a request succeeded while the stream held the only connection"));
+          } else {
+            waiterServed.tryComplete();
+          }
+        });
+      }
+      return oneRejected.future()
+        .compose(v -> {
+          cancelIssued.set(true);
+          return stream.cancel();
+        })
+        .compose(v -> waiterServed.future());
+    }).compose(v -> afterQueuedTasks()).eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      assertEquals(1, rejections.size(), rejections.toString());
+      assertInstanceOf(io.vertx.core.http.ConnectionPoolTooBusyException.class, rejections.get(0).getCause(),
+        rejections.get(0).toString());
+      assertEquals(Boolean.TRUE, waiterAfterCancel.get(), "the waiting request was sent before the cancel");
+      assertEquals(1, errors.size(), errors.toString());
+      assertEquals("The object stream was cancelled", errors.get(0).getMessage());
+      assertInstanceOf(S3ClientException.class, errors.get(0));
+      assertEquals(0, ends.get());
+      testContext.completeNow();
+    })));
+  }
+
+  /**
+   * The manual's pattern for serving an object as an HTTP response: when the HTTP client goes
+   * away, the response's close handler cancels the stream, which closes the S3 connection and fails
+   * {@code send}. The stub sends part of the object and then nothing more, so {@code send} alone
+   * would never notice the disconnect (it only fails when a write fails): without the cancel, the
+   * S3 connection would stay open and the test would never finish.
+   */
+  @Test
+  void sendingToAnHttpResponseCancelsTheStreamWhenTheClientDisconnects(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    Promise<Void> sendFailed = Promise.promise();
+    io.vertx.core.net.NetClient browser = vertx.createNetClient();
+    vertx.createHttpServer()
+      .requestHandler(request -> client.getObjectStream("bucket", "video").onSuccess(stream -> {
+        HttpServerResponse response = request.response();
+        response.closeHandler(v -> stream.cancel());
+        response.send(stream).onFailure(err -> {
+          sendFailed.tryComplete();
+          stream.cancel();
+        });
+      }))
+      .listen(0, "localhost")
+      .compose(app -> browser.connect(app.actualPort(), "localhost")
+        .compose(socket -> {
+          // the HTTP client reads the first bytes of the response, then disconnects
+          socket.handler(data -> socket.close());
+          return socket.write("GET /video HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        })
+        .compose(v -> sendFailed.future())
+        .compose(v -> connectionClosed())
+        .eventually(app::close))
+      .eventually(browser::close)
+      .eventually(client::close)
+      .onComplete(testContext.succeedingThenComplete());
+  }
+
+  @Test
+  void cancelAfterTheEndIsANoOp(VertxTestContext testContext) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    responder.set(c -> new Stub(200, "tiny"));
+    List<Throwable> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
+    client.getObjectStream("bucket", "tiny").compose(stream -> {
+      stream.exceptionHandler(errors::add);
+      return stream.collect(java.util.stream.Collectors.toList()).compose(chunks -> stream.cancel());
+    }).eventually(client::close).onComplete(testContext.succeeding(v -> testContext.verify(() -> {
+      assertTrue(errors.isEmpty(), errors.toString());
+      testContext.completeNow();
+    })));
+  }
+
+  // --- intentional cancellations log nothing ---------------------------------------------------------
+
+  /**
+   * The control for the tests below: Vert.x logs the reset of a response that has no exception
+   * handler at SEVERE, and the capture sees it. Without it, "nothing logged" could pass with a
+   * capture that sees nothing.
+   */
+  @Test
+  void captureSeesVertxLogTheResetOfAResponseWithoutHandlers(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, "").header("Content-Length", "1000000").headersOnly());
+    VertxLogCapture capture = VertxLogCapture.start();
+    rawExchange((caller, response) -> response.request().cancel().<Void>mapEmpty())
+      .eventually(() -> { capture.close(); return Future.succeededFuture(); })
+      .onComplete(testContext.succeeding(outcome -> testContext.verify(() -> {
+        assertTrue(capture.logged().contains("SEVERE: Stream reset: 8"), capture.logged());
+        testContext.completeNow();
+      })));
+  }
+
+  /** A body announced over the limit is abandoned before any handler is attached: nothing is logged. */
+  @Test
+  void abandoningABodyOnItsAnnouncedLengthLogsNothing(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, "").header("Content-Length", "1000000").headersOnly());
+    expectNothingLogged(testContext, (caller, response) ->
+      Transport.readBody(caller, response, 1024, length -> new S3ClientException("too large: " + length, null)),
+      outcome -> assertEquals("too large: 1000000", outcome.cause().getMessage()));
+  }
+
+  @Test
+  void abandoningABodyAtTheLimitLogsNothing(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    expectNothingLogged(testContext, (caller, response) ->
+      Transport.readBody(caller, response, 10_000, length -> new S3ClientException("too large", null)),
+      outcome -> assertEquals("too large", outcome.cause().getMessage()));
+  }
+
+  @Test
+  void truncatingAnErrorBodyLogsNothing(VertxTestContext testContext) {
+    responder.set(c -> new Stub(500, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    expectNothingLogged(testContext, (caller, response) -> Transport.readBody(caller, response, 10_000, null),
+      outcome -> assertEquals(10_000, outcome.result().length()));
+  }
+
+  @Test
+  void cancellingAnObjectStreamLogsNothing(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[64 * 1024])).chunked().withholdEnd());
+    expectNothingLogged(testContext, (caller, response) ->
+      new ObjectStreamImpl(vertx, caller, response, ObjectRequests.metadata(response.headers())).cancel(),
+      outcome -> assertTrue(outcome.succeeded()));
+  }
+
+  /** A real failure, before the outcome is decided, still fails the Future (and the log is left alone). */
+  @Test
+  void aConnectionLostWhileReadingStillFailsTheBody(VertxTestContext testContext) {
+    responder.set(c -> new Stub(200, Buffer.buffer(new byte[16 * 1024])).chunked().withholdEnd().thenClose());
+    rawExchange((caller, response) -> Transport.readBody(caller, response, 1024 * 1024, null))
+      .onComplete(testContext.succeeding(outcome -> testContext.verify(() -> {
+        assertTrue(outcome.failed(), "the body was read despite the lost connection");
+        assertInstanceOf(io.vertx.core.http.HttpClosedException.class, outcome.cause());
+        testContext.completeNow();
+      })));
+  }
+
+  private <T> void expectNothingLogged(VertxTestContext testContext,
+                                       java.util.function.BiFunction<ContextSupport.Caller, io.vertx.core.http.HttpClientResponse, Future<T>> use,
+                                       java.util.function.Consumer<io.vertx.core.AsyncResult<T>> check) {
+    VertxLogCapture capture = VertxLogCapture.start();
+    rawExchange(use)
+      .eventually(() -> { capture.close(); return Future.succeededFuture(); })
+      .onComplete(testContext.succeeding(outcome -> testContext.verify(() -> {
+        check.accept(outcome);
+        assertEquals("", capture.logged());
+        testContext.completeNow();
+      })));
+  }
+
+  /**
+   * On one context: sends a GET to the stub with a plain {@code HttpClient}, and hands the response,
+   * unread, to {@code use} in the task that delivers it. Completes with {@code use}'s outcome once
+   * the response has ended or been reset, plus one more task on that context: Vert.x logs an
+   * unhandled reset in the task that fails the response's end, so by then it would have.
+   */
+  private <T> Future<io.vertx.core.AsyncResult<T>> rawExchange(
+      java.util.function.BiFunction<ContextSupport.Caller, io.vertx.core.http.HttpClientResponse, Future<T>> use) {
+    Promise<io.vertx.core.AsyncResult<T>> done = Promise.promise();
+    io.vertx.core.Context context = vertx.getOrCreateContext();
+    context.runOnContext(v -> {
+      ContextSupport.Caller caller = ContextSupport.capture(vertx);
+      io.vertx.core.http.HttpClient client = vertx.createHttpClient();
+      client.request(HttpMethod.GET, http.actualPort(), "localhost", "/bucket/key")
+        .compose(io.vertx.core.http.HttpClientRequest::send)
+        .onComplete(ar -> {
+          if (ar.failed()) {
+            done.fail(ar.cause());
+            return;
+          }
+          io.vertx.core.http.HttpClientResponse response = ar.result();
+          use.apply(caller, response).onComplete(outcome -> response.end().onComplete(end ->
+            context.runOnContext(w -> client.close().onComplete(closed -> done.complete(outcome)))));
+        });
+    });
+    return done.future();
+  }
+
+  // --- helpers ---------------------------------------------------------------------------------------
+
+  private void expectFailure(VertxTestContext testContext, java.util.function.Consumer<Throwable> check) {
+    S3Client client = S3Client.create(vertx, options(http.actualPort(), false));
+    client.listBuckets().eventually(client::close)
+      .onComplete(testContext.failing(e -> testContext.verify(() -> {
+        check.accept(e);
+        testContext.completeNow();
+      })));
+  }
+
+  /** Completes after every task already queued on the current context has run. */
+  private Future<Void> afterQueuedTasks() {
+    Promise<Void> promise = Promise.promise();
+    vertx.getOrCreateContext().runOnContext(v -> promise.complete());
+    return promise.future();
+  }
+
+  /** Succeeds once the stub has seen a connection close; no timer involved. */
+  private Future<Void> connectionClosed() {
+    return connectionClosed.get().future();
+  }
+
+  private Transport transport(S3ClientOptions options) {
+    return new Transport(vertx, ClientConfig.from(options));
+  }
+
+  private static S3ClientOptions options(int port, boolean tls) {
+    S3ClientOptions options = new S3ClientOptions()
+      .setEndpoint((tls ? "https" : "http") + "://localhost:" + port)
+      .setRegion("test-west-1")
+      .setCredentials(new S3Credentials("AKIDEXAMPLE", "secret"));
+    if (tls) {
+      options.getHttpClientOptions().setTrustOptions(new PemTrustOptions().addCertPath("tls/test-only-silo-selfsigned.crt"));
+    }
+    return options;
+  }
+
+  private static final class Captured {
+    final HttpMethod method;
+    final String uri;
+    final MultiMap headers;
+    final Buffer body;
+
+    Captured(HttpMethod method, String uri, MultiMap headers, Buffer body) {
+      this.method = method;
+      this.uri = uri;
+      this.headers = headers;
+      this.body = body;
+    }
+  }
+
+  private static final class Stub {
+    final int status;
+    final String body;
+    final Map<String, String> headers = new java.util.LinkedHashMap<>();
+
+    Buffer raw;
+    boolean chunked;
+
+    Stub(int status, String body) {
+      this.status = status;
+      this.body = body;
+    }
+
+    Stub(int status, Buffer raw) {
+      this(status, "");
+      this.raw = raw;
+    }
+
+    boolean headersOnly;
+
+    /** Sends the status and headers, then never the body. */
+    Stub headersOnly() {
+      headersOnly = true;
+      return this;
+    }
+
+    /** Sends the body with chunked transfer encoding, i.e. without Content-Length. */
+    Stub chunked() {
+      chunked = true;
+      return this;
+    }
+
+    boolean withholdEnd;
+    boolean thenClose;
+
+    /** Closes the connection after the chunks, without ending the response. */
+    Stub thenClose() {
+      thenClose = true;
+      return this;
+    }
+
+    Promise<Void> backedUp;
+    AtomicInteger chunksWritten;
+
+    /** Writes until the client stops reading, then signals {@code backedUp}; see fillUntilBackpressure. */
+    Stub fillUntilBackpressure(Promise<Void> backedUp, AtomicInteger chunksWritten) {
+      this.backedUp = backedUp;
+      this.chunksWritten = chunksWritten;
+      return this;
+    }
+
+    /** With {@link #chunked()}: sends the body but never ends the response. */
+    Stub withholdEnd() {
+      withholdEnd = true;
+      return this;
+    }
+
+    Stub header(String name, String value) {
+      headers.put(name, value);
+      return this;
+    }
+  }
+}
